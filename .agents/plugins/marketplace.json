@@ -1,0 +1,20 @@
+{
+  "name": "zokmi-bdd-skills",
+  "interface": {
+    "displayName": "zokmi BDD Skills"
+  },
+  "plugins": [
+    {
+      "name": "bdd-skills",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

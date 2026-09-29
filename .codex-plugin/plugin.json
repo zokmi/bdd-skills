@@ -1,0 +1,18 @@
+{
+  "name": "bdd-skills",
+  "version": "1.0.0",
+  "description": "繁體中文 BDD 情境撰寫與本機實測技能",
+  "author": {
+    "name": "zokmi"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "BDD Skills",
+    "shortDescription": "撰寫 BDD 情境並執行本機驗證",
+    "longDescription": "將功能異動整理成繁體中文 Gherkin 情境，執行本機驗證並產出報告。",
+    "developerName": "zokmi",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "使用 bdd-local-test 撰寫 BDD 情境並在本機驗證。"
+  }
+}

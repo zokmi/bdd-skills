@@ -21,8 +21,10 @@ description: 把一條功能分支（或指定單號、commit 範圍）的異動
 情境的「那麼」寫的是**需求應該怎樣**，不是**程式目前怎樣**。讀程式時發現不符需求的地方，
 照需求寫預期、標 `@已知缺陷` 並註解原因，然後照樣去跑、讓它失敗。絕對不要為了讓報告好看而改寫預期。
 
-蒐集事實的指令走 Bash tool（POSIX 寫法）；`.feature` 與 `REPORT.md` 用 Write tool 寫，
-內容含大量引號與反引號，用 heredoc 寫會被 shell 解析壞。
+用可用的終端機工具蒐集事實；`.feature` 與 `REPORT.md` 用檔案編輯工具寫，
+內容含大量引號與反引號，用 heredoc 寫可能被 shell 解析壞。
+
+以下範例中的 `<skill 目錄>` 是這份 `SKILL.md` 所在的資料夾；先找到安裝後的實際路徑，再執行其 `scripts/` 下的腳本。不要假設 skill 安裝在特定產品的個人目錄。
 
 ---
 
@@ -61,7 +63,7 @@ git branch -r | head -20
 資料夾裡已有 `verification.json`，或使用者提到剛做過 cherry-pick／merge／跨 repo 同步時，**先比對，不要直接沿用舊報告**：
 
 ```bash
-pwsh -NoProfile -File ~/.claude/skills/bdd-local-test/scripts/bdd-verification.ps1 -Check -Dir <輸出資料夾>
+pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Check -Dir <輸出資料夾>
 ```
 
 腳本在**目前所在的 repo** 執行 git 比對，`-Dir` 可以指向別的 repo 裡的報告資料夾
@@ -154,7 +156,7 @@ git status --porcelain
 
 1. 取得本 worktree 的 IP（第一次執行時分配，之後重用；worktree 移除時自動釋放）：
    ```bash
-   pwsh -NoProfile -File ~/.claude/skills/bdd-local-test/scripts/loopback-slot.ps1 -Ports <專案用到的埠，逗號分隔>
+   pwsh -NoProfile -File "<skill 目錄>/scripts/loopback-slot.ps1" -Ports <專案用到的埠，逗號分隔>
    ```
    輸出 JSON 的 `ip`、`chromiumArg`、`occupied`。`isWorktree=false`（主目錄）時 `chromiumArg` 為空，照一般方式測即可。
 2. `occupied` 不為空時先看是誰：若是本 worktree 已在跑的服務就直接用（仍要確認版本）；
@@ -212,7 +214,7 @@ git status --porcelain
 報告寫完後，**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）：
 
 ```bash
-pwsh -NoProfile -File ~/.claude/skills/bdd-local-test/scripts/bdd-verification.ps1 -Record -Dir <輸出資料夾>   -Base <基準分支> -Passed N -Failed N -Blocked N -NotRun N -Note "<一句話，例如：自 yuanlih 同步後複測>"
+pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir <輸出資料夾>   -Base <基準分支> -Passed N -Failed N -Blocked N -NotRun N -Note "<一句話，例如：自 yuanlih 同步後複測>"
 ```
 
 範圍不是 `<基準>..HEAD`（例如使用者指定了 commit、或在別的分支上 cherry-pick 過來的一串）時，
@@ -238,7 +240,7 @@ pwsh -NoProfile -File ~/.claude/skills/bdd-local-test/scripts/bdd-verification.p
 1. 這個 session 用 `run_in_background` 啟動的服務，先用 `TaskStop` 結束那些背景工作。
 2. 再跑停止腳本，帶上與 `loopback-slot.ps1` 相同的埠號，收掉殘留的子程序與先前 session 留下的服務：
    ```bash
-   pwsh -NoProfile -File ~/.claude/skills/bdd-local-test/scripts/stop-slot-services.ps1 -Ports <同上的埠>
+   pwsh -NoProfile -File "<skill 目錄>/scripts/stop-slot-services.ps1" -Ports <同上的埠>
    ```
    腳本只停「監聽在本 worktree 專屬 IP 上、且執行檔或命令列位於本 worktree 路徑下」的程序（連同 `dotnet run`／`npx` 等啟動器）；
    主目錄的 `127.0.0.1`、綁 `0.0.0.0`／`::` 的程序、路徑不在本 worktree 的程序都只列在 `skipped`，不會動。
