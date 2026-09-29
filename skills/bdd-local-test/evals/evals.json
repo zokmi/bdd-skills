@@ -1,0 +1,60 @@
+{
+  "skill_name": "bdd-local-test",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "幫我把 commit 7b98bdc2（#94452 移除區域設定的「從選樣項目匯入」）寫成 BDD 測試情境，然後在本機跑一遍驗證。",
+      "expected_output": ".bdd/94452-<主題>/ 下有 zh-TW .feature（含情境編號、@UI/@API/@DB 標籤、BDD- 測試資料）、evidence/ 與 REPORT.md；無帳密時需登入的情境標阻塞，匿名可驗證的（例如端點已移除回 404）照跑。",
+      "files": [],
+      "assertions": [
+        "輸出放在 <單號>-<英文 kebab 主題> 資料夾",
+        "至少一個 .feature 且宣告 # language: zh-TW",
+        "每個情境都有唯一編號標籤（如 @IC-01）",
+        "每個情境都標了 @UI/@API/@DB 驗證手段",
+        "測試資料使用 BDD- 前綴",
+        "情境涵蓋非 happy path（權限／錯誤／邊界）",
+        "REPORT 存在且有通過／失敗／阻塞統計",
+        "因缺帳密而無法執行的情境標為阻塞並寫明原因",
+        "evidence/ 內至少一個證據檔",
+        "產出未洩漏連線密碼",
+        "有情境驗證已移除的匯入按鈕／端點不存在，且報告有結果"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "94504 這個分支的項目料號「發布新價格／版本歷程」功能做完了，幫我整理驗收情境並在本機實測，結果給我一份報告。只要涵蓋價格版本這一塊就好。",
+      "expected_output": "只針對價格版本區塊的 .feature，涵蓋成功、驗證失敗、權限、零值、版本號遞增、歷程保留等邊界；有讀程式找已知缺陷；REPORT.md 誠實列出阻塞原因（缺帳密）並完成可做的 DB 唯讀驗證。",
+      "files": [],
+      "assertions": [
+        "輸出放在 <單號>-<英文 kebab 主題> 資料夾",
+        "至少一個 .feature 且宣告 # language: zh-TW",
+        "每個情境都有唯一編號標籤（如 @IC-01）",
+        "每個情境都標了 @UI/@API/@DB 驗證手段",
+        "測試資料使用 BDD- 前綴",
+        "情境涵蓋非 happy path（權限／錯誤／邊界）",
+        "REPORT 存在且有通過／失敗／阻塞統計",
+        "因缺帳密而無法執行的情境標為阻塞並寫明原因",
+        "evidence/ 內至少一個證據檔",
+        "產出未洩漏連線密碼",
+        "範圍只含價格版本，未混入其他功能區塊",
+        "有讀程式找出並標註已知缺陷（或說明未發現）"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "#94541 已經從元利 cherry-pick 到產品 repo 的 develop 了，.bdd/94541-resign-rollback-detach 也一起帶過來，幫我確認一下在這邊還是正常的。",
+      "expected_output": "先以 bdd-verification.ps1 -Check 比對 verification.json，判定跨 repo（rerun）後不問使用者、直接開新一輪完整重跑所有情境；重新做環境安全確認；證據加 R<n>_ 前綴不覆蓋舊證據；REPORT 版本紀錄新增一列、填同步對照表（來源 SHA→本 repo SHA 與對應方式）；最後以 -Record 追加一輪紀錄。",
+      "files": [],
+      "assertions": [
+        "執行前有跑 bdd-verification.ps1 -Check 並依 verdict 決定重測",
+        "判定 rerun 後重跑全部情境，而非只挑部分情境",
+        "沒有直接沿用來源 repo 的通過結果",
+        "重新確認目標 repo 的連線字串與資料庫是否為測試環境",
+        "新一輪證據檔名帶 R<輪次>_ 前綴，舊證據保留",
+        "REPORT 標題表格含 repo 與完整 commit SHA",
+        "REPORT 版本紀錄有新的一輪，受測 commit 與同步對照表已填",
+        "verification.json 追加了新一輪（rounds 數增加）"
+      ]
+    }
+  ]
+}
