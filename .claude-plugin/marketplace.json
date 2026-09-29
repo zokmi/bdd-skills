@@ -1,0 +1,14 @@
+{
+  "name": "zokmi-bdd-skills",
+  "description": "zokmi 的 Claude Code BDD 技能",
+  "owner": {
+    "name": "zokmi"
+  },
+  "plugins": [
+    {
+      "name": "bdd-skills",
+      "source": "./",
+      "description": "繁體中文 BDD 情境撰寫與本機實測技能"
+    }
+  ]
+}
