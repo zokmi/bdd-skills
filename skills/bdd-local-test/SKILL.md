@@ -144,42 +144,31 @@ git status --porcelain
 
 ### 5. 準備環境
 
-- 先檢查服務是否已在跑（`netstat -ano | grep LISTENING`、`curl` 一下健康端點或首頁）。
+**啟動服務前的 worktree preflight（每輪測試都先做）**：先從專案文件找出本輪前後端原埠號，
+在受測 repo 根目錄執行 `pwsh -NoProfile -File "<skill 目錄>/scripts/loopback-slot.ps1" -Ports <原埠號，逗號分隔>`，
+讀取 JSON 的 `isWorktree`、`slot`、`ip`、`chromiumArg`、`occupied`；腳本失敗或無法確認埠號時，
+先釐清環境，不要猜 IP 或直接啟動服務。
+
+- `isWorktree=false`：照一般 localhost 流程測試。
+- `isWorktree=true`：**先讀 [worktree loopback 操作細節](references/worktree-loopback.md)**，確認 `occupied` 的程序歸屬後，
+  讓本輪前後端只綁分配的 `ip`、沿用原埠號；`@UI` 用帶 `chromiumArg` 的隔離 Node Playwright，
+  `@API` 用該 `ip`。確認 HTTP 回應屬於本輪版本，再執行情境。
+- 占用者若是別的 worktree、使用者服務，或綁 `0.0.0.0`／`::`，不要停掉或借用；
+  無法取得安全的本輪服務時，把相關情境列「阻塞」並回報。報告〈環境〉記錄 `isWorktree`、slot、IP、埠號、占用判定與實際 UI／API 網址；
+  **缺少 worktree preflight 或無法確認受測服務版本時，不可宣稱該輪 all pass。**
+
+- 依 preflight 的 `ip` 與原埠號檢查服務是否已在跑（監聽資訊、`curl` 健康端點或首頁）；
+  worktree 不要把主目錄 `127.0.0.1` 的服務當成本輪服務。
 - **確認跑著的就是要測的版本。** 已在跑的後端可能是幾個 commit 前建置的，測它等於測舊程式。
   比對建置產物的時間與 HEAD 最後一次後端異動的時間，或比對 Swagger／路由是否已含本次新增或移除的端點。
   確認不了時，從**包含本輪待測異動的工作區**建置獨立服務，**綁到另一個 loopback IP、沿用原埠號**另起一份
-  （見下方〈在 git worktree 裡測〉）。若需複製到暫存目錄，也要包含本輪未提交修正；單用 `git archive HEAD` 會漏掉它們。
+  （見 [worktree loopback 操作細節](references/worktree-loopback.md)）。若需複製到暫存目錄，也要包含本輪未提交修正；單用 `git archive HEAD` 會漏掉它們。
   不要停掉或重啟使用者原本在跑的服務，也不要改 repo 設定。
-- 沒跑就依專案文件啟動，用可用工具在背景執行，等到埠號可連再繼續。
-- 前後端就緒後，實際對本輪前端網址發出 HTTP 請求，確認回應與受測版本；不要只看到程序在跑就認定頁面可用。將確切的 `http://localhost:<前端埠>/...`（或專案明確使用的 HTTPS 網址）記入報告。
+- 沒跑就依專案文件啟動；worktree 要明確綁 preflight 的 `ip`，用可用工具在背景執行，等到該 IP 的原埠號可連再繼續。
+- 前後端就緒後，實際對本輪前端網址發出 HTTP 請求，確認回應與受測版本；不要只看到程序在跑就認定頁面可用。
+  worktree 的服務探測使用 `http://<ip>:<前端埠>/...`，Node Playwright 頁面網址仍用 `http://localhost:<前端埠>/...` 並帶 `chromiumArg`；
+  主目錄照專案原本的 localhost／HTTPS 網址。把確切網址記入報告。
 
-#### 在 git worktree 裡測：用 loopback IP 分流，不換埠號也不改程式
-
-多個 worktree 同時實測時，大家都想用專案原本的埠號（前端寫死的 API 位址、後端 CORS 白名單都綁著這些埠），
-改埠號就得改程式。改用 **loopback IP 分流**：每個 worktree 各自綁一個 `127.0.0.N`，埠號維持原樣，
-測試瀏覽器再把 `localhost` 對應到該 IP。
-
-1. 取得本 worktree 的 IP（第一次執行時分配，之後重用；worktree 移除時自動釋放）：
-   ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/loopback-slot.ps1" -Ports <專案用到的埠，逗號分隔>
-   ```
-   輸出 JSON 的 `ip`、`chromiumArg`、`occupied`。`isWorktree=false`（主目錄）時 `chromiumArg` 為空，照一般方式測即可。
-2. `occupied` 不為空時先看是誰：若是本 worktree 已在跑的服務就直接用（仍要確認版本）；
-   若是綁 `0.0.0.0`／`::` 的程序占住了所有 IP，**暫停並回報使用者**，不要自己停掉它。
-3. 服務一律綁到該 IP、沿用原埠號，例如：
-   - ASP.NET Core：`ASPNETCORE_ENVIRONMENT=Development dotnet run --project <Api 專案> --no-launch-profile --urls http://<ip>:<原埠>`
-     （IIS Express 綁不了 `127.0.0.N`，改用 Kestrel。）
-   - Angular：`npx ng serve --host <ip> --port <原埠> [原本的 --ssl／--configuration]`
-   - 其他框架同理，找它指定監聽位址的參數；不要改專案裡的設定檔。
-4. 測試用的 Chromium 啟動時帶 `chromiumArg`（`--host-resolver-rules=MAP localhost <ip>`）。
-   頁面網址、前端寫死的 `http://localhost:<埠>` API 呼叫都會導到本 worktree 的服務，
-   瀏覽器送出的 Origin 仍是 `localhost:<埠>`，後端 CORS 不必改。
-   **一般 Playwright MCP session 無法逐 worktree 帶這個參數，在 worktree 裡的 `@UI` 情境改用 Node Playwright 腳本**
-   （`chromium.launch({ args: [chromiumArg] })`；專案沒裝 playwright 就裝到 scratchpad，不要動專案的 package.json）。
-   要給人目視確認時，把輸出的 `chromeCommand` 給使用者，用獨立設定檔開 Chrome，不影響平常的瀏覽器。
-5. `curl`／`@API` 情境直接打 `http://<ip>:<埠>`。若後端要驗 Origin，就帶 `-H "Origin: http://localhost:<前端埠>"`。
-6. 報告〈環境〉寫明「worktree slot N，服務綁 `127.0.0.N`，埠號同專案預設」。
-7. 共用資料庫不會因為 IP 分流而隔開。測試資料用 `BDD-<單號>-` 前綴，盡量用不同的建案或主檔，避免和其他 worktree 的測試互相干擾。
 - 啟動失敗、缺帳號、缺資料庫權限 → 相關情境標「阻塞」並寫明原因，其餘能跑的照跑，不要整批放棄。
 
 ### 6. 逐情境執行

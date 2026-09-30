@@ -6,7 +6,7 @@
 | 分支 | `<分支名>`（相對 `<基準分支>`） |
 | 測試版本 | 第 N 輪：`<HEAD 短 SHA>`（`<完整 SHA>`）<工作區乾淨／有未提交異動：列出檔案> |
 | 驗證紀錄 | `verification.json`（第 N 輪；程式同步到別的分支或 repo 後，以 `bdd-verification.ps1 -Check` 比對，判定要重測時自動重跑） |
-| 環境 | <前端網址>、<API 網址>、<資料庫主機／名稱> |
+| 環境 | <前端網址>、<API 網址>、<資料庫主機／名稱>；worktree preflight：<isWorktree、slot、IP、原埠號、occupied 判定、受測服務版本確認方式> |
 | UI 測試工具 | <Playwright MCP／Node Playwright；實際開啟的 localhost 網址；若未用 MCP，寫明原因> |
 | 執行時間 | <YYYY-MM-DD HH:mm> |
 | 測試帳號 | 具備「<權限名稱>」的本機測試帳號（不寫帳密） |

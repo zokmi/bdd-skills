@@ -55,6 +55,32 @@
         "REPORT 版本紀錄有新的一輪，受測 commit 與同步對照表已填",
         "verification.json 追加了新一輪（rounds 數增加）"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "我在 git worktree 測 #94542。主目錄的 localhost:4200 和 localhost:9453 已經有別的服務在跑；請保持原埠號，寫 BDD 並跑 UI/API 情境。",
+      "expected_output": "啟動服務前執行 loopback-slot.ps1 並讀取 worktree-loopback.md；依回傳 IP 檢查 occupied，將本輪服務綁到該 IP 的原埠號。UI 用帶 chromiumArg 的隔離 Node Playwright，API 直接打該 IP。報告記錄 slot、IP、占用判定與受測版本，沒有完整 preflight 不宣稱 all pass。",
+      "files": [],
+      "assertions": [
+        "啟動服務前執行 loopback-slot.ps1，記錄 isWorktree、slot、ip、chromiumArg、occupied",
+        "讀取 references/worktree-loopback.md 並確認占用程序歸屬",
+        "沒有停止或借用主目錄 localhost 服務，也沒有更改原埠號或專案設定",
+        "本輪服務只綁分配的 IP，並確認 HTTP 回應屬於本輪版本",
+        "UI 使用帶 chromiumArg 的 Node Playwright，API 使用該 IP",
+        "REPORT 環境欄含 slot、IP、原埠號、占用判定、實際網址與版本確認方式"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "請在 git worktree 測 #94543；loopback-slot.ps1 顯示原埠被 0.0.0.0 的其他程序占用，先讓測試過再說。",
+      "expected_output": "先確認占用程序歸屬；不停止或借用其他程序，不換埠或改程式繞過限制。無法安全啟動本輪服務時，相關情境標阻塞並回報，不宣稱 all pass。",
+      "files": [],
+      "assertions": [
+        "辨識 0.0.0.0 占用會影響分配的 worktree IP",
+        "沒有停止或借用其他程序，沒有換埠號或改程式設定",
+        "無法安全實測的情境標阻塞並說明解除條件",
+        "沒有宣稱 all pass"
+      ]
     }
   ]
 }
