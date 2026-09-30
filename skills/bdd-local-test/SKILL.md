@@ -1,14 +1,15 @@
 ---
 name: bdd-local-test
-description: 把一條功能分支（或指定單號、commit 範圍）的異動寫成繁體中文 Gherkin 測試情境（.feature），輸出到 git 根目錄的 .bdd/<單號>-<主題>/，接著在本機實際執行——用瀏覽器操作 UI、直接呼叫 API、查資料庫驗證——截圖存進 evidence/，最後產出逐情境列出通過／失敗／阻塞的 REPORT.md。當使用者提到 BDD、測試情境、驗收情境、Gherkin、feature 檔、「幫我測一下這個分支」「本機驗證這張單」「寫測試案例然後跑跑看」「上線前實測」「把需求整理成情境並驗證」，或功能開發完想在本機端到端確認行為時，務必使用這個 skill——即使使用者沒有明講 BDD 或 Gherkin。報告會記錄受測的 repo 與 commit（verification.json）；當程式以 cherry-pick、merge 或跨 repo（例如客戶 repo 與產品 repo 之間）同步過來、或使用者說「同步過去了」「cherry-pick 到 XX」「合併進 develop 後再確認一次」「這份報告還有效嗎」時，也要使用這個 skill，比對版本後自動重新驗證。
+description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、分支實測、上線前驗證，或使用者要求「測到全部通過」「失敗就修」「用 Playwright MCP 測 localhost」時。將功能異動寫成繁體中文情境，在本機操作真實 UI／API／資料庫，失敗後修正並重測，保存證據與版本紀錄。程式經 cherry-pick、merge 或跨 repo 同步後，也用此 skill 比對版本並重新驗證。
 ---
 
 # BDD 測試情境產生與本機實測
 
-這支 skill 做兩件事，而且兩件都要做完：
+這支 skill 做三件事，而且三件都要做完：
 
 1. **寫情境**：把「這次改了什麼」翻成人看得懂、可以照著操作的 Gherkin 情境。
 2. **實際跑**：在本機照著情境操作一遍，留下證據，誠實回報哪些過、哪些沒過。
+3. **修到可驗證的通過**：發現產品缺陷後修正、重新啟動受影響服務並複測，直到所有可執行情境通過；無法自行解除的阻塞要明列，不能宣稱 all pass。
 
 情境寫得漂亮但沒跑過，只是一份看起來很安心的文件；跑了但沒留證據，別人無法複核。
 所以產出是四樣東西放在同一個資料夾：`.feature` 情境、`evidence/` 證據、`REPORT.md` 結果，
@@ -78,10 +79,12 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Check -Dir 
 
 | verdict | 意義 | 處理 |
 |---------|------|------|
-| `current` | 同 repo、同 HEAD、受測檔案無未提交異動 | 報告仍有效，告知使用者即可；使用者要求時才重跑 |
-| `still-valid` | 同 repo，HEAD 前進了但受測 commit 都在、受測檔案內容沒變 | 報告仍有效；在〈版本紀錄〉補一列「`<新 HEAD>` 相關檔案未變，沿用第 N 輪結果」 |
+| `current` | 同 repo、同 HEAD、受測檔案無未提交異動 | 上輪全部通過才可告知結果仍有效；使用者要求時重跑 |
+| `still-valid` | 同 repo，HEAD 前進了但受測 commit 都在、受測檔案內容沒變 | 上輪全部通過才可沿用；在〈版本紀錄〉補一列「`<新 HEAD>` 相關檔案未變，沿用第 N 輪結果」 |
 | `rerun` | 跨 repo、cherry-pick、受測檔案有變、或有 commit 缺漏 | **自動開新一輪，完整重跑所有情境**（從步驟 2 開始） |
 | `no-record` | 舊報告沒有紀錄檔 | 視同 `rerun`；舊報告的結果無法證明是哪個版本驗到的 |
+
+`current` 或 `still-valid` 若上輪仍有失敗、阻塞或未執行，不能把它當作 all pass；從未完成的情境與〈6-1 修正、重啟、複測〉接著做。
 
 `rerun` 的注意事項：
 
@@ -144,9 +147,11 @@ git status --porcelain
 - 先檢查服務是否已在跑（`netstat -ano | grep LISTENING`、`curl` 一下健康端點或首頁）。
 - **確認跑著的就是要測的版本。** 已在跑的後端可能是幾個 commit 前建置的，測它等於測舊程式。
   比對建置產物的時間與 HEAD 最後一次後端異動的時間，或比對 Swagger／路由是否已含本次新增或移除的端點。
-  確認不了時，把 HEAD 匯出到暫存目錄（`git archive HEAD`）或開 worktree 建置，**綁到另一個 loopback IP、沿用原埠號**另起一份
-  （見下方〈在 git worktree 裡測〉），不要停掉或重啟使用者原本在跑的服務，也不要改 repo 設定。
-- 沒跑就依專案文件啟動，用背景執行（`run_in_background`），等到埠號可連再繼續。
+  確認不了時，從**包含本輪待測異動的工作區**建置獨立服務，**綁到另一個 loopback IP、沿用原埠號**另起一份
+  （見下方〈在 git worktree 裡測〉）。若需複製到暫存目錄，也要包含本輪未提交修正；單用 `git archive HEAD` 會漏掉它們。
+  不要停掉或重啟使用者原本在跑的服務，也不要改 repo 設定。
+- 沒跑就依專案文件啟動，用可用工具在背景執行，等到埠號可連再繼續。
+- 前後端就緒後，實際對本輪前端網址發出 HTTP 請求，確認回應與受測版本；不要只看到程序在跑就認定頁面可用。將確切的 `http://localhost:<前端埠>/...`（或專案明確使用的 HTTPS 網址）記入報告。
 
 #### 在 git worktree 裡測：用 loopback IP 分流，不換埠號也不改程式
 
@@ -169,7 +174,7 @@ git status --porcelain
 4. 測試用的 Chromium 啟動時帶 `chromiumArg`（`--host-resolver-rules=MAP localhost <ip>`）。
    頁面網址、前端寫死的 `http://localhost:<埠>` API 呼叫都會導到本 worktree 的服務，
    瀏覽器送出的 Origin 仍是 `localhost:<埠>`，後端 CORS 不必改。
-   **Playwright MCP 無法逐 worktree 帶這個參數，在 worktree 裡的 `@UI` 情境一律改用 Node Playwright 腳本**
+   **一般 Playwright MCP session 無法逐 worktree 帶這個參數，在 worktree 裡的 `@UI` 情境改用 Node Playwright 腳本**
    （`chromium.launch({ args: [chromiumArg] })`；專案沒裝 playwright 就裝到 scratchpad，不要動專案的 package.json）。
    要給人目視確認時，把輸出的 `chromeCommand` 給使用者，用獨立設定檔開 Chrome，不影響平常的瀏覽器。
 5. `curl`／`@API` 情境直接打 `http://<ip>:<埠>`。若後端要驗 Origin，就帶 `-H "Origin: http://localhost:<前端埠>"`。
@@ -183,12 +188,13 @@ git status --porcelain
 
 | 標籤 | 手段 | 證據 |
 |------|------|------|
-| `@UI` | 瀏覽器操作。單一 session 用 Playwright MCP（`browser_navigate`／`browser_snapshot`／`browser_click`／`browser_take_screenshot`）；MCP 不可用、多個代理同時跑、或在 worktree 裡（需帶 loopback 對應參數）時，改寫 Node Playwright 腳本自開瀏覽器，避免搶同一個分頁 | 關鍵畫面截圖 |
+| `@UI` | 先確認 Playwright MCP 可用。單一 session、一般本機服務時，主動以 `browser_navigate` 開啟已就緒的 localhost 網址，接著用 `browser_snapshot` 找元素、`browser_click`／輸入等工具操作真實流程，並用 `browser_take_screenshot` 保存證據。MCP 不可用、瀏覽器與服務不在同一台主機、多代理共用同一分頁，或 worktree 需要獨立 loopback 對應時，改用隔離的 Node Playwright 瀏覽器並在報告註明原因 | 關鍵畫面截圖 |
 | `@API` | `curl` 帶登入取得的 token 直接呼叫端點 | 請求與回應摘要存 `evidence/<編號>_<描述>.json` 或寫進報告 |
 | `@DB` | 專案的查詢工具（如 `sqlcmd`、`psql`），**只下查詢**驗證結果 | 查詢語句與結果摘要寫進報告 |
 
 - 證據檔名：`evidence/<情境編號>_<簡短中文描述>.png`（如 `IC-05_列表單價顯示.png`），一看就知道對應哪個情境。
 - 前置資料盡量透過 UI 或 API 建立，走真實路徑；只有真的做不到才直接寫資料庫，並在報告註明。
+- `@UI` 不可只驗 HTTP 狀態或看首頁就算完成：逐一走情境的登入、輸入、送出與結果確認。Playwright MCP 的 `browser_navigate` 若無法連到 localhost，先查服務、埠號、HTTPS 與 MCP 所在主機；可修復就修復後重試，無法讓 MCP 連本機時改用本機 Node Playwright，並記錄實際使用的工具與網址。
 - 每個情境的結果只有四種：**通過**、**失敗**、**阻塞**（環境或前置條件不足而無法判定）、**未執行**。
   失敗要寫「預期 vs 實際」，並盡量指出可疑的程式位置（`檔案:行號`）。
 - **「通過」只給走真實路徑驗到的結果。** 如果為了讓畫面跑起來而攔截 API 回應、塞假 token 或假權限，
@@ -197,14 +203,25 @@ git status --porcelain
 - **阻塞時盡量補佐證，但佐證不改判。** 缺登入時，可以跑既有單元測試、或對同一段邏輯做唯讀的資料檢查，
   把結果寫在情境的備註與報告的〈補充佐證〉，說明「邏輯層已確認，只差端對端」。
   情境本身仍是「阻塞」——單元測試通過不代表畫面與授權路徑可用。
-- **測試期間不修程式。** 這一輪的任務是回報，修正是下一步、由使用者決定。
-  若發現是**情境本身寫錯**（誤解需求），修正情境並在報告的〈情境修訂〉記下改了什麼、為什麼。
+- 若發現是**情境本身寫錯**（誤解需求），根據需求修正情境，並在報告的〈情境修訂〉記下改了什麼、為什麼；不可為了讓結果變綠而降低預期。
 - `@已知缺陷` 情境照跑。若它竟然通過了，代表當初的判斷錯了，在報告中說明。
+
+### 6-1. 修正、重啟、複測，直到可驗證的 all pass
+
+第一輪先完成真實操作、保存失敗畫面與「預期 vs 實際」，依步驟 7 的方法記錄該輪報告及 `verification.json`。接著對每個失敗判斷根因：產品程式缺陷、情境誤解、服務／測試資料問題，或需要使用者提供權限的阻塞。**產品缺陷在本次任務內主動修正，不等使用者再次下令。**
+
+1. 根據需求與實際證據定位最小根因，修正受測範圍內的程式；保留原有需求與驗收標準，不刪除失敗情境、不改成假回應、不繞過登入或權限，也不改動無關功能。已知缺陷修好後移除不再適用的 `@已知缺陷`，記下修正檔案與原因。
+2. 執行受影響的單元／整合測試，從**包含本輪修正的工作區**重新建置或重啟獨立受測服務，確認新程式已由本輪測試網址提供，不動使用者原本的服務。用本輪的 Playwright MCP 或 Node Playwright 重新導覽／重載頁面，避免把舊服務或快取畫面當作修正結果。
+3. 先複測失敗情境，再完整重跑所有可執行情境及必要回歸；每輪更新 `REPORT.md`、`verification.json`，以 `R<輪次>_` 保存新證據，不覆蓋舊失敗證據。新問題回到步驟 1，持續修正與複測。
+4. **只有失敗、阻塞、未執行皆為 0，且每個情境都走真實路徑驗證，才寫「all pass」並執行下方封存與 tag 流程。** 遇到無法取得的帳號／權限、非測試資料庫、無法連線的必要服務，或修正需要超出本次需求範圍的產品決策時，保留已完成的修正與證據，將剩餘情境如實列為阻塞或失敗，說明解除條件；不要無限重試或宣稱通過。
+
+使用者明確只要情境、不要求執行時，仍依步驟 3 停止，不啟動此循環。
 
 ### 7. 產出 REPORT.md 並清理
 
 依 [assets/REPORT-template.md](assets/REPORT-template.md) 寫 `REPORT.md`。報告的讀者可能是 PM 或沒參與開發的同事，
 所以摘要寫業務語言，技術細節放在各情境段落。
+在〈環境〉與〈修正與複測〉註明實際使用的瀏覽器工具、localhost 網址、每輪修正與複測結果。
 
 **報告必須註記 git commit**：標題表格的「repo」「測試版本」寫完整資訊，〈版本紀錄〉逐輪列出 repo、分支、受測 HEAD（短 SHA）、
 工作區是否乾淨與結果統計，〈受測 commit〉列出本輪涵蓋的每個 commit（短 SHA＋標題）。
