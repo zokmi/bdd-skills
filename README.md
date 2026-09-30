@@ -12,13 +12,13 @@ Claude Code 與 Codex 跨專案 BDD 測試 skill。
 
 ## 安裝到 Claude Code
 
-Claude Code 2.1.275 以上可在互動工作階段輸入一條指令，加入此私人 marketplace 並安裝 plugin：
+Claude Code 2.1.275 以上可在互動工作階段輸入一條指令，加入此 marketplace 並安裝 plugin：
 
 ```text
 /plugin install bdd-skills --marketplace zokmi/bdd-skills
 ```
 
-首次加入 marketplace 時依提示確認，並選擇安裝範圍。安裝後的技能指令是 `/bdd-skills:bdd-local-test`。因儲存庫為私人，使用者的 Git 憑證需能讀取 `zokmi/bdd-skills`；若 GitHub CLI 已登入但 Git 複製仍失敗，可在 PowerShell 執行 `gh auth setup-git`，再重新安裝。
+首次加入 marketplace 時依提示確認，並選擇安裝範圍。安裝後的技能指令是 `/bdd-skills:bdd-local-test`。
 
 ## 安裝到 Codex
 
@@ -28,8 +28,6 @@ Claude Code 2.1.275 以上可在互動工作階段輸入一條指令，加入此
 codex plugin marketplace add zokmi/bdd-skills
 codex plugin add bdd-skills@zokmi-bdd-skills
 ```
-
-此儲存庫為私人專案，執行指令前，Git 憑證須能讀取 `zokmi/bdd-skills`。若 GitHub CLI 已登入但 Git 複製失敗，可執行 `gh auth setup-git` 後重試。
 
 安裝後可在 Codex 使用 `bdd-local-test` skill。
 
