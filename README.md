@@ -8,7 +8,7 @@ Claude Code 與 Codex 跨專案 BDD 測試 skill。
 - `assets/`、`references/`、`scripts/`：報告範本、寫作參考與本機驗證輔助腳本。
 - `evals/`：skill 的評估案例定義。
 
-執行本機 UI 情境時，skill 會優先用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或 worktree 需要獨立瀏覽器參數時，改用 Node Playwright，並在報告說明。只有所有情境經真實路徑驗證通過，才會標示 all pass。
+執行本機 UI 情境時，skill 會優先用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或 worktree 需要獨立瀏覽器參數時，改用 Node Playwright，並在報告說明。所有情境經真實路徑驗證通過後，會合併並複測 `develop`、更新對應 issue 並附修正後截圖；衝突、權限或驗證問題會如實回報。
 
 ## 安裝到 Claude Code
 
