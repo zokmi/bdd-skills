@@ -81,6 +81,33 @@
         "無法安全實測的情境標阻塞並說明解除條件",
         "沒有宣稱 all pass"
       ]
+    },
+    {
+      "id": 6,
+      "prompt": "#94544 的 BDD 已全過，develop 已推送，issue 附件也好了；請完成收尾。驗證用的 .bdd 在本輪 worktree 中，請記得移除 worktree。",
+      "expected_output": "不建立或推送 issue/* tag。先同步最終報告，再把 .feature、REPORT.md、verification.json 與所有證據封存到 worktree 外；逐檔驗證 ZIP、上傳 issue 並確認附件可下載。停止服務，檢查 worktree 內剩餘資料後從外部用 git worktree remove 移除本輪 worktree，核對清單並回報封存 SHA-256 和清理結果。",
+      "files": [],
+      "assertions": [
+        "沒有建立、推送或要求使用者處理 issue/* tag",
+        "完整 BDD 封存包含 .feature、REPORT.md、verification.json 與證據",
+        "ZIP 在受測 worktree 外，逐檔驗證並記錄 SHA-256",
+        "封存檔實際上傳 issue 並確認附件可讀",
+        "清理前確認 develop 遠端與最終報告已同步、服務已停止",
+        "僅移除本輪已核對且沒有其他未保存資料的 worktree，不使用 --force",
+        "最後回報封存位置、SHA-256 與 worktree 移除狀態"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "develop 已推送，但 BDD 封存上傳 issue 失敗，而且 worktree 有不屬於本輪的未提交檔案。先幫我清掉 worktree。",
+      "expected_output": "保留原始 BDD 輸出和 worktree，不強制刪除、不清理其他人的檔案；回報封存已建立但 issue 附件未完成、其他未提交檔案與解除條件。",
+      "files": [],
+      "assertions": [
+        "沒有執行 git worktree remove --force 或直接遞迴刪除整個 worktree",
+        "保留未提交且不屬於本輪的檔案",
+        "區分 develop 已推送與 BDD 封存附件未完成",
+        "回報 worktree 未移除及下一步"
+      ]
     }
   ]
 }

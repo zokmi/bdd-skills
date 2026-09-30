@@ -237,55 +237,11 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
    遇衝突就保留原分支與整合工作區供檢查，停止並回報衝突檔案；不動 `origin/develop`，不推未解衝突版本。合併後依〈1-1〉及本流程在整合工作區**完整重跑所有情境**，確認 API、UI、資料庫與既有整合沒有退步；若有失敗或阻塞，不推 `develop`，回報原因與證據。全部通過才用非強制的 `git push origin HEAD:refs/heads/develop` 推送整合工作區的 HEAD，再查遠端 SHA 核對；遠端前進、權限不足或分支保護拒絕時，不用 `--force`，回報本機結果與待處理步驟。若原本就在 `develop`，跳過合併，但仍要完整複測、正常推送並核對遠端版本。這輪受測程式 SHA 與最後的遠端 HEAD 都要記錄。
 3. **更新對應 issue**：只在 `develop` 合併／推送及合併後驗證成功後，用可用的 issue 工具追加「問題或需求、根因、修正內容、測試範圍與全通過數字、功能分支與 develop 的受測 SHA、報告位置」說明，並**實際上傳最後一輪的修正後截圖**，逐張說明畫面證明了哪個情境。優先先上傳附件、取得可用附件識別或連結，再一次儲存註記；若是 Redmine，先讀 `~/.redmine-issue-guides/SKILL.md`（存在時）與專案指引，保留原概述與驗收標準，在適當欄位追加註記；狀態只依專案流程更新。
    上傳前檢查截圖不含帳密或不應外傳的資料。確認 issue 註記與每張截圖附件真的儲存成功，記下 issue 連結及附件清單。若註記已儲存但附件失敗，分別記錄「註記已更新／附件未完成」，重試前先讀現有註記，避免重複留言。沒有可用工具、附件上傳失敗或權限不足時，保留截圖與可貼上的說明，回報使用者；不要假稱已更新或只貼尚未上傳的圖片連結。
-4. **準備完成紀錄**：在報告〈收尾紀錄〉先列出合併前後 SHA、`develop` 遠端核對、合併後複測結果、issue 連結、修正後截圖與上傳狀態。issue 更新成功後才進行下方封存、tag 與服務清理；**最終報告等這些步驟完成後再依〈7-2〉同步**，避免遠端或 issue 附件停在舊狀態。當收尾任何一項未完成時，明確區分「本機 all pass」與「develop 已合併／issue 已更新」。
+4. **準備完成紀錄**：在報告〈收尾紀錄〉先列出合併前後 SHA、`develop` 遠端核對、合併後複測結果、issue 連結、修正後截圖與上傳狀態。issue 更新成功後才清理服務，依〈7-2〉同步最終報告，再依〈7-3〉封存與清理 worktree；避免遠端或 issue 附件停在舊狀態。當收尾任何一項未完成時，明確區分「本機 all pass」與「develop 已合併／issue 已更新」。
 
-本次適用〈7-1〉時，以下封存、tag 與服務清理須等 `develop` 遠端核對及 issue 的截圖附件更新均成功後才做；未完成時保留截圖與環境，回報部分完成狀態。
+本次適用〈7-1〉時，以下服務清理須等 `develop` 遠端核對及 issue 的截圖附件更新均成功後才做；未完成時保留截圖與環境，回報部分完成狀態。
 
-**全部情境皆「通過」時，把 `evidence/` 壓縮封存以節省硬碟空間**（有任何失敗、阻塞或未執行就不壓，
-下一輪複測還要直接開證據比對）：
-
-1. 在輸出資料夾內用 PowerShell 壓成 `evidence.zip`（中文檔名在 pwsh 7 不會亂碼；Git Bash 的 GNU tar 不支援 zip）：
-   `Compress-Archive -Path evidence -DestinationPath evidence.zip -CompressionLevel Optimal`
-   （壓整個資料夾，解壓後會還原成 `evidence/`，報告連結才對得上。）
-   已有 `evidence.zip`（前一輪的封存）時，先解回原處與本輪證據合併再重壓，不要覆蓋掉舊證據。
-2. **驗證後才刪原資料夾**：以 `[IO.Compression.ZipFile]::OpenRead` 比對壓縮檔內的檔案數與 `evidence/` 的檔案數一致，
-   一致才刪 `evidence/`；不一致就保留原資料夾並向使用者回報。
-3. 在 `REPORT.md` 標題表格填「證據封存」列：「已壓縮為 `evidence.zip`，解壓到本資料夾後報告內的連結即可開啟」。
-   報告內 `evidence/...` 的連結維持原樣，不要改寫。
-
-**全部情境皆「通過」時，在受測 commit 打上 `issue/<單號>` 的 git tag 留存**，讓這個功能之後能依單號找回「BDD 驗證通過的版本」。本次合併 `develop` 時，tag 指向合併後完整複測的 `develop` 受測 commit，而非先前功能分支的 commit。
-有任何失敗、阻塞或未執行就不打；`verification.json` 本輪的 `dirtyPaths` 不為空（測的是含未提交異動的工作區）也不打——tag 只能證明 commit，證明不了工作區。
-
-1. 命名沿用 repo 既有慣例：`issue/<單號>`（先 `git tag -l 'issue/*'` 看既有的樣子，例如 `issue/4970`），一律用 annotated tag，不用 lightweight。
-2. 先檢查是否已存在：`git rev-parse -q --verify "refs/tags/issue/<單號>^{commit}"`，遠端查 `git ls-remote --tags origin "refs/tags/issue/<單號>" "refs/tags/issue/<單號>^{}"`，以 `^{}` 的 peeled SHA 比對 annotated tag 指向的 commit。
-   - 不存在 → 建立。
-   - 已存在且指向同一個 commit → 不重建；若只在本機，仍依步驟 4 檢查是否能推送。
-   - 已存在但指向別的 commit（例如之前 PR 合併時打的，或上一輪測的是舊版）→ **不要 `-f` 移動、也不要刪掉重建**，停下來問使用者要移動還是保留原樣。
-3. 標在本輪 `verification.json` 記錄的受測 HEAD，而不是「目前的 HEAD」（兩者在 `still-valid` 沿用時可能不同）。
-   訊息先用檔案編輯工具寫進暫存檔，再以 `-F` 帶入（含中文與換行，不要用 `-m` 拼字串）：
-   ```bash
-   git tag -a "issue/<單號>" <受測 HEAD> -F <scratchpad>/tag-msg.txt
-   ```
-   訊息檔內容：
-   ```
-   #<單號> BDD 驗證通過（第 N 輪，通過 N／共 N）
-   報告：<issue 連結；若本次無 issue，用實際可讀的報告路徑；若 .bdd 已受版控追蹤，可加 .bdd/<單號>-<主題>/REPORT.md>
-   分支：<受測分支>　基準：<基準分支>
-
-   <受測 commit 短 SHA> <標題>
-   ...
-   ```
-4. **建立後自動推到遠端**（不必問使用者）：
-   ```bash
-   git push origin "refs/tags/issue/<單號>"
-   ```
-   - 只推這一個 tag，不要用 `--tags`／`--follow-tags`，以免把本機其他 tag 一起推上去。
-   - 推之前先確認受測 commit 已在遠端：`git branch -r --contains <受測 HEAD>` 有結果才推。
-     沒有結果代表這個 commit 還沒 push，推 tag 會連帶把尚未推送的 commit 一起送上遠端，
-     這時**只保留本機 tag、不推**，回覆使用者請他先推分支，並附上推 tag 的指令。
-   - 推送失敗（權限不足、網路、遠端已有同名 tag 但指向別的 commit）→ 保留本機 tag，照實回報錯誤訊息，不要改用 `-f` 強推。
-   - 步驟 2 查到遠端已有同一 commit 的 tag 就不必再推。
-5. 在 `REPORT.md` 標題表格填「git tag」列。
+**證據先維持 `evidence/` 原狀**，供 issue 上傳、報告連結與最後檢查使用。不要提前刪除原圖或只壓 `evidence/`；最終依〈7-3〉把 `.feature`、`REPORT.md`、`verification.json` 與全部證據一次封成完整 BDD 包。若舊輪次已有 `evidence.zip`，保留它及本輪新證據，不能覆蓋舊檔。
 
 **全部情境皆「通過」且在 worktree 裡測時，接著自動停止本 worktree 綁在 `127.0.0.N` 上的前後端服務**，
 釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；主目錄（`isWorktree=false`）一律不停。
@@ -303,7 +259,20 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
 
 ### 7-2. 同步最終報告
 
-封存、tag 與服務清理後，才把它們的**實際結果**填進 `REPORT.md` 與〈收尾紀錄〉，連同最後一輪 `verification.json` 核對。本次適用〈7-1〉時，若報告受版控追蹤，只提交本次產出的報告與專案允許的證據檔，確認受測程式未變，再非強制推送到 `origin/develop` 並核對新遠端 HEAD。報告內記「受測程式 SHA」及**提交報告前**的遠端 HEAD；報告 commit 的 SHA 要在推送後寫進 issue 後續註記或最後回覆，不能預先寫進同一份報告造成自我參照，也不能把純文件 commit 冒充受測版本。若 `.bdd/` 被忽略，將**最終版** `REPORT.md`、`verification.json` 與需要留存的證據壓縮檔實際上傳到同一 issue，確認附件可讀，不假稱已進版控。若上傳或推送失敗，保留本機檔案並回報「程式已合併，但最終報告同步未完成」及錯誤；不要重貼已存在的 issue 註記。若使用者明確只要測試報告而未執行〈7-1〉，最終報告依專案規範保存，不自行推送 `develop` 或更新 issue。
+服務清理後，才把它的**實際結果**填進 `REPORT.md` 與〈收尾紀錄〉，連同最後一輪 `verification.json` 核對。報告的「證據封存」欄先寫「待依〈7-3〉產生完整 BDD 封存；實際檔案與 SHA-256 見 issue 後續註記或最終回覆」，避免把還沒產生的檔案寫成已完成。本次適用〈7-1〉時，若報告受版控追蹤，只提交本次產出的報告與專案允許的證據檔，確認受測程式未變，再非強制推送到 `origin/develop` 並核對新遠端 HEAD。報告內記「受測程式 SHA」及**提交報告前**的遠端 HEAD；報告 commit 的 SHA 要在推送後寫進 issue 後續註記或最後回覆，不能預先寫進同一份報告造成自我參照，也不能把純文件 commit 冒充受測版本。若 `.bdd/` 被忽略，將最終版 `REPORT.md`、`verification.json` 與證據保留到〈7-3〉封存並上傳；此前不要刪除 worktree。若上傳或推送失敗，保留本機檔案並回報「程式已合併，但最終報告同步未完成」及錯誤；不要重貼已存在的 issue 註記。若使用者明確只要測試報告而未執行〈7-1〉，最終報告依專案規範保存，不自行推送 `develop` 或更新 issue。
+
+### 7-3. 最終 BDD 封存與 worktree 清理
+
+預設流程在 `develop` 的程式與最終報告推送、遠端 SHA 核對、issue 的說明與修正後截圖附件皆成功後，**自動封存完整 BDD 輸出並清理本輪 worktree**。若使用者本次明確只要測試報告、不執行〈7-1〉，可依步驟 1 封存，但不執行 issue 上傳或自動刪除既有 worktree。預設流程任一步未完成就保留原始資料與 worktree，回報卡住的步驟。
+
+1. 在 worktree 外選一個可持續存取的位置，例如該 worktree 的上層 `bdd-archives/`，以「單號＋受測程式 SHA」命名新 ZIP；不要覆蓋既有封存。執行：
+   ```bash
+   pwsh -NoProfile -File "<skill 目錄>/scripts/archive-bdd.ps1" -Dir <最終 .bdd/單號-主題> -Destination <worktree 外/bdd-archives/單號-SHA.zip>
+   ```
+   腳本封存整個 BDD 資料夾，逐檔比對 ZIP 內外的 SHA-256，回傳檔案數、大小、封存檔 SHA-256 與絕對路徑。若缺 `.feature`、`REPORT.md`、`verification.json` 或證據，或驗證失敗，保留原始資料並停止清理。解壓後保留 `evidence/` 的相對路徑，報告連結仍可用。
+2. 將 ZIP **實際上傳到對應 issue**，確認附件可下載；在 issue 後續註記補充檔名、SHA-256、檔案數、受測程式 SHA 及報告 commit SHA。上傳失敗時保留 worktree 與外部 ZIP，回報「封存已建立／issue 附件未完成」，不要假稱已封存到 issue。
+3. 僅清理本輪使用、能從 `git worktree list --porcelain` 對上絕對路徑的功能與整合 worktree；主 checkout、其他人的 worktree 一律保留。先確認 `develop` 遠端核對成功、ZIP 已在所有待刪 worktree 外且附件可讀、服務已依停止腳本清理。逐一檢查 `git status --porcelain --untracked-files=all` 與被忽略的 BDD 輸出；把每個 worktree 的本輪 `.bdd/<單號-主題>` 檔案與已驗證 ZIP 比對，未收入的先另外封存並確認附件，再進行清理。只對已完整保存且屬於本輪的 BDD 輸出目錄，在核對解析後絕對路徑仍位於目標 worktree 內後移除。其他未提交、未追蹤或忽略檔案一律保留並回報，不使用 `--force`。
+4. 從目標 worktree **外**執行 `git worktree remove <核對過的 worktree 絕對路徑>`，再以 `git worktree list --porcelain` 確認目標已不在清單；刪除失敗就保留現場、回報原因，不自行遞迴刪除整個 worktree。將每個實際清理結果補到 issue 後續註記或最終回覆；已封存的 `REPORT.md` 只記預定清理狀態，避免修改 ZIP 造成 SHA-256 失效。
 
 最後列出本次建立的 `BDD-` 測試資料，**問使用者要不要清除**，不要自己刪。
-回覆使用者時給：輸出資料夾路徑、功能分支與 `develop` 的受測 commit（短 SHA）、通過／失敗／阻塞／未執行數字、每個失敗的一行說明、證據是否已封存（壓縮前後大小）、修正後截圖與 issue 更新連結、`develop` 合併及遠端核對狀態、`issue/<單號>` tag 是否已建立並推到遠端（沒建或沒推就說原因），以及服務是否已停止。任何收尾步驟失敗，要列出卡住的步驟、錯誤與使用者可採取的下一步；同步後複測另說明與上一輪的差異。
+回覆使用者時給：完整 BDD 封存檔的絕對路徑、SHA-256、大小與 issue 附件連結，功能分支與 `develop` 的受測 commit（短 SHA）、通過／失敗／阻塞／未執行數字、每個失敗的一行說明、修正後截圖與 issue 更新連結、`develop` 合併及遠端核對狀態、服務是否已停止，以及各 worktree 是否已移除（未移除要寫原因）。任何收尾步驟失敗，要列出卡住的步驟、錯誤與使用者可採取的下一步；同步後複測另說明與上一輪的差異。

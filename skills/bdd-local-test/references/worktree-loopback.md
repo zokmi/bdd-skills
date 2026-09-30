@@ -19,4 +19,4 @@
 6. `@API`／`curl` 直接打 `http://<ip>:<埠>`。若後端需驗 Origin，帶 `-H "Origin: http://localhost:<前端埠>"`。
 7. 報告〈環境〉記錄 `isWorktree=true`、slot、IP、原埠號、占用判定、實際 UI／API 網址及受測版本的確認方式。共用資料庫不會因 IP 分流而隔離；測試資料使用 `BDD-<單號>-` 前綴並盡量選不同建案或主檔，避免互相干擾。
 
-全通過後依 `SKILL.md` 第 7 節的停止腳本清理本 worktree 服務；有失敗或阻塞時保留供複測。不可清理其他 worktree 或使用者的服務。
+全通過後依 `SKILL.md` 第 7 節的停止腳本清理本 worktree 服務；`develop` 推送、issue 更新與最終 BDD 封存確認後，依〈7-3〉安全移除本輪 worktree。有失敗或阻塞時保留供複測。不可清理其他 worktree 或使用者的服務。
