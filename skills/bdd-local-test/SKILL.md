@@ -234,6 +234,40 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
 3. 在 `REPORT.md` 標題表格填「證據封存」列：「已壓縮為 `evidence.zip`，解壓到本資料夾後報告內的連結即可開啟」。
    報告內 `evidence/...` 的連結維持原樣，不要改寫。
 
+**全部情境皆「通過」時，在受測 commit 打上 `issue/<單號>` 的 git tag 留存**，讓這個功能之後能依單號找回「BDD 驗證通過的版本」。
+有任何失敗、阻塞或未執行就不打；`verification.json` 本輪的 `dirtyPaths` 不為空（測的是含未提交異動的工作區）也不打——tag 只能證明 commit，證明不了工作區。
+
+1. 命名沿用 repo 既有慣例：`issue/<單號>`（先 `git tag -l 'issue/*'` 看既有的樣子，例如 `issue/4970`），一律用 annotated tag，不用 lightweight。
+2. 先檢查是否已存在：`git rev-parse -q --verify "refs/tags/issue/<單號>^{commit}"`，遠端查 `git ls-remote --tags origin "refs/tags/issue/<單號>" "refs/tags/issue/<單號>^{}"`，以 `^{}` 的 peeled SHA 比對 annotated tag 指向的 commit。
+   - 不存在 → 建立。
+   - 已存在且指向同一個 commit → 不重建；若只在本機，仍依步驟 4 檢查是否能推送。
+   - 已存在但指向別的 commit（例如之前 PR 合併時打的，或上一輪測的是舊版）→ **不要 `-f` 移動、也不要刪掉重建**，停下來問使用者要移動還是保留原樣。
+3. 標在本輪 `verification.json` 記錄的受測 HEAD，而不是「目前的 HEAD」（兩者在 `still-valid` 沿用時可能不同）。
+   訊息先用檔案編輯工具寫進暫存檔，再以 `-F` 帶入（含中文與換行，不要用 `-m` 拼字串）：
+   ```bash
+   git tag -a "issue/<單號>" <受測 HEAD> -F <scratchpad>/tag-msg.txt
+   ```
+   訊息檔內容：
+   ```
+   #<單號> BDD 驗證通過（第 N 輪，通過 N／共 N）
+   報告：.bdd/<單號>-<主題>/REPORT.md
+   分支：<受測分支>　基準：<基準分支>
+
+   <受測 commit 短 SHA> <標題>
+   ...
+   ```
+4. **建立後自動推到遠端**（不必問使用者）：
+   ```bash
+   git push origin "refs/tags/issue/<單號>"
+   ```
+   - 只推這一個 tag，不要用 `--tags`／`--follow-tags`，以免把本機其他 tag 一起推上去。
+   - 推之前先確認受測 commit 已在遠端：`git branch -r --contains <受測 HEAD>` 有結果才推。
+     沒有結果代表這個 commit 還沒 push，推 tag 會連帶把尚未推送的 commit 一起送上遠端，
+     這時**只保留本機 tag、不推**，回覆使用者請他先推分支，並附上推 tag 的指令。
+   - 推送失敗（權限不足、網路、遠端已有同名 tag 但指向別的 commit）→ 保留本機 tag，照實回報錯誤訊息，不要改用 `-f` 強推。
+   - 步驟 2 查到遠端已有同一 commit 的 tag 就不必再推。
+5. 在 `REPORT.md` 標題表格填「git tag」列。
+
 **全部情境皆「通過」且在 worktree 裡測時，接著自動停止本 worktree 綁在 `127.0.0.N` 上的前後端服務**，
 釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；主目錄（`isWorktree=false`）一律不停。
 
@@ -249,4 +283,4 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
 4. 在 `REPORT.md` 標題表格填「服務狀態」列。
 
 最後列出本次建立的 `BDD-` 測試資料，**問使用者要不要清除**，不要自己刪。
-回覆使用者時給：輸出資料夾路徑、受測的 repo 與 commit（短 SHA）、通過／失敗／阻塞數字、每個失敗的一行說明、證據是否已封存（壓縮前後大小），以及服務是否已停止。同步後複測時，另外說明與上一輪（來源 repo）的結果差異。
+回覆使用者時給：輸出資料夾路徑、受測的 repo 與 commit（短 SHA）、通過／失敗／阻塞數字、每個失敗的一行說明、證據是否已封存（壓縮前後大小）、`issue/<單號>` tag 是否已建立並推到遠端（沒建或沒推就說原因，沒推時附推送指令），以及服務是否已停止。同步後複測時，另外說明與上一輪（來源 repo）的結果差異。
