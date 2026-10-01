@@ -15,6 +15,7 @@
         subject  只找到同標題的 commit，內容有差異（通常是解衝突或手動改寫）
         missing  找不到，這個異動沒有同步過來
     - 受測檔案在目前 HEAD 的 blob 是否與紀錄時相同
+    - 本輪跑過的模組情境檔（scenarios）在目前 HEAD 的 blob 是否與紀錄時相同
 
   判定（verdict）：
     current       同 repo、同 HEAD、相關檔案無未提交異動 → 報告仍有效
@@ -45,6 +46,12 @@
 .PARAMETER Note
   記錄模式：本輪的一句說明（例如「自 upstream 同步後複測」）。
 
+.PARAMETER ChangedScenarios
+  記錄模式：本輪新增或修改的模組情境檔（repo 相對路徑）。每項可寫「<路徑>」或「<路徑>::<編號>,<編號>」，未列編號時取檔內所有情境；可用 ; 串多項。
+
+.PARAMETER RegressionScenarios
+  記錄模式：本輪沒有修改、挑來回歸的模組情境檔，格式同 -ChangedScenarios。
+
 .PARAMETER SearchDepth
   比對模式：以 patch-id／標題搜尋對應 commit 時，往回找的 commit 數上限，預設 3000。
 
@@ -67,6 +74,8 @@ param(
     [int]$Blocked = 0,
     [int]$NotRun = 0,
     [string]$Note = '',
+    [string[]]$ChangedScenarios = @(),
+    [string[]]$RegressionScenarios = @(),
     [int]$SearchDepth = 3000
 )
 
@@ -76,6 +85,7 @@ $ErrorActionPreference = 'Stop'
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
 # 中文檔名不要被 git 轉成 \345\256... 的八進位跳脫
 $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.quotepath'; $env:GIT_CONFIG_VALUE_0 = 'off'
+Import-Module (Join-Path $PSScriptRoot 'lib/BddModules.psm1') -Force
 $file = Join-Path $Dir 'verification.json'
 
 # 取得 repo 識別：origin URL（沒有 origin 就用第一個 remote），再加上根目錄名稱
@@ -106,6 +116,21 @@ function Get-DirtyPaths([string[]]$paths) {
     @(git status --porcelain -- @paths | ForEach-Object { $_.Substring(3) })
 }
 
+# 把 -ChangedScenarios／-RegressionScenarios 的每一項轉成紀錄：path、blob（受測版本的 git blob；該版本沒有此檔為 null）、ids、role
+function ConvertTo-ScenarioRecords([string[]]$Entries, [string]$Role, [string]$HeadSha) {
+    $root = (git rev-parse --show-toplevel).Trim()
+    foreach ($entry in @($Entries | ForEach-Object { $_ -split ';' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        $parts = $entry -split '::', 2
+        $path = ($parts[0] -replace '\\', '/') -replace '^\./', ''
+        $full = Join-Path $root $path
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "找不到情境檔：$path" }
+        $blob = git rev-parse --verify --quiet "${HeadSha}:$path"
+        $ids = if ($parts.Count -gt 1) { @($parts[1] -split '[,\s]+' | Where-Object { $_ }) }
+               else { @(Get-FeatureScenarios $full | ForEach-Object { $_.ids }) }
+        [ordered]@{ path = $path; blob = if ($blob) { "$blob".Trim() } else { $null }; ids = $ids; role = $Role }
+    }
+}
+
 if ($Record -eq $Check) { Write-Error '請擇一指定 -Record 或 -Check'; exit 2 }
 
 if ($Record) {
@@ -134,6 +159,14 @@ if ($Record) {
         $blobs[$p] = if ($b) { $b.Trim() } else { $null }   # null 代表該檔在受測版本已刪除
     }
 
+    try {
+        $scenarioRecords = @(
+            ConvertTo-ScenarioRecords $ChangedScenarios 'changed' $headSha
+            ConvertTo-ScenarioRecords $RegressionScenarios 'regression' $headSha
+        )
+    } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 2 }
+    $scenarioPaths = @($scenarioRecords | ForEach-Object { $_.path })
+
     $round = [ordered]@{
         recordedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz')
         repo       = Get-RepoIdentity
@@ -141,9 +174,10 @@ if ($Record) {
         head       = $headSha
         base       = if ($Base) { (git rev-parse $Base).Trim() } else { $null }
         baseRef    = $Base
-        dirtyPaths = @(Get-DirtyPaths $paths)
+        dirtyPaths = @(Get-DirtyPaths (@($paths) + $scenarioPaths))
         commits    = @($commitInfo)
         files      = $blobs
+        scenarios  = $scenarioRecords
         result     = [ordered]@{ passed = $Passed; failed = $Failed; blocked = $Blocked; notRun = $NotRun }
         note       = $Note
     }
@@ -219,7 +253,15 @@ $changedFiles = foreach ($p in $last.files.Keys) {
     if ($b -ne $last.files[$p]) { $p }
 }
 $changedFiles = @($changedFiles)
-$dirty = @(Get-DirtyPaths @($last.files.Keys))
+# 模組情境檔：受測時未提交（blob 為 null）或與目前 HEAD 不同，都要重測
+$scenarioList = if ($last.Keys -contains 'scenarios') { @($last.scenarios) } else { @() }
+$changedScenarios = @(foreach ($s in $scenarioList) {
+    $b = git rev-parse --verify --quiet "${headSha}:$($s.path)"
+    $b = if ($b) { "$b".Trim() } else { $null }
+    if ($null -eq $s.blob -or $b -ne $s.blob) { $s.path }
+})
+if ($changedScenarios.Count -gt 0) { $reasons.Add("$($changedScenarios.Count) 個情境檔與受測時不同或受測時未提交：" + ($changedScenarios -join '、')) }
+$dirty = @(Get-DirtyPaths (@($last.files.Keys) + @($scenarioList | ForEach-Object { $_.path })))
 if ($changedFiles.Count -gt 0) { $reasons.Add("$($changedFiles.Count) 個受測檔案內容與受測時不同") }
 if ($dirty.Count -gt 0) { $reasons.Add("$($dirty.Count) 個受測檔案有未提交異動") }
 
@@ -234,6 +276,7 @@ $verdict = if ($reasons.Count -gt 0) { 'rerun' }
     current      = [ordered]@{ repo = $cur; branch = (git branch --show-current).Trim(); head = $headSha }
     commits      = $mapping
     changedFiles = $changedFiles
+    changedScenarios = $changedScenarios
     dirtyPaths   = $dirty
 } | ConvertTo-Json -Depth 8
 
