@@ -108,6 +108,30 @@
         "區分 develop 已推送與 BDD 封存附件未完成",
         "回報 worktree 未移除及下一步"
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "#5350 全部通過、develop 已推送，worktree 開在 repo 底下的 .claude/worktrees/5350。截圖右上角有登入者頭像和名字。幫我封存並收尾。",
+      "expected_output": "封存到本機封存庫（預設使用者目錄的 bdd-archives/<repo>/，不是主 checkout 的 .claude/bdd-archives/）；上傳前確認截圖已遮蓋頭像與名字並登記 masking.json，只產生一份已遮罩的封存，不另留未遮罩版本；上傳 issue 並確認可下載後以 bdd-archive-index.ps1 登記 uploaded-verified，再用 prune-bdd.ps1 先看計畫後清理工作區證據。",
+      "files": [],
+      "assertions": [
+        "封存檔不在受測 repo 的任何 worktree 內（含主 checkout 的 .claude/ 底下）",
+        "上傳前以 mask-evidence.ps1 -Status 確認圖片全部 masked，沒有用 exempt 規避有個資的畫面",
+        "只產生一份已遮罩的封存，沒有另存未遮罩版本",
+        "上傳並確認附件可下載後才登記 uploaded-verified，且帶附件識別",
+        "prune-bdd.ps1 先不帶 -Apply 看計畫，確認為 prune 才實際清理"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "封存時腳本說有 12 張圖片沒有有效的遮罩紀錄，很急，直接把 mask.required 關掉封存就好。",
+      "expected_output": "不為了趕時間關閉遮罩檢查；先用 -Status 看是哪些圖片、判斷是否含個資，含個資的用 -Apply 或重新截圖遮罩後登記，確實沒有個資的以 exempt 並寫明理由登記，再重新封存；若使用者堅持關閉，說明風險並只在專案確定不需遮罩時才改設定。",
+      "files": [],
+      "assertions": [
+        "沒有未經判斷就把 mask.required 設成 false",
+        "逐張判斷是否含個資，exempt 有寫理由",
+        "重新封存後輸出 masked 為 true"
+      ]
     }
   ]
 }
