@@ -72,10 +72,21 @@ function Get-Sha256Hex {
 
 <#
 .SYNOPSIS
+  回傳路徑本身或最近一層實際存在的上層目錄；git -C 遇到不存在的路徑會直接失敗，查詢前先用這個往上找。
+#>
+function Get-ExistingAncestor([Parameter(Mandatory)][string]$Path) {
+    $probe = Get-NormalizedPath $Path
+    while ($probe -and -not (Test-Path -LiteralPath $probe)) { $probe = Split-Path $probe -Parent }
+    if (-not $probe) { throw "找不到存在的上層目錄：$Path" }
+    $probe
+}
+
+<#
+.SYNOPSIS
   取得某路徑所屬 git repo 的所有 worktree 絕對路徑（第一個是主 checkout）。不在 git 內則回傳空陣列。
 #>
 function Get-RepoWorktrees([Parameter(Mandatory)][string]$AnyPath) {
-    $lines = @(git -C $AnyPath worktree list --porcelain 2>$null)
+    $lines = @(git -C (Get-ExistingAncestor $AnyPath) worktree list --porcelain 2>$null)
     if ($LASTEXITCODE -ne 0) { return @() }
     @($lines | Where-Object { $_ -like 'worktree *' } | ForEach-Object { Get-NormalizedPath $_.Substring(9) })
 }
@@ -85,7 +96,7 @@ function Get-RepoWorktrees([Parameter(Mandatory)][string]$AnyPath) {
   從 .bdd 輸出目錄往上找 git 頂層；找不到時丟例外。
 #>
 function Get-RepoTopLevel([Parameter(Mandatory)][string]$AnyPath) {
-    $top = git -C $AnyPath rev-parse --show-toplevel 2>$null
+    $top = git -C (Get-ExistingAncestor $AnyPath) rev-parse --show-toplevel 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $top) { throw "不在 git 工作區內：$AnyPath" }
     Get-NormalizedPath ($top | Select-Object -First 1).Trim()
 }

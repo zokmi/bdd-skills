@@ -198,6 +198,26 @@ Describe 'archive-bdd.ps1' {
     }
 }
 
+Describe 'BddArchive.psm1' {
+    BeforeEach {
+        $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $t = New-TestRepo $base
+        Import-Module (Join-Path $script:Scripts 'lib/BddArchive.psm1') -Force
+    }
+
+    It '預設封存位置以主 checkout 資料夾名命名，即使傳入的輸出目錄不存在' {
+        $env:BDD_ARCHIVE_ROOT = $null
+        $r = Resolve-ArchiveRoot -BddDir (Join-Path $t.repo '.bdd/_')
+        $r.source | Should -Be 'default'
+        $r.path | Should -Be (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'bdd-archives\repo')
+    }
+
+    It '從不存在的子路徑也能取得 worktree 清單與 repo 頂層' {
+        @(Get-RepoWorktrees (Join-Path $t.repo '.bdd/_/x')).Count | Should -Be 1
+        Get-RepoTopLevel (Join-Path $t.repo '.bdd/_') | Should -Be (Get-NormalizedPath $t.repo)
+    }
+}
+
 Describe 'extract-bdd.ps1' {
     BeforeEach {
         # 每個測試各用獨立目錄，避免 .git 唯讀檔清不掉而讓測試互相影響
