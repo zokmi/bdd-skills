@@ -316,6 +316,15 @@ Describe 'bdd-archive-index.ps1 與 prune-bdd.ps1' {
         { & $index -Import -Archive $legacy -ArchiveRoot $archiveRoot -Issue 1234 -Topic 1234-demo } | Should -Throw '*已有*'
     }
 
+    It '證據已被 git 追蹤時不刪除' {
+        git -C $t.repo add -f -- '.bdd/1234-demo/evidence/DM-03_回應.json'
+        git -C $t.repo commit -q -m evidence
+        $p = & $prune -Repo $t.repo -ArchiveRoot $archiveRoot -AllowLocalOnly -Apply | ConvertFrom-Json
+        $p.items[0].action | Should -Be 'keep'
+        $p.items[0].reason | Should -BeLike '*git 追蹤*'
+        Test-Path (Join-Path $t.bdd 'evidence/R1_DM-01_首頁.png') | Should -BeTrue
+    }
+
     It '被取代的封存不算數' {
         & $index -Mark -Archive $r.archive -Status uploaded-verified -Attachment 99 | Out-Null
         Start-Sleep -Milliseconds 1100

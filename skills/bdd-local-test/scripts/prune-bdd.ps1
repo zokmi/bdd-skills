@@ -72,6 +72,14 @@ $items = foreach ($dir in Get-ChildItem -LiteralPath $bddRoot -Directory -Force)
         @(Get-ChildItem -LiteralPath $dir.FullName -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
         $item.reason = '含符號連結或 junction，不自動清理'; [pscustomobject]$item; continue
     }
+    # 被 git 追蹤的證據（即使列在 .gitignore 也可能早已提交）刪了會變成工作區異動，交給使用者以 git rm 決定
+    $trackedPaths = @(@($evidenceDir, $legacyZip) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object {
+        git -C $top ls-files -- ([IO.Path]::GetRelativePath($top, $_).Replace('\', '/'))
+    } | Where-Object { $_ })
+    if ($trackedPaths.Count) {
+        $item.reason = "有 $($trackedPaths.Count) 個證據檔已被 git 追蹤（例如 $($trackedPaths[0])），不自動刪除；要移出版控請另以 git rm 提交"
+        [pscustomobject]$item; continue
+    }
 
     $hashes = [Collections.Generic.List[string]]::new()
     if ($hasDir) {
