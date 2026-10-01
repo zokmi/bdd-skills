@@ -173,17 +173,19 @@
 
 ### 4.3 編碼器
 
-這支 skill 跨專案共用，不可假設一定有編碼器。依序嘗試：
+這支 skill 跨專案共用，不可假設一定有編碼器。
 
-1. `cwebp`／`dwebp`（libwebp 官方工具）。
-2. 有 WebP 支援的 Python Pillow（`python -c "from PIL import features; features.check('webp')"`）。
-3. 兩者都沒有：保留原檔，封存仍然成功，`warnings` 加上 `webpUnavailable`，索引的 `created` 事件記錄 `webp: false`。
+1. 使用有 WebP 支援的 Python Pillow（`python`／`python3`／`py -3` 依序嘗試）；轉檔與逐像素驗證都在同一支 Python 輔助程式內完成。
+2. 沒有 Pillow：保留原檔，封存仍然成功，`warnings` 加上 `webpUnavailable`，索引的 `created` 事件記錄 `webp: false`。
+
+（2026-10-01 實作前探測：原本規劃優先使用 `cwebp`／`dwebp`，但在 pwsh 7.6／.NET 10 以 `Add-Type` 編譯 System.Drawing 的逐像素比對元件會失敗；PowerShell 逐像素迴圈對 1440×900 的截圖又太慢。依 YAGNI 改為只支援 Pillow。）
 
 `.bdd/config.json` 新增 `"webp": "auto" | "off"`，預設 `auto`。
 
-### 4.4 既有封存重新壓縮：`archive-bdd.ps1 -Recompress <zip>`
+### 4.4 既有封存重新壓縮：`recompress-bdd.ps1 -Archive <zip>`
 
-- 解到暫存目錄，依 §4.2 轉檔並逐像素驗證，產生新 ZIP，驗證通過後才刪除舊檔。
+- 獨立腳本（不併入 `archive-bdd.ps1`，維持單一職責），與 `archive-bdd.ps1` 共用打包函式。
+- 解到暫存目錄，依 §4.2 轉檔並逐像素驗證，產生新 ZIP，驗證通過後才取代舊檔；檔名與路徑不變，讓 issue 註記與索引裡的檔名仍然有效。
 - 索引追加 `recompressed` 事件：`source`（舊檔名與 SHA）、`archive`（新檔）、節省的位元組數。
 - 狀態繼承：舊檔是 `uploaded-verified` 時，新檔記為 `uploaded-verified`，並註記 `issueCopy: original`。issue 上的附件仍是舊 PNG 版，它是正式紀錄，不重新上傳。
 - `prune-bdd.ps1` 比對證據是否已封存時，同時接受 `sha256` 與 `originalSha256`。
@@ -204,16 +206,16 @@
 | `git show` 取不到情境，或 blob 不符 | 停止封存，要求重新 `-Record` |
 | 逐像素比對不一致 | 該檔保留原格式，記入 manifest，不停止 |
 | 沒有編碼器 | 保留原格式，`warnings` 提醒，不停止 |
-| `-Recompress` 驗證失敗 | 保留舊檔，不寫入索引 |
+| `recompress-bdd.ps1` 驗證失敗 | 保留舊檔，不寫入索引 |
 
 ## 6. 測試
 
 Pester（`tests/`）新增：
 
 - `bdd-modules.ps1`：§3.2 的六種檢查，每種至少一個通過、一個失敗的案例；並行撞號的偵測。
-- 轉檔：PNG 轉無損 WebP 後逐像素一致；JPEG 轉完變大時保留原檔；沒有編碼器時退回並出現 `warnings`。
+- 轉檔：PNG 轉無損 WebP 後逐像素一致（含透明像素與中文檔名）；轉完變大時保留原檔；沒有 Pillow 時退回並出現 `warnings`。
 - 情境快照：依 `scenarios` 取出受測 commit 的版本；blob 不符時停止。
-- `-Recompress`：產生 `recompressed` 事件、狀態繼承、`prune-bdd.ps1` 可用 `originalSha256` 比對。
+- `recompress-bdd.ps1`：產生 `recompressed` 事件、狀態繼承、`prune-bdd.ps1` 可用 `originalSha256` 比對。
 - 還原再封存：`extract-bdd.ps1` 還原 WebP 封存後，加入新一輪 PNG 證據，再封存成功。
 - 舊格式相容：沒有 `scenarios` 的 issue 資料夾照舊封存與比對。
 
@@ -226,7 +228,7 @@ Pester（`tests/`）新增：
 - `SKILL.md`：§2.4 的步驟改動。
 - 新增 `references/modules.md`：模組切法、`MODULE.md` 格式、編號與撞號規則、遷移步驟。
 - 更新 `references/feature-guide.md`、`references/archive.md`、`references/scenario-review.md`、`assets/REPORT-template.md`（新增〈本輪執行情境〉：模組路徑、編號、`changed`／`regression`）、`evals/evals.json`。
-- 新增 `scripts/bdd-modules.ps1`；修改 `archive-bdd.ps1`、`extract-bdd.ps1`、`mask-evidence.ps1`、`prune-bdd.ps1`、`bdd-verification.ps1`、`lib/BddArchive.psm1`。
+- 新增 `scripts/bdd-modules.ps1`、`scripts/recompress-bdd.ps1`、`scripts/lib/BddModules.psm1`、`scripts/lib/BddPack.psm1`、`scripts/lib/BddImage.psm1`、`scripts/lib/bdd_webp.py`；修改 `archive-bdd.ps1`、`extract-bdd.ps1`、`mask-evidence.ps1`、`prune-bdd.ps1`、`bdd-verification.ps1`、`lib/BddArchive.psm1`。
 - 三個 `plugin.json` 的版本號改為 1.4.0；README 同步。
 
 ### 7.2 交付物 2：bsaila 整併（1.4.0 安裝後，在 bsaila 開功能分支做，單號屆時確認）
@@ -234,7 +236,7 @@ Pester（`tests/`）新增：
 1. 提出對照表給使用者確認：每個舊情境歸到哪個模組、新編號、合併／保留／刪除，以及理由。`sport-format-analysis` 由使用者決定歸屬。
 2. 確認後寫進 `.bdd/modules/`，整批交給子代理審核（3-1），並通過 `bdd-modules.ps1` 檢查。
 3. 刪除各 issue 資料夾裡的 `.feature`（git 歷史與封存都還有），舊的 `REPORT.md`、`verification.json` 不動；新增 `.bdd/modules/MIGRATION-2026-10.md` 記錄舊→新編號對照。
-4. 用 `-Recompress` 處理既有 8 個封存。
+4. 用 `recompress-bdd.ps1` 處理既有 8 個封存。
 
 ## 8. 完成判準
 
