@@ -49,9 +49,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib/BddArchive.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/BddPack.psm1') -Force
 Add-Type -AssemblyName System.IO.Compression
 
-$manifestName = 'bdd-manifest.json'
 $source = Get-NormalizedPath $Dir
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "BDD 輸出目錄不存在：$source" }
 $repoRoot = Get-RepoTopLevel $source
@@ -65,7 +65,7 @@ if (Get-ChildItem -LiteralPath $source -Recurse -Force | Where-Object { $_.Attri
     throw 'BDD 輸出含符號連結或 junction；請先確認來源，避免封存 worktree 外的資料'
 }
 if (-not @(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.feature').Count) { throw '缺少 .feature 情境檔，不能封存' }
-if (Test-Path -LiteralPath (Join-Path $source $manifestName)) { throw "輸出目錄不可自帶 $manifestName（封存時會產生）" }
+if (Test-Path -LiteralPath (Join-Path $source $ManifestName)) { throw "輸出目錄不可自帶 $ManifestName（封存時會產生）" }
 
 # 1. 攤平：舊輪次的 evidence.zip 解回 evidence/，同名同內容略過、同名不同內容停止
 $flattened = @()
@@ -116,25 +116,11 @@ if ($unmasked.Count -and $maskConfig.required -and -not $AllowUnmaskedReason) {
         "專案確定不需遮罩時，在 .bdd/config.json 設定 mask.required = false。")
 }
 
-# 3. 蒐集與去重（舊 evidence.zip 已攤平，不再收入）
-$files = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force |
+# 3. 蒐集（舊 evidence.zip 已攤平，不再收入）
+$entries = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force |
     Where-Object { -not ($_.FullName.Equals($legacyZip, [StringComparison]::OrdinalIgnoreCase)) } |
-    ForEach-Object {
-        [pscustomobject]@{
-            relative = [IO.Path]::GetRelativePath($source, $_.FullName).Replace('\', '/')
-            file = $_
-            sha256 = Get-Sha256Hex -Path $_.FullName
-        }
-    } | Sort-Object relative -CaseSensitive)
-$manifestFiles = [ordered]@{}
-$aliases = [ordered]@{}
-$canonicalBySha = @{}
-foreach ($f in $files) {
-    $manifestFiles[$f.relative] = [ordered]@{ sha256 = $f.sha256; size = $f.file.Length }
-    if ($canonicalBySha.ContainsKey($f.sha256)) { $aliases[$f.relative] = $canonicalBySha[$f.sha256] }
-    else { $canonicalBySha[$f.sha256] = $f.relative }
-}
-$stored = @($files | Where-Object { -not $aliases.Contains($_.relative) })
+    ForEach-Object { New-PackEntry -Relative ([IO.Path]::GetRelativePath($source, $_.FullName)) -Path $_.FullName })
+$sourceFileCount = $entries.Count
 
 # 4. 受測版本與單號
 if (-not $Commit) {
@@ -155,7 +141,7 @@ $target = if ($Destination) { Get-NormalizedPath $Destination } else {
     Get-NormalizedPath (Join-Path $root.path "$folder/$topic-$shortCommit-$stamp.zip")
 }
 if ($Destination) { $warnings += @(Assert-OutsideRepoWorktrees -Target $target -RepoPath $source) }
-if (Test-Path -LiteralPath $target) { throw "封存檔已存在，請使用新檔名，避免覆蓋：$target" }
+$plan = Get-DedupPlan $entries
 
 $manifest = [ordered]@{
     schema = 1
@@ -169,54 +155,15 @@ $manifest = [ordered]@{
     unmasked = $unmasked
     unmaskedReason = if ($unmasked.Count) { $AllowUnmaskedReason } else { $null }
     flattenedFrom = if ($hasLegacyZip) { @('evidence.zip') } else { @() }
-    sourceFileCount = $files.Count
-    storedFileCount = $stored.Count
-    files = $manifestFiles
-    aliases = $aliases
+    sourceFileCount = $sourceFileCount
+    storedFileCount = $plan.stored.Count
+    files = $plan.files
+    aliases = $plan.aliases
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 6
 
-# 6. 打包到暫存檔、驗證後再搬到正式位置
-$parent = Split-Path -Path $target -Parent
-[IO.Directory]::CreateDirectory($parent) | Out-Null
-$temporary = Join-Path $parent ([IO.Path]::GetRandomFileName() + '.zip.tmp')
-$prefix = "$topic/"
-try {
-    $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew)
-    $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $false, [Text.Encoding]::UTF8)
-    try {
-        foreach ($f in $stored) {
-            $level = if ($PrecompressedExtensions -contains $f.file.Extension.ToLowerInvariant()) { 'NoCompression' } else { 'Optimal' }
-            $entry = $archive.CreateEntry($prefix + $f.relative, [IO.Compression.CompressionLevel]::$level)
-            $entry.LastWriteTime = $f.file.LastWriteTime
-            $out = $entry.Open(); $in = [IO.File]::OpenRead($f.file.FullName)
-            try { $in.CopyTo($out) } finally { $in.Dispose(); $out.Dispose() }
-        }
-        $entry = $archive.CreateEntry($prefix + $manifestName, [IO.Compression.CompressionLevel]::Optimal)
-        $writer = [IO.StreamWriter]::new($entry.Open(), [Text.UTF8Encoding]::new($false))
-        try { $writer.Write($manifestJson) } finally { $writer.Dispose() }
-    } finally { $archive.Dispose(); $stream.Dispose() }
-
-    $archive = [IO.Compression.ZipFile]::OpenRead($temporary)
-    try {
-        $entries = @($archive.Entries | Where-Object { -not $_.FullName.EndsWith('/') })
-        if ($entries.Count -ne $stored.Count + 1) { throw "封存檔案數不符：應有 $($stored.Count + 1)、ZIP $($entries.Count)" }
-        foreach ($f in $stored) {
-            $entry = $archive.GetEntry($prefix + $f.relative)
-            if (-not $entry -or $entry.Length -ne $f.file.Length) { throw "封存缺少或大小不符：$($f.relative)" }
-            $s = $entry.Open()
-            try { $hash = Get-Sha256Hex -Stream $s } finally { $s.Dispose() }
-            if ($hash -ne $f.sha256) { throw "封存內容不符：$($f.relative)" }
-        }
-        foreach ($alias in $aliases.Keys) {
-            if ($manifestFiles[$alias].sha256 -ne $manifestFiles[$aliases[$alias]].sha256) { throw "去重對應錯誤：$alias" }
-        }
-    } finally { $archive.Dispose() }
-
-    Move-Item -LiteralPath $temporary -Destination $target
-} finally {
-    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
-}
+# 6. 打包、驗證後才搬到正式位置（失敗不留半成品）
+Write-BddZip -Stored $plan.stored -Prefix "$topic/" -ManifestJson $manifestJson -Target $target
 
 # 7. 登記索引：新增 created，同 repo 同主題且尚未被取代的舊封存標為 superseded
 $sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
@@ -243,10 +190,10 @@ if ($limit -and $size -gt $limit) { $warnings += "封存檔 $size 位元組超�
     archiveRootSource = $root.source
     index = (Join-Path $root.path 'index.jsonl')
     commit = $Commit
-    fileCount = $files.Count
-    storedFileCount = $stored.Count
-    aliasCount = $aliases.Count
-    sourceBytes = [long](($files | ForEach-Object { $_.file.Length } | Measure-Object -Sum).Sum)
+    fileCount = $sourceFileCount
+    storedFileCount = $plan.stored.Count
+    aliasCount = $plan.aliases.Count
+    sourceBytes = [long](($entries | ForEach-Object { $_.size } | Measure-Object -Sum).Sum)
     sizeBytes = $size
     sha256 = $sha256
     masked = ($unmasked.Count -eq 0)
