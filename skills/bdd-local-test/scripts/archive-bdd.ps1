@@ -28,6 +28,10 @@
 .PARAMETER Issue
   單號。省略時取輸出資料夾名稱開頭的數字。
 
+.PARAMETER AllowUnmaskedReason
+  明確允許未遮罩的圖片進入封存，並寫明理由（例如「遷移舊證據，未經遮罩檢查，不上傳 issue」）。
+  理由與未遮罩清單會寫進 manifest；只用於不對外的本機封存，要上傳 issue 的封存不可使用。
+
 .OUTPUTS
   JSON 摘要：封存檔路徑、SHA-256、大小、檔案數、去重數、是否已遮罩、是否超過附件上限、警告。
 
@@ -39,7 +43,8 @@ param(
     [string]$ArchiveRoot,
     [string]$Destination,
     [string]$Commit,
-    [string]$Issue
+    [string]$Issue,
+    [string]$AllowUnmaskedReason
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,7 +106,10 @@ $unmasked = @(foreach ($e in $evidence) {
     $record = $ledger[$e.relative]
     if (-not $record -or $record.sha256 -ne (Get-Sha256Hex -Path $e.file.FullName)) { $e.relative }
 })
-if ($unmasked.Count -and $maskConfig.required) {
+if ($PSBoundParameters.ContainsKey('AllowUnmaskedReason') -and -not "$AllowUnmaskedReason".Trim()) {
+    throw '-AllowUnmaskedReason 必須寫明理由'
+}
+if ($unmasked.Count -and $maskConfig.required -and -not $AllowUnmaskedReason) {
     $list = ($unmasked | Select-Object -First 20) -join "`n  "
     throw ("有 $($unmasked.Count) 張圖片沒有有效的遮罩紀錄，不能封存（已解回的 evidence.zip 檔案保留在 evidence/）：`n  $list`n" +
         "請以 mask-evidence.ps1 -Apply 套用座標遮罩，或確認截圖時已遮罩後用 -Mark -Method css／exempt 登記；" +
@@ -159,6 +167,7 @@ $manifest = [ordered]@{
     masked = ($unmasked.Count -eq 0)
     maskRequired = $maskConfig.required
     unmasked = $unmasked
+    unmaskedReason = if ($unmasked.Count) { $AllowUnmaskedReason } else { $null }
     flattenedFrom = if ($hasLegacyZip) { @('evidence.zip') } else { @() }
     sourceFileCount = $files.Count
     storedFileCount = $stored.Count
@@ -224,7 +233,7 @@ foreach ($p in $previous) {
 }
 
 $limit = Get-ConfigValue $config.data 'maxAttachmentBytes'
-if ($unmasked.Count) { $warnings += "有 $($unmasked.Count) 張圖片未登記遮罩（mask.required = false 才允許），上傳 issue 前請人工確認不含個資" }
+if ($unmasked.Count) { $warnings += "有 $($unmasked.Count) 張圖片未登記遮罩，此封存不可上傳 issue；需要上傳時先遮罩再重新封存" }
 if ($limit -and $size -gt $limit) { $warnings += "封存檔 $size 位元組超過附件上限 $limit，上傳 issue 前需拆分或只附最後一輪截圖" }
 
 [pscustomobject]@{

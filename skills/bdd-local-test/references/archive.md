@@ -114,6 +114,18 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prune-bdd.ps1" -Repo <worktree 或
 
 只有 `evidence/` 每個檔案、`evidence.zip` 每個項目的**內容**都收在 `uploaded-verified` 的同主題封存裡，才會刪除 `evidence/` 與 `evidence.zip`。`.feature`、`REPORT.md`、`verification.json`、`masking.json` 一律保留。結果為 `keep` 的項目會寫明原因（未上傳、封存後又新增證據、封存檔不存在或被改動等），照原因處理，不要手動刪除。
 
+## 遷移舊資料（使用者要求搬移時）
+
+舊版留下的資料分兩種，處理方式不同：
+
+1. **舊版封存 ZIP**（例如主 checkout 的 `.claude/bdd-archives/*.zip`，沒有 manifest）：原檔匯入封存庫的 `<單號>/legacy/`，不重新打包，SHA-256 不變；issue 上有同一個檔案時，再登記 `uploaded-verified`。
+   ```bash
+   pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -Import -Archive <舊 zip> -Repo . -Issue <單號> -Topic <輸出資料夾名> -Commit <短 SHA> -Note "<來源說明>" -Move
+   ```
+2. **工作區的 `.bdd/<單號-主題>/`**（含 `evidence/` 或 `evidence.zip`）：照一般流程封存。舊截圖沒有遮罩登記，而且不會上傳時，用 `-AllowUnmaskedReason "<理由>"` 明確放行，manifest 會記下未遮罩清單與理由；這種封存**不可上傳 issue**。之後用 `prune-bdd.ps1 -AllowLocalOnly` 清理工作區證據，清完後本機封存庫就是唯一的完整副本。
+
+進行中的單（功能分支還沒併回、還會再跑下一輪的）不要遷移。
+
 ## 測試
 
 ```bash

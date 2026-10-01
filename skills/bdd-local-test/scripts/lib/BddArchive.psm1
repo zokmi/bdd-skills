@@ -196,7 +196,7 @@ function Add-ArchiveIndexEvent([Parameter(Mandatory)][string]$Root, [Parameter(M
 <#
 .SYNOPSIS
   彙整索引事件，回傳每個封存檔目前的狀態清單。
-  每筆含 archive、name、issue、topic、commit、sha256、bytes、repo、createdAt、status、attachments、statusAt。
+  每筆含 archive、name、issue、topic、commit、sha256、bytes、repo、createdAt、status、attachments、statusAt、legacy（舊版匯入、沒有 manifest）。
 #>
 function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
     $states = [ordered]@{}
@@ -207,6 +207,7 @@ function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
                 archive = $e.archive; name = $e.name; issue = $e.issue; topic = $e.topic; commit = $e.commit
                 sha256 = $e.sha256; bytes = $e.bytes; repo = $e.repo; createdAt = $e.at
                 status = 'local-only'; attachments = @(); statusAt = $e.at
+                legacy = [bool]($e.PSObject.Properties['legacy'] -and $e.legacy)
             }
         } elseif ($e.event -eq 'status' -and $states.Contains($key)) {
             $states[$key].status = $e.status

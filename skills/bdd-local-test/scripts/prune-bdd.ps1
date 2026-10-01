@@ -19,14 +19,20 @@
 .PARAMETER Apply
   實際刪除；未指定時只輸出計畫。
 
+.PARAMETER AllowLocalOnly
+  連 local-only／uploaded（尚未確認可下載）的封存也當作清理依據。
+  用於把舊證據搬到本機封存庫：清理後本機封存庫就是唯一的完整副本，issue 上不一定有。
+
 .EXAMPLE
   pwsh -NoProfile -File prune-bdd.ps1 -Repo .
   pwsh -NoProfile -File prune-bdd.ps1 -Repo . -Apply
+  pwsh -NoProfile -File prune-bdd.ps1 -Repo . -AllowLocalOnly -Apply
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Repo,
     [string]$ArchiveRoot,
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$AllowLocalOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,8 +87,9 @@ $items = foreach ($dir in Get-ChildItem -LiteralPath $bddRoot -Directory -Force)
         } finally { $zip.Dispose() }
     }
 
-    $candidates = @($states | Where-Object { $_.topic -eq $dir.Name -and $_.status -eq 'uploaded-verified' })
-    if (-not $candidates.Count) { $item.reason = '沒有狀態為 uploaded-verified 的同主題封存'; [pscustomobject]$item; continue }
+    $accepted = if ($AllowLocalOnly) { @('uploaded-verified', 'uploaded', 'local-only') } else { @('uploaded-verified') }
+    $candidates = @($states | Where-Object { $_.topic -eq $dir.Name -and $_.status -in $accepted })
+    if (-not $candidates.Count) { $item.reason = "沒有狀態為 $($accepted -join '／') 的同主題封存"; [pscustomobject]$item; continue }
     $known = [Collections.Generic.HashSet[string]]::new()
     foreach ($c in $candidates) {
         if (-not (Test-Path -LiteralPath $c.archive -PathType Leaf)) { continue }
@@ -97,7 +104,7 @@ $items = foreach ($dir in Get-ChildItem -LiteralPath $bddRoot -Directory -Force)
     if ($missing.Count) { $item.reason = "有 $($missing.Count) 個證據檔的內容不在已上傳的封存裡"; [pscustomobject]$item; continue }
 
     $item.action = 'prune'
-    $item.reason = '證據內容全部收在已上傳並確認的封存中'
+    $item.reason = if ($AllowLocalOnly) { '證據內容全部收在本機封存庫的封存中' } else { '證據內容全部收在已上傳並確認的封存中' }
     if ($Apply) {
         foreach ($p in @($evidenceDir, $legacyZip)) {
             if (-not (Test-Path -LiteralPath $p)) { continue }

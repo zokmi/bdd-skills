@@ -119,6 +119,16 @@ Describe 'archive-bdd.ps1' {
         ($r.warnings -join ' ') | Should -BeLike '*未登記遮罩*'
     }
 
+    It '-AllowUnmaskedReason 允許未遮罩封存並把理由寫進 manifest；理由空白則拒絕' {
+        { Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot; AllowUnmaskedReason = ' ' } } | Should -Throw '*寫明理由*'
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot; AllowUnmaskedReason = '遷移舊證據' }
+        $r.masked | Should -BeFalse
+        ($r.warnings -join ' ') | Should -BeLike '*不可上傳 issue*'
+        $m = Read-Manifest $r.archive
+        $m.unmaskedReason | Should -Be '遷移舊證據'
+        @($m.unmasked).Count | Should -Be 3
+    }
+
     It '舊 evidence.zip 解回 evidence/ 後一起封存，不再收入 evidence.zip 本身' {
         $old = Join-Path $base 'old'
         New-TestPng (Join-Path $old 'evidence/R0_DM-00_舊圖.png') '#00FF00'
@@ -262,6 +272,28 @@ Describe 'bdd-archive-index.ps1 與 prune-bdd.ps1' {
         $p = & $prune -Repo $t.repo -ArchiveRoot $archiveRoot -Apply | ConvertFrom-Json
         $p.items[0].action | Should -Be 'keep'
         Test-Path (Join-Path $t.bdd 'evidence/R3_DM-04_新圖.png') | Should -BeTrue
+    }
+
+    It '-AllowLocalOnly 時，local-only 的封存也可當清理依據' {
+        (& $prune -Repo $t.repo -ArchiveRoot $archiveRoot | ConvertFrom-Json).items[0].action | Should -Be 'keep'
+        $p = & $prune -Repo $t.repo -ArchiveRoot $archiveRoot -AllowLocalOnly -Apply | ConvertFrom-Json
+        $p.items[0].action | Should -Be 'pruned'
+        Test-Path (Join-Path $t.bdd 'evidence') | Should -BeFalse
+    }
+
+    It '-Import 複製舊封存並登記為 legacy，-Move 才刪除來源，重複匯入拒絕' {
+        $legacy = Join-Path $t.repo '.claude/bdd-archives/1234-old.zip'
+        New-Item -ItemType Directory -Path (Split-Path $legacy) -Force | Out-Null
+        Copy-Item $r.archive $legacy
+        $hash = (Get-FileHash $legacy).Hash
+        $i = & $index -Import -Archive $legacy -ArchiveRoot $archiveRoot -Repo $t.repo -Issue 1234 -Topic 1234-demo -Commit abc -Move | ConvertFrom-Json
+        $i.archive | Should -Be (Join-Path $archiveRoot '1234\legacy\1234-old.zip')
+        (Get-FileHash $i.archive).Hash | Should -Be $hash
+        Test-Path $legacy | Should -BeFalse
+        $list = & $index -List -ArchiveRoot $archiveRoot | ConvertFrom-Json
+        ($list.archives | Where-Object archive -eq $i.archive).legacy | Should -BeTrue
+        Copy-Item $i.archive $legacy
+        { & $index -Import -Archive $legacy -ArchiveRoot $archiveRoot -Issue 1234 -Topic 1234-demo } | Should -Throw '*已有*'
     }
 
     It '被取代的封存不算數' {
