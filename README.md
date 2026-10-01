@@ -9,7 +9,7 @@ Claude Code 與 Codex 跨專案 BDD 測試 skill。
 - `evals/`：skill 的評估案例定義。
 - `tests/`：封存、遮罩與清理腳本的 Pester 測試（`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`）。
 
-執行本機 UI 情境時，skill 會優先用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或 worktree 需要獨立瀏覽器參數時，改用 Node Playwright，並在報告說明。截圖當下就遮蓋個資並登記。所有情境經真實路徑驗證通過後，會合併並複測 `develop`、更新對應 issue 並附修正後截圖；再將完整 BDD 輸出去重封存到本機封存庫（預設 `~/bdd-archives/<repo>/`，不會落在任何 worktree 內），上傳 issue 並登記索引後，清理工作區證據與本輪 worktree。衝突、權限或驗證問題會如實回報。封存細節見 `skills/bdd-local-test/references/archive.md`。
+執行本機 UI 情境時，skill 會優先用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或 worktree 需要獨立瀏覽器參數時，改用 Node Playwright，並在報告說明。情境寫完會先交給子代理獨立審核（需求對應、預期是否照抄程式、覆蓋缺漏），處理完必修項目才執行，審核方式見 `skills/bdd-local-test/references/scenario-review.md`。截圖當下就遮蓋個資並登記。所有情境經真實路徑驗證通過後，會合併並複測 `develop`、更新對應 issue 並附修正後截圖；再將完整 BDD 輸出去重封存到本機封存庫（預設 `~/bdd-archives/<repo>/`，不會落在任何 worktree 內），上傳 issue 並登記索引後，清理工作區證據與本輪 worktree。衝突、權限或驗證問題會如實回報。封存細節見 `skills/bdd-local-test/references/archive.md`。
 
 ## 安裝到 Claude Code
 
