@@ -41,13 +41,15 @@ if ($actual -ne $state.sha256) { throw "封存檔 SHA-256 與索引記錄不同�
 $encoder = Get-WebpEncoder
 if (-not $encoder.kind) { throw '沒有可用的 WebP 編碼器（需要支援 WebP 的 Python Pillow），無法重新壓縮' }
 
-$staging = Join-Path ([IO.Path]::GetTempPath()) ('bdd-recompress-' + [IO.Path]::GetRandomFileName())
-$sourceDir = Join-Path $staging 'src'
-[IO.Directory]::CreateDirectory($sourceDir) | Out-Null
+# 預檢（殘留檔）要在建立暫存目錄之前，拒絕時才不會外洩 bdd-recompress-* 暫存目錄
 $newZip = "$archivePath.recompress.zip"
 $backup = "$archivePath.bak"
 if (Test-Path -LiteralPath $newZip) { throw "上次重新壓縮留下的暫存檔仍在，請確認後刪除：$newZip" }
 if (Test-Path -LiteralPath $backup) { throw "上次重新壓縮留下的備份仍在，請確認後處理：$backup" }
+
+$staging = Join-Path ([IO.Path]::GetTempPath()) ('bdd-recompress-' + [IO.Path]::GetRandomFileName())
+$sourceDir = Join-Path $staging 'src'
+[IO.Directory]::CreateDirectory($sourceDir) | Out-Null
 
 try {
     # 1. 解到暫存目錄（去掉第一層資料夾），並依 manifest 還原 aliases

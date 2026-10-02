@@ -614,6 +614,30 @@ Describe 'recompress-bdd.ps1' {
         Import-Module (Join-Path $script:Scripts 'lib/BddImage.psm1') -Force
         Import-Module (Join-Path $script:Scripts 'lib/BddArchive.psm1') -Force
         $script:HasPillow = (Get-WebpEncoder).kind -eq 'pillow'
+
+        # 手工組一個沒有 manifest 的舊版封存並登記進索引；WithFolder 為 $false 時項目直接放在 ZIP 根目錄
+        function New-LegacyZip([string]$Zip, [string]$Root, [bool]$WithFolder) {
+            $png = Join-Path $Root 'legacy.png'
+            New-TestPng $png '#aa5522'
+            [IO.Directory]::CreateDirectory((Split-Path $Zip -Parent)) | Out-Null
+            $p = if ($WithFolder) { 'legacy-topic/' } else { '' }
+            $fs = [IO.File]::Create($Zip)
+            $za = [IO.Compression.ZipArchive]::new($fs, [IO.Compression.ZipArchiveMode]::Create)
+            try {
+                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $png, "${p}evidence/R1_舊版.png")
+                $e = $za.CreateEntry("${p}REPORT.md"); $w = [IO.StreamWriter]::new($e.Open()); $w.Write('# 舊報告'); $w.Dispose()
+            } finally { $za.Dispose(); $fs.Dispose() }
+            Add-ArchiveIndexEvent $archiveRoot ([ordered]@{
+                event = 'created'; archive = $Zip; name = (Split-Path $Zip -Leaf); issue = '1234'; topic = 'legacy-topic'; commit = 'abc1234'
+                sha256 = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash; bytes = (Get-Item -LiteralPath $Zip).Length
+                repo = $null; at = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz'); legacy = $true
+            })
+        }
+        # 列出封存內所有項目名稱
+        function Get-ZipNames([string]$Zip) {
+            $z = [IO.Compression.ZipFile]::OpenRead($Zip)
+            try { @($z.Entries | ForEach-Object FullName) } finally { $z.Dispose() }
+        }
     }
     BeforeEach {
         $env:BDD_ARCHIVE_ROOT = $null
@@ -673,5 +697,67 @@ Describe 'recompress-bdd.ps1' {
         $env:BDD_WEBP_ENCODER = 'none'
         try { { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*Pillow*' }
         finally { $env:BDD_WEBP_ENCODER = $null }
+    }
+
+    It '舊版沒有 manifest 的封存（有第一層資料夾）可轉檔並補上 legacy manifest' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $zip = Join-Path $archiveRoot '1234/legacy/old-folder.zip'
+        New-LegacyZip $zip $base $true
+        $r = & "$script:Scripts/recompress-bdd.ps1" -Archive $zip | ConvertFrom-Json
+        $r.changed | Should -BeTrue
+        $r.converted | Should -Be 1
+        $m = Read-Manifest $zip
+        $m.legacy | Should -BeTrue
+        $m.topic | Should -Be 'legacy-topic'
+        $m.recompressedFrom | Should -Not -BeNullOrEmpty
+        $names = Get-ZipNames $zip
+        $names | Should -Contain 'legacy-topic/evidence/R1_舊版.webp'
+        $names | Should -Not -Contain 'legacy-topic/evidence/R1_舊版.png'
+    }
+
+    It '舊版封存項目直接在 ZIP 根目錄時，輸出前綴為 topic 資料夾' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $zip = Join-Path $archiveRoot '1234/legacy/old-flat.zip'
+        New-LegacyZip $zip $base $false
+        $r = & "$script:Scripts/recompress-bdd.ps1" -Archive $zip | ConvertFrom-Json
+        $r.changed | Should -BeTrue
+        $names = Get-ZipNames $zip
+        @($names | Where-Object { $_ -notlike 'legacy-topic/*' }) | Should -BeNullOrEmpty
+        $names | Should -Contain 'legacy-topic/evidence/R1_舊版.webp'
+        $names | Should -Contain 'legacy-topic/bdd-manifest.json'
+        (Read-Manifest $zip).legacy | Should -BeTrue
+    }
+
+    It '殘留 .bak 時拒絕，且不外洩暫存目錄、不動封存檔' {
+        Set-Content -LiteralPath "$($old.archive).bak" -Value 'leftover'
+        $tmp = [IO.Path]::GetTempPath()
+        $before = @(Get-ChildItem -LiteralPath $tmp -Directory -Filter 'bdd-recompress-*' | ForEach-Object Name)
+        { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*備份*'
+        $after = @(Get-ChildItem -LiteralPath $tmp -Directory -Filter 'bdd-recompress-*' | ForEach-Object Name)
+        @($after | Where-Object { $_ -notin $before }) | Should -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $old.archive -Algorithm SHA256).Hash | Should -Be $old.sha256
+    }
+
+    It '殘留 .recompress.zip 時拒絕，且不外洩暫存目錄' {
+        Set-Content -LiteralPath "$($old.archive).recompress.zip" -Value 'leftover'
+        $tmp = [IO.Path]::GetTempPath()
+        $before = @(Get-ChildItem -LiteralPath $tmp -Directory -Filter 'bdd-recompress-*' | ForEach-Object Name)
+        { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*暫存檔*'
+        $after = @(Get-ChildItem -LiteralPath $tmp -Directory -Filter 'bdd-recompress-*' | ForEach-Object Name)
+        @($after | Where-Object { $_ -notin $before }) | Should -BeNullOrEmpty
+    }
+
+    It '新檔搬入後寫索引失敗時，舊檔回到原路徑且不殘留 .bak 與暫存檔' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $index = Join-Path $archiveRoot 'index.jsonl'
+        (Get-Item -LiteralPath $index).IsReadOnly = $true
+        try {
+            { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw
+        } finally { (Get-Item -LiteralPath $index).IsReadOnly = $false }
+        Test-Path -LiteralPath $old.archive | Should -BeTrue
+        (Get-FileHash -LiteralPath $old.archive -Algorithm SHA256).Hash | Should -Be $old.sha256
+        Test-Path -LiteralPath "$($old.archive).bak" | Should -BeFalse
+        Test-Path -LiteralPath "$($old.archive).recompress.zip" | Should -BeFalse
+        (Get-ArchiveStates $archiveRoot | Where-Object archive -eq $old.archive).recompressed | Should -BeFalse
     }
 }
