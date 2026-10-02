@@ -559,3 +559,51 @@ Describe 'archive-bdd.ps1 WebP' {
         { Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot } } | Should -Throw '*webp*'
     }
 }
+
+Describe 'WebP 封存的清理與還原' {
+    BeforeAll {
+        $env:BDD_WEBP_ENCODER = $null
+        Import-Module (Join-Path $script:Scripts 'lib/BddImage.psm1') -Force
+        $script:HasPillow = (Get-WebpEncoder).kind -eq 'pillow'
+    }
+    BeforeEach {
+        $env:BDD_WEBP_ENCODER = $null
+        $env:BDD_ARCHIVE_ROOT = $null
+        $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $t = New-TestRepo $base
+        $archiveRoot = Join-Path $base 'archives'
+    }
+
+    It 'prune-bdd.ps1 以原檔雜湊確認 PNG 證據已收在 WebP 封存裡' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        & "$script:Scripts/bdd-archive-index.ps1" -Mark -Archive $r.archive -Status uploaded-verified -Attachment 1 -ArchiveRoot $archiveRoot | Out-Null
+        $plan = & "$script:Scripts/prune-bdd.ps1" -Repo $t.repo -ArchiveRoot $archiveRoot | ConvertFrom-Json
+        ($plan.items | Where-Object topic -eq '1234-demo').action | Should -Be 'prune'
+    }
+
+    It '還原 WebP 封存後加入新一輪 PNG 證據，可以再封存' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        Convert-ToModuleLayout $t | Out-Null
+        Register-AllExempt $t.bdd
+        $first = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+
+        $restoreRoot = Join-Path $base 'restore/.bdd'
+        & "$script:Scripts/extract-bdd.ps1" -Archive $first.archive -To $restoreRoot | Out-Null
+        $restored = Join-Path $restoreRoot '1234-demo'
+        Test-Path -LiteralPath (Join-Path $restored 'features/m/01.feature') | Should -BeTrue
+        New-TestPng (Join-Path $restored 'evidence/R3_DM-04_新畫面.png') '#123456'
+        & "$script:Scripts/mask-evidence.ps1" -Dir $restored -Mark -Pattern 'R3_*' -Method exempt -Note '測試用純色圖' | Out-Null
+
+        # 還原出來的資料夾不在 git 內：複製回 repo 的 .bdd 底下再封存，受測 commit 仍取 verification.json
+        $again = Join-Path $t.repo '.bdd/1234-demo-r3'
+        Copy-Item -LiteralPath $restored -Destination $again -Recurse
+        $second = Invoke-Archive @{ Dir = $again; ArchiveRoot = $archiveRoot }
+        $manifest = Read-Manifest $second.archive
+        $names = @($manifest.files.PSObject.Properties.Name)
+        $names | Should -Contain 'evidence/R3_DM-04_新畫面.webp'
+        $names | Should -Contain 'evidence/R1_DM-01_首頁.webp'
+        @($names | Where-Object { $_ -like 'features/*' }) | Should -Be @('features/m/01.feature')
+    }
+}
