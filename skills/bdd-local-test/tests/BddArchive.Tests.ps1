@@ -78,12 +78,14 @@ BeforeAll {
 
 Describe 'archive-bdd.ps1' {
     BeforeEach {
+        $env:BDD_WEBP_ENCODER = 'none'   # 這組測試驗證 1.3.0 的去重、攤平、還原規則；WebP 行為見「WebP」Describe
         $env:BDD_ARCHIVE_ROOT = $null
         # 每個測試各用獨立目錄，避免 .git 唯讀檔清不掉而讓測試互相影響
         $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
         $t = New-TestRepo $base
         $archiveRoot = Join-Path $base 'archives'
     }
+    AfterEach { $env:BDD_WEBP_ENCODER = $null }
 
     It '封存時去重、寫入 manifest 與索引，檔名含單號與受測短 SHA' {
         Register-AllExempt $t.bdd
@@ -235,6 +237,7 @@ Describe 'BddArchive.psm1' {
 
 Describe 'extract-bdd.ps1' {
     BeforeEach {
+        $env:BDD_WEBP_ENCODER = 'none'   # 這組測試驗證 1.3.0 的去重、攤平、還原規則；WebP 行為見「WebP」Describe
         # 每個測試各用獨立目錄，避免 .git 唯讀檔清不掉而讓測試互相影響
         $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
         $t = New-TestRepo $base
@@ -242,6 +245,7 @@ Describe 'extract-bdd.ps1' {
         Register-AllExempt $t.bdd
         $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
     }
+    AfterEach { $env:BDD_WEBP_ENCODER = $null }
 
     It '還原去重的檔案、逐檔驗證，且 manifest 不解出' {
         $to = Join-Path $base 'restore'
@@ -443,5 +447,115 @@ Describe 'archive-bdd.ps1 情境快照' {
         Register-AllExempt $t.bdd
         $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
         @((Read-Manifest $r.archive).features).Count | Should -Be 0
+    }
+}
+
+Describe 'archive-bdd.ps1 WebP' {
+    BeforeAll {
+        $env:BDD_WEBP_ENCODER = $null
+        Import-Module (Join-Path $script:Scripts 'lib/BddImage.psm1') -Force
+        $script:HasPillow = (Get-WebpEncoder).kind -eq 'pillow'
+    }
+    BeforeEach {
+        $env:BDD_ARCHIVE_ROOT = $null
+        $env:BDD_WEBP_ENCODER = $null
+        $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $t = New-TestRepo $base
+        $archiveRoot = Join-Path $base 'archives'
+    }
+    AfterEach { $env:BDD_WEBP_ENCODER = $null }
+
+    It '截圖轉成無損 WebP：manifest 記錄原檔，同內容仍去重，ZIP 內沒有 PNG' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $r.webpEncoder | Should -Be 'pillow'
+        $r.webpConverted | Should -Be 3
+        $manifest = Read-Manifest $r.archive
+        $manifest.schema | Should -Be 2
+        $rec = $manifest.files.'evidence/R1_DM-01_首頁.webp'
+        $rec.originalName | Should -Be 'evidence/R1_DM-01_首頁.png'
+        $rec.originalSha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $t.bdd 'evidence/R1_DM-01_首頁.png') -Algorithm SHA256).Hash
+        $rec.lossless | Should -BeTrue
+        $manifest.aliases.'evidence/R2_DM-01_首頁.webp' | Should -Be 'evidence/R1_DM-01_首頁.webp'
+        $zip = [IO.Compression.ZipFile]::OpenRead($r.archive)
+        try { @($zip.Entries.FullName | Where-Object { $_ -like '*.png' }).Count | Should -Be 0 } finally { $zip.Dispose() }
+        # 工作區原檔不動
+        Test-Path -LiteralPath (Join-Path $t.bdd 'evidence/R1_DM-01_首頁.png') | Should -BeTrue
+    }
+
+    It '封存內的 masking.json 改以 WebP 為鍵並保留 derivedFrom' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $zip = [IO.Compression.ZipFile]::OpenRead($r.archive)
+        try {
+            $reader = [IO.StreamReader]::new($zip.GetEntry('1234-demo/masking.json').Open())
+            try { $ledger = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+        } finally { $zip.Dispose() }
+        $rec = $ledger.files.'evidence/R2_DM-02_列表.webp'
+        $rec.method | Should -Be 'exempt'
+        $rec.sha256 | Should -Be (Read-Manifest $r.archive).files.'evidence/R2_DM-02_列表.webp'.sha256
+        $rec.derivedFrom.name | Should -Be 'evidence/R2_DM-02_列表.png'
+        $ledger.files.PSObject.Properties.Name | Should -Not -Contain 'evidence/R2_DM-02_列表.png'
+    }
+
+    It 'REPORT.md 的連結（含 URL 編碼的中文檔名）改寫成 .webp' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $encoded = 'evidence/' + [Uri]::EscapeDataString('R2_DM-02_列表.png')
+        Set-Content -LiteralPath (Join-Path $t.bdd 'REPORT.md') -Encoding utf8 -Value "# 報告`n![](evidence/R1_DM-01_首頁.png)`n![]($encoded)"
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $zip = [IO.Compression.ZipFile]::OpenRead($r.archive)
+        try {
+            $reader = [IO.StreamReader]::new($zip.GetEntry('1234-demo/REPORT.md').Open())
+            try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        } finally { $zip.Dispose() }
+        $text | Should -Match ([regex]::Escape('evidence/R1_DM-01_首頁.webp'))
+        $text | Should -Match ([regex]::Escape('evidence/' + [Uri]::EscapeDataString('R2_DM-02_列表.webp')))
+        $text | Should -Not -Match '\.png'
+        (Read-Manifest $r.archive).rewrittenLinks.'REPORT.md' | Should -Be 2
+        # 工作區報告不動
+        Get-Content -LiteralPath (Join-Path $t.bdd 'REPORT.md') -Raw | Should -Match '\.png'
+    }
+
+    It '同名不同副檔名時，第二個保留原格式並記錄 name-conflict' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        # 用未壓縮的 BMP：轉 WebP 一定變小，且檔名排序在 .png 之前，先取得 .webp 名稱
+        $other = Join-Path $t.bdd 'evidence/R2_DM-02_列表.bmp'
+        $bmp = [Drawing.Bitmap]::new(40, 20); $g = [Drawing.Graphics]::FromImage($bmp); $g.Clear([Drawing.Color]::Olive); $g.Dispose()
+        $bmp.Save($other, [Drawing.Imaging.ImageFormat]::Bmp); $bmp.Dispose()
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $manifest = Read-Manifest $r.archive
+        @($manifest.webp.skipped | Where-Object reason -eq 'name-conflict').Count | Should -Be 1
+        $names = @($manifest.files.PSObject.Properties.Name)
+        $names | Should -Contain 'evidence/R2_DM-02_列表.webp'
+        (@($names | Where-Object { $_ -like 'evidence/R2_DM-02_列表.*' })).Count | Should -Be 2
+    }
+
+    It '沒有編碼器時保留原格式並警告 webpUnavailable' {
+        $env:BDD_WEBP_ENCODER = 'none'
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $r.webpConverted | Should -Be 0
+        @($r.warnings) -join ' ' | Should -Match 'webpUnavailable'
+        (Read-Manifest $r.archive).files.PSObject.Properties.Name | Should -Contain 'evidence/R1_DM-01_首頁.png'
+        $created = Get-Content -LiteralPath (Join-Path $archiveRoot 'index.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object event -eq 'created'
+        $created.webp | Should -BeFalse
+    }
+
+    It '.bdd/config.json 設 webp = off 時不轉檔也不警告' {
+        Set-BddConfig $t.repo @{ webp = 'off' }
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $r.webpConverted | Should -Be 0
+        @($r.warnings) -join ' ' | Should -Not -Match 'webpUnavailable'
+    }
+
+    It '.bdd/config.json 的 webp 值不合法時拒絕' {
+        Set-BddConfig $t.repo @{ webp = 'lossy' }
+        Register-AllExempt $t.bdd
+        { Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot } } | Should -Throw '*webp*'
     }
 }

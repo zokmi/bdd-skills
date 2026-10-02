@@ -3,8 +3,8 @@
   將最終 BDD 輸出封存到本機封存庫（受測 repo 所有 worktree 之外），去重、驗證並登記到封存索引。
 
 .DESCRIPTION
-  流程：攤平舊 evidence.zip → 檢查圖片都已遮罩 → 依內容去重 → 打包並寫入 bdd-manifest.json
-  → 逐檔驗證 SHA-256 → 搬到封存庫 → 在 index.jsonl 追加 created 事件，並把同主題的舊封存標為 superseded。
+  流程：攤平舊 evidence.zip → 檢查圖片都已遮罩 → 收入受測當時的模組情境 → 截圖轉無損 WebP（有 Pillow 時）並改寫封存內的遮罩紀錄與報告連結
+  → 依內容去重 → 打包並寫入 bdd-manifest.json → 逐檔驗證 SHA-256 → 搬到封存庫 → 在 index.jsonl 追加 created 事件，並把同主題的舊封存標為 superseded。
 
   封存位置優先序：-Destination（完整檔名）→ -ArchiveRoot → 環境變數 BDD_ARCHIVE_ROOT
   → .bdd/config.json 的 archiveRoot → 使用者目錄\bdd-archives\<主 checkout 資料夾名>。
@@ -57,6 +57,7 @@ if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "BDD 輸�
 $repoRoot = Get-RepoTopLevel $source
 $worktrees = @(Get-RepoWorktrees $source)
 $topic = Split-Path $source -Leaf
+$warnings = @()
 
 foreach ($required in @('REPORT.md', 'verification.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $required) -PathType Leaf)) { throw "缺少 $required，不能封存" }
@@ -106,6 +107,7 @@ if (-not $evidence.Count) { throw '缺少截圖／其他證據檔（evidence/ �
 # 2. 遮罩檢查：每張圖片都要在 masking.json 有紀錄，且紀錄的 SHA-256 與目前檔案相同
 $config = Get-BddConfig $source
 $maskConfig = Get-MaskConfig $config.data
+$webpSetting = Get-WebpSetting $config.data
 $ledger = Read-MaskLedger $source
 $unmasked = @(foreach ($e in $evidence) {
     if (-not (Test-ImageFile $e.relative)) { continue }
@@ -150,9 +152,19 @@ foreach ($snap in @(Get-ScenarioSnapshotEntries -RepoRoot $repoRoot -Commit $Com
     $entries += $snap
 }
 
+# 3-2. 截圖轉無損 WebP（遮罩檢查已對原圖做過）；接著改寫封存內的遮罩紀錄與報告連結
+$encoder = if ($webpSetting -eq 'off') { @{ kind = $null } } else { Get-WebpEncoder }
+$webp = [pscustomobject]@{ entries = $entries; converted = @(); skipped = @() }
+if ($encoder.kind) { $webp = Convert-PackEntriesToWebp -Entries $entries -Encoder $encoder -Staging $staging }
+elseif ($webpSetting -eq 'auto') { $warnings += 'webpUnavailable：找不到支援 WebP 的 Python Pillow，截圖保留原格式；安裝 Pillow 後可用 recompress-bdd.ps1 重新壓縮' }
+$entries = Update-PackMaskLedger -Entries $webp.entries -Converted $webp.converted -Staging $staging
+$links = Update-PackMarkdownLinks -Entries $entries -Converted $webp.converted -Staging $staging
+$entries = $links.entries
+$webpSaved = [long](($webp.converted | ForEach-Object { $_.sourceBytes - $_.webpBytes } | Measure-Object -Sum).Sum)
+
 # 5. 決定封存位置並檢查不在任何 worktree 內
 $root = Resolve-ArchiveRoot -BddDir $source -ArchiveRoot $ArchiveRoot
-$warnings = @(Assert-OutsideRepoWorktrees -Target $root.path -RepoPath $source)
+$warnings += @(Assert-OutsideRepoWorktrees -Target $root.path -RepoPath $source)
 $stamp = Get-Date -Format 'yyyyMMddTHHmmss'
 $target = if ($Destination) { Get-NormalizedPath $Destination } else {
     $folder = if ($Issue) { $Issue } else { '_unnumbered' }
@@ -162,7 +174,7 @@ if ($Destination) { $warnings += @(Assert-OutsideRepoWorktrees -Target $target -
 $plan = Get-DedupPlan $entries
 
 $manifest = [ordered]@{
-    schema = 1
+    schema = 2
     tool = 'bdd-local-test/archive-bdd.ps1'
     issue = $Issue
     topic = $topic
@@ -177,9 +189,16 @@ $manifest = [ordered]@{
     sourceFileCount = $sourceFileCount
     storedFileCount = $plan.stored.Count
     files = $plan.files
+    webp = [ordered]@{
+        encoder = $encoder.kind
+        converted = @($webp.converted).Count
+        skipped = @($webp.skipped)
+        savedBytes = $webpSaved
+    }
+    rewrittenLinks = $links.rewritten
     aliases = $plan.aliases
 }
-$manifestJson = $manifest | ConvertTo-Json -Depth 6
+$manifestJson = $manifest | ConvertTo-Json -Depth 8
 
 # 6. 打包、驗證後才搬到正式位置（失敗不留半成品）
 Write-BddZip -Stored $plan.stored -Prefix "$topic/" -ManifestJson $manifestJson -Target $target
@@ -192,7 +211,7 @@ $now = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
 $previous = @(Get-ArchiveStates $root.path | Where-Object { $_.topic -eq $topic -and $_.repo -eq $repoId -and $_.status -ne 'superseded' })
 Add-ArchiveIndexEvent $root.path ([ordered]@{
     event = 'created'; archive = $target; name = (Split-Path $target -Leaf); issue = $Issue; topic = $topic
-    commit = $Commit; sha256 = $sha256; bytes = $size; repo = $repoId; sourceDir = $source; at = $now
+    commit = $Commit; sha256 = $sha256; bytes = $size; repo = $repoId; sourceDir = $source; webp = [bool]@($webp.converted).Count; at = $now
 })
 foreach ($p in $previous) {
     Add-ArchiveIndexEvent $root.path ([ordered]@{ event = 'status'; archive = $p.archive; status = 'superseded'; by = $target; at = $now })
@@ -220,6 +239,9 @@ if ($limit -and $size -gt $limit) { $warnings += "封存檔 $size 位元組超�
     superseded = @($previous | ForEach-Object { $_.archive })
     maxAttachmentBytes = $limit
     exceedsAttachmentLimit = [bool]($limit -and $size -gt $limit)
+    webpEncoder = $encoder.kind
+    webpConverted = @($webp.converted).Count
+    webpSavedBytes = $webpSaved
     warnings = $warnings
 } | ConvertTo-Json -Depth 4
 } finally {

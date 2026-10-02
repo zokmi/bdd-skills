@@ -64,6 +64,130 @@ function Get-ScenarioSnapshotEntries {
 
 <#
 .SYNOPSIS
+  把 evidence/ 底下可轉檔的圖片換成無損 WebP（同內容只轉一次）。不合格的保留原檔並記入 skipped。
+  回傳 entries（轉檔後的完整清單）、converted（from、to、sourceBytes、webpBytes）、skipped（file、reason）。
+#>
+function Convert-PackEntriesToWebp {
+    param([Parameter(Mandatory)][object[]]$Entries, [Parameter(Mandatory)]$Encoder, [Parameter(Mandatory)][string]$Staging)
+    $result = [Collections.Generic.List[object]]::new()
+    $converted = [Collections.Generic.List[object]]::new()
+    $skipped = [Collections.Generic.List[object]]::new()
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in $Entries) { $null = $names.Add($e.relative) }
+    $bySha = @{}
+    foreach ($e in @($Entries | Sort-Object -Property relative -CaseSensitive)) {
+        $ext = [IO.Path]::GetExtension($e.relative).ToLowerInvariant()
+        if (-not $e.relative.StartsWith('evidence/', [StringComparison]::OrdinalIgnoreCase) -or $WebpConvertibleExtensions -notcontains $ext) {
+            $result.Add($e); continue
+        }
+        $webpName = [IO.Path]::ChangeExtension($e.relative, '.webp').Replace('\', '/')
+        if ($names.Contains($webpName)) {
+            $skipped.Add([pscustomobject]@{ file = $e.relative; reason = 'name-conflict' }); $result.Add($e); continue
+        }
+        if (-not $bySha.ContainsKey($e.sha256)) {
+            $destination = Join-Path $Staging "webp/$($e.sha256).webp"
+            $outcome = Convert-ToLosslessWebp -Source $e.path -Destination $destination -Encoder $Encoder
+            $outcome.path = $destination
+            $bySha[$e.sha256] = $outcome
+        }
+        $c = $bySha[$e.sha256]
+        if (-not $c.ok) { $skipped.Add([pscustomobject]@{ file = $e.relative; reason = $c.reason }); $result.Add($e); continue }
+        $null = $names.Add($webpName)
+        $extra = [ordered]@{}
+        foreach ($k in $e.extra.Keys) { $extra[$k] = $e.extra[$k] }
+        $extra.originalName = $e.relative
+        $extra.originalSha256 = $e.sha256
+        $extra.encoder = $c.encoder
+        $extra.lossless = $true
+        $new = New-PackEntry -Relative $webpName -Path $c.path -Extra $extra
+        $new.lastWrite = $e.lastWrite
+        $result.Add($new)
+        $converted.Add([pscustomobject]@{ from = $e.relative; to = $webpName; sourceBytes = $c.sourceBytes; webpBytes = $c.webpBytes })
+    }
+    [pscustomobject]@{ entries = @($result); converted = @($converted); skipped = @($skipped) }
+}
+
+<#
+.SYNOPSIS
+  把相對路徑逐段做 URL 編碼（Markdown 連結常見的中文檔名寫法）。
+#>
+function ConvertTo-UrlPath([Parameter(Mandatory)][string]$Relative) {
+    ($Relative -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+}
+
+<#
+.SYNOPSIS
+  把封存內 .md 檔裡指向已轉檔截圖的連結改成 .webp（原字串與 URL 編碼的字串都換）；改寫後的檔放暫存目錄，工作區不動。
+  回傳 entries 與 rewritten（md 檔 → 取代次數）。
+#>
+function Update-PackMarkdownLinks {
+    param([Parameter(Mandatory)][object[]]$Entries, [object[]]$Converted = @(), [Parameter(Mandatory)][string]$Staging)
+    $rewritten = [ordered]@{}
+    if (-not $Converted.Count) { return [pscustomobject]@{ entries = $Entries; rewritten = $rewritten } }
+    $pairs = [Collections.Generic.List[object]]::new()
+    foreach ($c in $Converted) {
+        $pairs.Add(@($c.from, $c.to))
+        $encodedFrom = ConvertTo-UrlPath $c.from
+        if ($encodedFrom -ne $c.from) { $pairs.Add(@($encodedFrom, (ConvertTo-UrlPath $c.to))) }
+    }
+    $out = foreach ($e in $Entries) {
+        if ([IO.Path]::GetExtension($e.relative) -ine '.md') { $e; continue }
+        $text = [IO.File]::ReadAllText($e.path, [Text.Encoding]::UTF8)
+        $count = 0
+        foreach ($p in $pairs) {
+            $n = [regex]::Matches($text, [regex]::Escape($p[0])).Count
+            if ($n) { $text = $text.Replace($p[0], $p[1]); $count += $n }
+        }
+        if (-not $count) { $e; continue }
+        $destination = Join-Path $Staging "md/$($e.relative)"
+        [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
+        [IO.File]::WriteAllText($destination, $text, [Text.UTF8Encoding]::new($false))
+        $rewritten[$e.relative] = $count
+        $new = New-PackEntry -Relative $e.relative -Path $destination -Extra $e.extra
+        $new.lastWrite = $e.lastWrite
+        $new
+    }
+    [pscustomobject]@{ entries = @($out); rewritten = $rewritten }
+}
+
+<#
+.SYNOPSIS
+  把封存內 masking.json 的遮罩登記改到轉檔後的 .webp：鍵改名、sha256 改成 WebP 的雜湊、加 derivedFrom（原檔名與原雜湊）。
+  沒有 masking.json 或沒有轉檔時原樣回傳。
+#>
+function Update-PackMaskLedger {
+    param([Parameter(Mandatory)][object[]]$Entries, [object[]]$Converted = @(), [Parameter(Mandatory)][string]$Staging)
+    $ledgerEntry = $Entries | Where-Object { $_.relative -eq 'masking.json' } | Select-Object -First 1
+    if (-not $ledgerEntry -or -not $Converted.Count) { return $Entries }
+    $data = [IO.File]::ReadAllText($ledgerEntry.path, [Text.Encoding]::UTF8) | ConvertFrom-Json -AsHashtable
+    $files = if ($data.ContainsKey('files') -and $data.files) { $data.files } else { [ordered]@{} }
+    $byName = @{}
+    foreach ($e in $Entries) { $byName[$e.relative] = $e }
+    foreach ($c in $Converted) {
+        if (-not $files.Contains($c.from)) { continue }
+        $old = $files[$c.from]
+        $record = [ordered]@{}
+        foreach ($k in $old.Keys) { $record[$k] = $old[$k] }
+        $record.sha256 = $byName[$c.to].sha256
+        $record.derivedFrom = [ordered]@{ name = $c.from; sha256 = $old.sha256 }
+        $files.Remove($c.from)
+        $files[$c.to] = $record
+    }
+    $sorted = [ordered]@{}
+    foreach ($k in @($files.Keys | Sort-Object { $_ } -CaseSensitive)) { $sorted[$k] = $files[$k] }
+    $destination = Join-Path $Staging 'mask/masking.json'
+    [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
+    [IO.File]::WriteAllText($destination, (([ordered]@{ files = $sorted }) | ConvertTo-Json -Depth 8) + "`n", [Text.UTF8Encoding]::new($false))
+    @($Entries | ForEach-Object {
+        if ($_.relative -ne 'masking.json') { $_; return }
+        $n = New-PackEntry -Relative 'masking.json' -Path $destination -Extra $_.extra
+        $n.lastWrite = $_.lastWrite
+        $n
+    })
+}
+
+<#
+.SYNOPSIS
   依內容去重：每種 SHA-256 只存第一個（依相對路徑排序），其餘記為 alias。
   回傳 stored（要寫進 ZIP 的項目）、aliases（alias → canonical）、files（每個相對路徑的 manifest 紀錄，含 extra）。
 #>

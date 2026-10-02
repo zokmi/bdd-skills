@@ -5,7 +5,7 @@
 .DESCRIPTION
   對 <Repo>/.bdd/ 底下每個輸出資料夾：
     1. 從封存索引找出同主題、目前狀態為 uploaded-verified、檔案仍存在且 SHA-256 與建立時相同的封存檔。
-    2. 讀出這些封存檔 manifest 記錄的所有內容雜湊。
+    2. 讀出這些封存檔 manifest 記錄的所有內容雜湊。封存內已轉成 WebP 的檔案，以 manifest 的 originalSha256 比對工作區的原圖。
     3. evidence/ 每個檔案、evidence.zip 每個項目的內容都在其中，才列為可清理。
   只刪除 evidence/ 與 evidence.zip；.feature、REPORT.md、verification.json、masking.json 一律保留。
   加上 -Apply 才會真的刪除。
@@ -56,7 +56,11 @@ function Get-ManifestHashes([string]$Path) {
         if (-not $entry) { return $null }
         $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
         try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-        @($manifest.files.PSObject.Properties | ForEach-Object { $_.Value.sha256 })
+        # 轉成 WebP 的檔案同時認原檔雜湊：工作區留的是原始 PNG
+        @($manifest.files.PSObject.Properties | ForEach-Object {
+            $_.Value.sha256
+            if ($_.Value.PSObject.Properties['originalSha256'] -and $_.Value.originalSha256) { $_.Value.originalSha256 }
+        })
     } finally { $zip.Dispose() }
 }
 

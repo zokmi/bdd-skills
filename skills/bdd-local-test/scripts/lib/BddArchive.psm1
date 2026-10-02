@@ -294,6 +294,16 @@ function Get-MaskConfig($ConfigData) {
 
 <#
 .SYNOPSIS
+  取得 .bdd/config.json 的 webp 設定：auto（預設，有 Pillow 就轉無損 WebP）或 off（不轉）。其他值丟例外。
+#>
+function Get-WebpSetting($ConfigData) {
+    $value = "$(Get-ConfigValue $ConfigData 'webp' 'auto')".ToLowerInvariant()
+    if ($value -notin 'auto', 'off') { throw ".bdd/config.json 的 webp 只能是 auto 或 off：$value" }
+    $value
+}
+
+<#
+.SYNOPSIS
   列出 BDD 輸出目錄下 evidence/ 的檔案，回傳相對於輸出目錄、以 / 分隔的路徑與 FileInfo。
 #>
 function Get-EvidenceFiles([Parameter(Mandatory)][string]$BddDir) {
