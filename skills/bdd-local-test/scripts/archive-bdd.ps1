@@ -3,8 +3,8 @@
   將最終 BDD 輸出封存到本機封存庫（受測 repo 所有 worktree 之外），去重、驗證並登記到封存索引。
 
 .DESCRIPTION
-  流程：攤平舊 evidence.zip → 檢查圖片都已遮罩 → 依內容去重 → 打包並寫入 bdd-manifest.json
-  → 逐檔驗證 SHA-256 → 搬到封存庫 → 在 index.jsonl 追加 created 事件，並把同主題的舊封存標為 superseded。
+  流程：攤平舊 evidence.zip → 檢查圖片都已遮罩 → 收入受測當時的模組情境 → 截圖轉無損 WebP（有 Pillow 時）並改寫封存內的遮罩紀錄與報告連結
+  → 依內容去重 → 打包並寫入 bdd-manifest.json → 逐檔驗證 SHA-256 → 搬到封存庫 → 在 index.jsonl 追加 created 事件，並把同主題的舊封存標為 superseded。
 
   封存位置優先序：-Destination（完整檔名）→ -ArchiveRoot → 環境變數 BDD_ARCHIVE_ROOT
   → .bdd/config.json 的 archiveRoot → 使用者目錄\bdd-archives\<主 checkout 資料夾名>。
@@ -49,14 +49,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib/BddArchive.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/BddPack.psm1') -Force
 Add-Type -AssemblyName System.IO.Compression
 
-$manifestName = 'bdd-manifest.json'
 $source = Get-NormalizedPath $Dir
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "BDD 輸出目錄不存在：$source" }
 $repoRoot = Get-RepoTopLevel $source
 $worktrees = @(Get-RepoWorktrees $source)
 $topic = Split-Path $source -Leaf
+$warnings = @()
 
 foreach ($required in @('REPORT.md', 'verification.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $required) -PathType Leaf)) { throw "缺少 $required，不能封存" }
@@ -64,8 +65,14 @@ foreach ($required in @('REPORT.md', 'verification.json')) {
 if (Get-ChildItem -LiteralPath $source -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) {
     throw 'BDD 輸出含符號連結或 junction；請先確認來源，避免封存 worktree 外的資料'
 }
-if (-not @(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.feature').Count) { throw '缺少 .feature 情境檔，不能封存' }
-if (Test-Path -LiteralPath (Join-Path $source $manifestName)) { throw "輸出目錄不可自帶 $manifestName（封存時會產生）" }
+# 讀取最後一輪驗證紀錄：受測版本與本輪執行的模組情境
+$verification = Get-Content -LiteralPath (Join-Path $source 'verification.json') -Raw -Encoding utf8 | ConvertFrom-Json
+$rounds = @(Get-ConfigValue $verification 'rounds' @())
+$lastRound = if ($rounds.Count) { $rounds[-1] } else { $null }
+$scenarios = @(Get-ConfigValue $lastRound 'scenarios' @())
+$hasIssueFeature = [bool]@(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.feature').Count
+if (-not $hasIssueFeature -and -not $scenarios.Count) { throw '缺少情境：輸出資料夾沒有 .feature，verification.json 最後一輪也沒有 scenarios，不能封存' }
+if (Test-Path -LiteralPath (Join-Path $source $ManifestName)) { throw "輸出目錄不可自帶 $ManifestName（封存時會產生）" }
 
 # 1. 攤平：舊輪次的 evidence.zip 解回 evidence/，同名同內容略過、同名不同內容停止
 $flattened = @()
@@ -100,6 +107,7 @@ if (-not $evidence.Count) { throw '缺少截圖／其他證據檔（evidence/ �
 # 2. 遮罩檢查：每張圖片都要在 masking.json 有紀錄，且紀錄的 SHA-256 與目前檔案相同
 $config = Get-BddConfig $source
 $maskConfig = Get-MaskConfig $config.data
+$webpSetting = Get-WebpSetting $config.data
 $ledger = Read-MaskLedger $source
 $unmasked = @(foreach ($e in $evidence) {
     if (-not (Test-ImageFile $e.relative)) { continue }
@@ -116,107 +124,85 @@ if ($unmasked.Count -and $maskConfig.required -and -not $AllowUnmaskedReason) {
         "專案確定不需遮罩時，在 .bdd/config.json 設定 mask.required = false。")
 }
 
-# 3. 蒐集與去重（舊 evidence.zip 已攤平，不再收入）
-$files = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force |
-    Where-Object { -not ($_.FullName.Equals($legacyZip, [StringComparison]::OrdinalIgnoreCase)) } |
-    ForEach-Object {
-        [pscustomobject]@{
-            relative = [IO.Path]::GetRelativePath($source, $_.FullName).Replace('\', '/')
-            file = $_
-            sha256 = Get-Sha256Hex -Path $_.FullName
-        }
-    } | Sort-Object relative -CaseSensitive)
-$manifestFiles = [ordered]@{}
-$aliases = [ordered]@{}
-$canonicalBySha = @{}
-foreach ($f in $files) {
-    $manifestFiles[$f.relative] = [ordered]@{ sha256 = $f.sha256; size = $f.file.Length }
-    if ($canonicalBySha.ContainsKey($f.sha256)) { $aliases[$f.relative] = $canonicalBySha[$f.sha256] }
-    else { $canonicalBySha[$f.sha256] = $f.relative }
-}
-$stored = @($files | Where-Object { -not $aliases.Contains($_.relative) })
-
-# 4. 受測版本與單號
+# 4. 受測版本與單號（情境快照需要受測 commit，所以放在蒐集之前）
 if (-not $Commit) {
-    $verification = Get-Content -LiteralPath (Join-Path $source 'verification.json') -Raw -Encoding utf8 | ConvertFrom-Json
-    $rounds = @(Get-ConfigValue $verification 'rounds' @())
-    if (-not $rounds.Count -or -not (Get-ConfigValue $rounds[-1] 'head')) { throw 'verification.json 沒有任何輪次的 head，請以 -Commit 指定受測 SHA' }
-    $Commit = $rounds[-1].head
+    if (-not $lastRound -or -not (Get-ConfigValue $lastRound 'head')) { throw 'verification.json 沒有任何輪次的 head，請以 -Commit 指定受測 SHA' }
+    $Commit = $lastRound.head
 }
 $shortCommit = if ($Commit.Length -gt 7) { $Commit.Substring(0, 7) } else { $Commit }
 if (-not $Issue -and $topic -match '^(\d+)-') { $Issue = $Matches[1] }
 
+# 3. 蒐集（舊 evidence.zip 已攤平，不再收入）
+$entries = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force |
+    Where-Object { -not ($_.FullName.Equals($legacyZip, [StringComparison]::OrdinalIgnoreCase)) } |
+    ForEach-Object { New-PackEntry -Relative ([IO.Path]::GetRelativePath($source, $_.FullName)) -Path $_.FullName })
+$sourceFileCount = $entries.Count
+
+$staging = Join-Path ([IO.Path]::GetTempPath()) ('bdd-archive-' + [IO.Path]::GetRandomFileName())
+[IO.Directory]::CreateDirectory($staging) | Out-Null
+try {
+# 3-1. 模組情境快照：取受測 commit 當時的版本；輸出資料夾已有同路徑同內容（例如從封存還原）就不重複收
+$existing = @{}
+foreach ($e in $entries) { $existing[$e.relative] = $e }
+foreach ($snap in @(Get-ScenarioSnapshotEntries -RepoRoot $repoRoot -Commit $Commit -Scenarios $scenarios -Staging $staging)) {
+    if ($existing.ContainsKey($snap.relative)) {
+        if ($existing[$snap.relative].sha256 -ne $snap.sha256) { throw "輸出資料夾已有 $($snap.relative)，但內容與受測 commit 的情境不同，請人工確認" }
+        continue
+    }
+    $entries += $snap
+    $existing[$snap.relative] = $snap
+}
+
+# 3-2. 截圖轉無損 WebP（遮罩檢查已對原圖做過）；接著改寫封存內的遮罩紀錄與報告連結
+$encoder = if ($webpSetting -eq 'off') { @{ kind = $null } } else { Get-WebpEncoder }
+$webp = [pscustomobject]@{ entries = $entries; converted = @(); skipped = @() }
+if ($encoder.kind) { $webp = Convert-PackEntriesToWebp -Entries $entries -Encoder $encoder -Staging $staging }
+elseif ($webpSetting -eq 'auto') { $warnings += 'webpUnavailable：找不到支援 WebP 的 Python Pillow，截圖保留原格式；安裝 Pillow 後可用 recompress-bdd.ps1 重新壓縮' }
+$entries = Update-PackMaskLedger -Entries $webp.entries -Converted $webp.converted -Staging $staging
+$links = Update-PackMarkdownLinks -Entries $entries -Converted $webp.converted -Staging $staging
+$entries = $links.entries
+$webpSaved = [long](($webp.converted | ForEach-Object { $_.sourceBytes - $_.webpBytes } | Measure-Object -Sum).Sum)
+
 # 5. 決定封存位置並檢查不在任何 worktree 內
 $root = Resolve-ArchiveRoot -BddDir $source -ArchiveRoot $ArchiveRoot
-$warnings = @(Assert-OutsideRepoWorktrees -Target $root.path -RepoPath $source)
+$warnings += @(Assert-OutsideRepoWorktrees -Target $root.path -RepoPath $source)
 $stamp = Get-Date -Format 'yyyyMMddTHHmmss'
 $target = if ($Destination) { Get-NormalizedPath $Destination } else {
     $folder = if ($Issue) { $Issue } else { '_unnumbered' }
     Get-NormalizedPath (Join-Path $root.path "$folder/$topic-$shortCommit-$stamp.zip")
 }
 if ($Destination) { $warnings += @(Assert-OutsideRepoWorktrees -Target $target -RepoPath $source) }
-if (Test-Path -LiteralPath $target) { throw "封存檔已存在，請使用新檔名，避免覆蓋：$target" }
+$plan = Get-DedupPlan $entries
 
 $manifest = [ordered]@{
-    schema = 1
+    schema = 2
     tool = 'bdd-local-test/archive-bdd.ps1'
     issue = $Issue
     topic = $topic
     commit = $Commit
+    features = @($scenarios | ForEach-Object { $_.path })
     createdAt = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
     masked = ($unmasked.Count -eq 0)
     maskRequired = $maskConfig.required
     unmasked = $unmasked
     unmaskedReason = if ($unmasked.Count) { $AllowUnmaskedReason } else { $null }
     flattenedFrom = if ($hasLegacyZip) { @('evidence.zip') } else { @() }
-    sourceFileCount = $files.Count
-    storedFileCount = $stored.Count
-    files = $manifestFiles
-    aliases = $aliases
+    sourceFileCount = $sourceFileCount
+    storedFileCount = $plan.stored.Count
+    files = $plan.files
+    webp = [ordered]@{
+        encoder = $encoder.kind
+        converted = @($webp.converted).Count
+        skipped = @($webp.skipped)
+        savedBytes = $webpSaved
+    }
+    rewrittenLinks = $links.rewritten
+    aliases = $plan.aliases
 }
-$manifestJson = $manifest | ConvertTo-Json -Depth 6
+$manifestJson = $manifest | ConvertTo-Json -Depth 8
 
-# 6. 打包到暫存檔、驗證後再搬到正式位置
-$parent = Split-Path -Path $target -Parent
-[IO.Directory]::CreateDirectory($parent) | Out-Null
-$temporary = Join-Path $parent ([IO.Path]::GetRandomFileName() + '.zip.tmp')
-$prefix = "$topic/"
-try {
-    $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew)
-    $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $false, [Text.Encoding]::UTF8)
-    try {
-        foreach ($f in $stored) {
-            $level = if ($PrecompressedExtensions -contains $f.file.Extension.ToLowerInvariant()) { 'NoCompression' } else { 'Optimal' }
-            $entry = $archive.CreateEntry($prefix + $f.relative, [IO.Compression.CompressionLevel]::$level)
-            $entry.LastWriteTime = $f.file.LastWriteTime
-            $out = $entry.Open(); $in = [IO.File]::OpenRead($f.file.FullName)
-            try { $in.CopyTo($out) } finally { $in.Dispose(); $out.Dispose() }
-        }
-        $entry = $archive.CreateEntry($prefix + $manifestName, [IO.Compression.CompressionLevel]::Optimal)
-        $writer = [IO.StreamWriter]::new($entry.Open(), [Text.UTF8Encoding]::new($false))
-        try { $writer.Write($manifestJson) } finally { $writer.Dispose() }
-    } finally { $archive.Dispose(); $stream.Dispose() }
-
-    $archive = [IO.Compression.ZipFile]::OpenRead($temporary)
-    try {
-        $entries = @($archive.Entries | Where-Object { -not $_.FullName.EndsWith('/') })
-        if ($entries.Count -ne $stored.Count + 1) { throw "封存檔案數不符：應有 $($stored.Count + 1)、ZIP $($entries.Count)" }
-        foreach ($f in $stored) {
-            $entry = $archive.GetEntry($prefix + $f.relative)
-            if (-not $entry -or $entry.Length -ne $f.file.Length) { throw "封存缺少或大小不符：$($f.relative)" }
-            $s = $entry.Open()
-            try { $hash = Get-Sha256Hex -Stream $s } finally { $s.Dispose() }
-            if ($hash -ne $f.sha256) { throw "封存內容不符：$($f.relative)" }
-        }
-        foreach ($alias in $aliases.Keys) {
-            if ($manifestFiles[$alias].sha256 -ne $manifestFiles[$aliases[$alias]].sha256) { throw "去重對應錯誤：$alias" }
-        }
-    } finally { $archive.Dispose() }
-
-    Move-Item -LiteralPath $temporary -Destination $target
-} finally {
-    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
-}
+# 6. 打包、驗證後才搬到正式位置（失敗不留半成品）
+Write-BddZip -Stored $plan.stored -Prefix "$topic/" -ManifestJson $manifestJson -Target $target
 
 # 7. 登記索引：新增 created，同 repo 同主題且尚未被取代的舊封存標為 superseded
 $sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
@@ -226,7 +212,7 @@ $now = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
 $previous = @(Get-ArchiveStates $root.path | Where-Object { $_.topic -eq $topic -and $_.repo -eq $repoId -and $_.status -ne 'superseded' })
 Add-ArchiveIndexEvent $root.path ([ordered]@{
     event = 'created'; archive = $target; name = (Split-Path $target -Leaf); issue = $Issue; topic = $topic
-    commit = $Commit; sha256 = $sha256; bytes = $size; repo = $repoId; sourceDir = $source; at = $now
+    commit = $Commit; sha256 = $sha256; bytes = $size; repo = $repoId; sourceDir = $source; webp = [bool]@($webp.converted).Count; at = $now
 })
 foreach ($p in $previous) {
     Add-ArchiveIndexEvent $root.path ([ordered]@{ event = 'status'; archive = $p.archive; status = 'superseded'; by = $target; at = $now })
@@ -243,10 +229,10 @@ if ($limit -and $size -gt $limit) { $warnings += "封存檔 $size 位元組超�
     archiveRootSource = $root.source
     index = (Join-Path $root.path 'index.jsonl')
     commit = $Commit
-    fileCount = $files.Count
-    storedFileCount = $stored.Count
-    aliasCount = $aliases.Count
-    sourceBytes = [long](($files | ForEach-Object { $_.file.Length } | Measure-Object -Sum).Sum)
+    fileCount = $sourceFileCount
+    storedFileCount = $plan.stored.Count
+    aliasCount = $plan.aliases.Count
+    sourceBytes = [long](($entries | ForEach-Object { $_.size } | Measure-Object -Sum).Sum)
     sizeBytes = $size
     sha256 = $sha256
     masked = ($unmasked.Count -eq 0)
@@ -254,5 +240,11 @@ if ($limit -and $size -gt $limit) { $warnings += "封存檔 $size 位元組超�
     superseded = @($previous | ForEach-Object { $_.archive })
     maxAttachmentBytes = $limit
     exceedsAttachmentLimit = [bool]($limit -and $size -gt $limit)
+    webpEncoder = $encoder.kind
+    webpConverted = @($webp.converted).Count
+    webpSavedBytes = $webpSaved
     warnings = $warnings
 } | ConvertTo-Json -Depth 4
+} finally {
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+}

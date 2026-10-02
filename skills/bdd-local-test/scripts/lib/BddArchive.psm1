@@ -103,6 +103,28 @@ function Get-RepoTopLevel([Parameter(Mandatory)][string]$AnyPath) {
 
 <#
 .SYNOPSIS
+  把 git blob 的內容以二進位原樣寫到 Destination（不經 PowerShell 管線，避免換行與編碼被改動）。失敗時丟例外且不留檔。
+#>
+function Save-GitBlob([Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$Blob, [Parameter(Mandatory)][string]$Destination) {
+    [IO.Directory]::CreateDirectory((Split-Path $Destination -Parent)) | Out-Null
+    $psi = [Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($a in @('-C', $Repo, 'cat-file', 'blob', $Blob)) { $psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $process = [Diagnostics.Process]::Start($psi)
+    $out = [IO.File]::Create($Destination)
+    try { $process.StandardOutput.BaseStream.CopyTo($out) } finally { $out.Dispose() }
+    $err = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        throw "無法取出 git blob $Blob：$err"
+    }
+}
+
+<#
+.SYNOPSIS
   讀取 BDD 設定檔 .bdd/config.json。
   先找輸出目錄上一層（也就是本 worktree 的 .bdd/），沒有再找主 checkout 的 .bdd/。
   回傳 @{ path = 設定檔路徑或 $null; data = 設定內容（PSCustomObject，可能為空物件） }。
@@ -206,8 +228,22 @@ function Add-ArchiveIndexEvent([Parameter(Mandatory)][string]$Root, [Parameter(M
 
 <#
 .SYNOPSIS
+  從封存檔所在目錄往上最多 4 層尋找 index.jsonl，回傳封存庫根目錄；找不到丟例外。
+#>
+function Find-ArchiveIndexRoot([Parameter(Mandatory)][string]$ArchivePath) {
+    $dir = Split-Path (Get-NormalizedPath $ArchivePath) -Parent
+    for ($i = 0; $i -lt 4 -and $dir; $i++) {
+        if (Test-Path -LiteralPath (Join-Path $dir 'index.jsonl')) { return $dir }
+        $dir = Split-Path $dir -Parent
+    }
+    throw "找不到封存索引 index.jsonl（從 $ArchivePath 往上 4 層），請以 -ArchiveRoot 指定"
+}
+
+<#
+.SYNOPSIS
   彙整索引事件，回傳每個封存檔目前的狀態清單。
-  每筆含 archive、name、issue、topic、commit、sha256、bytes、repo、createdAt、status、attachments、statusAt、legacy（舊版匯入、沒有 manifest）。
+  每筆含 archive、name、issue、topic、commit、sha256、bytes、repo、createdAt、status、attachments、statusAt、legacy（舊版匯入、沒有 manifest）、recompressed（是否重新壓縮過）、
+  issueCopySha256（issue 附件那一版的 SHA-256，未重新壓縮為 null）。
 #>
 function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
     $states = [ordered]@{}
@@ -219,11 +255,19 @@ function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
                 sha256 = $e.sha256; bytes = $e.bytes; repo = $e.repo; createdAt = $e.at
                 status = 'local-only'; attachments = @(); statusAt = $e.at
                 legacy = [bool]($e.PSObject.Properties['legacy'] -and $e.legacy)
+                recompressed = $false
+                issueCopySha256 = $null
             }
         } elseif ($e.event -eq 'status' -and $states.Contains($key)) {
             $states[$key].status = $e.status
             $states[$key].statusAt = $e.at
             if ($e.PSObject.Properties['attachments'] -and $e.attachments) { $states[$key].attachments = @($e.attachments) }
+        } elseif ($e.event -eq 'recompressed' -and $states.Contains($key)) {
+            # 重新壓縮：檔案內容換成 WebP 版，狀態不變；issue 上的附件仍是第一次重新壓縮前的版本
+            if (-not $states[$key].issueCopySha256) { $states[$key].issueCopySha256 = $e.previousSha256 }
+            $states[$key].sha256 = $e.sha256
+            $states[$key].bytes = $e.bytes
+            $states[$key].recompressed = $true
         }
     }
     @($states.Values | ForEach-Object { [pscustomobject]$_ })
@@ -268,6 +312,16 @@ function Get-MaskConfig($ConfigData) {
         selectors = @(Get-ConfigValue $mask 'selectors' @())
         rects = @(Get-ConfigValue $mask 'rects' @())
     }
+}
+
+<#
+.SYNOPSIS
+  取得 .bdd/config.json 的 webp 設定：auto（預設，有 Pillow 就轉無損 WebP）或 off（不轉）。其他值丟例外。
+#>
+function Get-WebpSetting($ConfigData) {
+    $value = "$(Get-ConfigValue $ConfigData 'webp' 'auto')".ToLowerInvariant()
+    if ($value -notin 'auto', 'off') { throw ".bdd/config.json 的 webp 只能是 auto 或 off：$value" }
+    $value
 }
 
 <#

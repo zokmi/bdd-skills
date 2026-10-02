@@ -1,0 +1,262 @@
+<#
+.SYNOPSIS
+  BDD 封存的打包管線：建立封存項目、依內容去重、寫入 ZIP 並逐檔驗證。
+  後續任務在此加入情境快照、WebP 轉檔、改寫 Markdown 連結與遮罩紀錄。
+
+.DESCRIPTION
+  由 archive-bdd.ps1 與 recompress-bdd.ps1 匯入。封存項目（PackEntry）把「封存內的相對路徑」與「實體檔位置」分開，
+  讓轉檔或改寫後的檔案可以先放在暫存目錄，再以原本的相對路徑收進 ZIP。
+#>
+
+Set-StrictMode -Version 3.0
+Import-Module (Join-Path $PSScriptRoot 'BddArchive.psm1')
+Import-Module (Join-Path $PSScriptRoot 'BddImage.psm1')
+Add-Type -AssemblyName System.IO.Compression
+
+<#
+.SYNOPSIS
+  封存內 manifest 的檔名。
+#>
+$script:ManifestName = 'bdd-manifest.json'
+
+<#
+.SYNOPSIS
+  建立一個封存項目：relative（封存內相對路徑，以 / 分隔）、path（實體檔）、sha256、size、lastWrite、extra（寫進 manifest 的附加欄位）。
+#>
+function New-PackEntry {
+    param([Parameter(Mandatory)][string]$Relative, [Parameter(Mandatory)][string]$Path, $Extra = $null)
+    $item = Get-Item -LiteralPath $Path
+    $copy = [ordered]@{}
+    if ($Extra) { foreach ($k in $Extra.Keys) { $copy[$k] = $Extra[$k] } }
+    [pscustomobject]@{
+        relative = $Relative.Replace('\', '/')
+        path = $item.FullName
+        sha256 = Get-Sha256Hex -Path $item.FullName
+        size = $item.Length
+        lastWrite = $item.LastWriteTime
+        extra = $copy
+    }
+}
+
+<#
+.SYNOPSIS
+  依 verification.json 的 scenarios，取出受測 commit 當時的模組情境檔放進暫存目錄，回傳對應的封存項目。
+  封存內路徑為 features/<去掉 .bdd/modules/ 的路徑>；extra 記錄 scenarioPath、blob、role。
+  紀錄的 blob 為 null（受測時未提交）或與 <Commit>:<path> 不同時丟例外。
+#>
+function Get-ScenarioSnapshotEntries {
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$Commit,
+        [object[]]$Scenarios = @(),
+        [Parameter(Mandatory)][string]$Staging
+    )
+    foreach ($s in $Scenarios) {
+        if (-not $s.blob) { throw "情境檔受測時尚未提交，無法取出受測版本：$($s.path)；請 commit 後重新以 bdd-verification.ps1 -Record 記錄" }
+        $actual = git -C $RepoRoot rev-parse --verify --quiet "${Commit}:$($s.path)"
+        if (-not $actual -or "$actual".Trim() -ne $s.blob) { throw "情境檔在受測 commit $Commit 的版本與紀錄不符：$($s.path)" }
+        $relative = 'features/' + ($s.path.Replace('\', '/') -replace '^\.bdd/modules/', '')
+        $destination = Join-Path $Staging $relative
+        Save-GitBlob -Repo $RepoRoot -Blob $s.blob -Destination $destination
+        New-PackEntry -Relative $relative -Path $destination -Extra ([ordered]@{ scenarioPath = $s.path; blob = $s.blob; role = $s.role })
+    }
+}
+
+<#
+.SYNOPSIS
+  把 evidence/ 底下可轉檔的圖片換成無損 WebP（同內容只轉一次）。不合格的保留原檔並記入 skipped。
+  回傳 entries（轉檔後的完整清單）、converted（from、to、sourceBytes、webpBytes）、skipped（file、reason）。
+#>
+function Convert-PackEntriesToWebp {
+    param([Parameter(Mandatory)][object[]]$Entries, [Parameter(Mandatory)]$Encoder, [Parameter(Mandatory)][string]$Staging)
+    $result = [Collections.Generic.List[object]]::new()
+    $converted = [Collections.Generic.List[object]]::new()
+    $skipped = [Collections.Generic.List[object]]::new()
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in $Entries) { $null = $names.Add($e.relative) }
+    $bySha = @{}
+    foreach ($e in @($Entries | Sort-Object -Property relative -CaseSensitive)) {
+        $ext = [IO.Path]::GetExtension($e.relative).ToLowerInvariant()
+        if (-not $e.relative.StartsWith('evidence/', [StringComparison]::OrdinalIgnoreCase) -or $WebpConvertibleExtensions -notcontains $ext) {
+            $result.Add($e); continue
+        }
+        $webpName = [IO.Path]::ChangeExtension($e.relative, '.webp').Replace('\', '/')
+        if ($names.Contains($webpName)) {
+            $skipped.Add([pscustomobject]@{ file = $e.relative; reason = 'name-conflict' }); $result.Add($e); continue
+        }
+        if (-not $bySha.ContainsKey($e.sha256)) {
+            $destination = Join-Path $Staging "webp/$($e.sha256).webp"
+            $outcome = Convert-ToLosslessWebp -Source $e.path -Destination $destination -Encoder $Encoder
+            $outcome.path = $destination
+            $bySha[$e.sha256] = $outcome
+        }
+        $c = $bySha[$e.sha256]
+        if (-not $c.ok) { $skipped.Add([pscustomobject]@{ file = $e.relative; reason = $c.reason }); $result.Add($e); continue }
+        $null = $names.Add($webpName)
+        $extra = [ordered]@{}
+        foreach ($k in $e.extra.Keys) { $extra[$k] = $e.extra[$k] }
+        $extra.originalName = $e.relative
+        $extra.originalSha256 = $e.sha256
+        $extra.encoder = $c.encoder
+        $extra.lossless = $true
+        $new = New-PackEntry -Relative $webpName -Path $c.path -Extra $extra
+        $new.lastWrite = $e.lastWrite
+        $result.Add($new)
+        $converted.Add([pscustomobject]@{ from = $e.relative; to = $webpName; sourceBytes = $c.sourceBytes; webpBytes = $c.webpBytes })
+    }
+    [pscustomobject]@{ entries = @($result); converted = @($converted); skipped = @($skipped) }
+}
+
+<#
+.SYNOPSIS
+  把相對路徑逐段做 URL 編碼（Markdown 連結常見的中文檔名寫法）。
+#>
+function ConvertTo-UrlPath([Parameter(Mandatory)][string]$Relative) {
+    ($Relative -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+}
+
+<#
+.SYNOPSIS
+  把封存內 .md 檔裡指向已轉檔截圖的連結改成 .webp（原字串與 URL 編碼的字串都換）；改寫後的檔放暫存目錄，工作區不動。
+  回傳 entries 與 rewritten（md 檔 → 取代次數）。
+#>
+function Update-PackMarkdownLinks {
+    param([Parameter(Mandatory)][object[]]$Entries, [object[]]$Converted = @(), [Parameter(Mandatory)][string]$Staging)
+    $rewritten = [ordered]@{}
+    if (-not $Converted.Count) { return [pscustomobject]@{ entries = $Entries; rewritten = $rewritten } }
+    $pairs = [Collections.Generic.List[object]]::new()
+    foreach ($c in $Converted) {
+        $pairs.Add(@($c.from, $c.to))
+        $encodedFrom = ConvertTo-UrlPath $c.from
+        if ($encodedFrom -ne $c.from) { $pairs.Add(@($encodedFrom, (ConvertTo-UrlPath $c.to))) }
+    }
+    $out = foreach ($e in $Entries) {
+        if ([IO.Path]::GetExtension($e.relative) -ine '.md') { $e; continue }
+        $text = [IO.File]::ReadAllText($e.path, [Text.Encoding]::UTF8)
+        $count = 0
+        foreach ($p in $pairs) {
+            $n = [regex]::Matches($text, [regex]::Escape($p[0])).Count
+            if ($n) { $text = $text.Replace($p[0], $p[1]); $count += $n }
+        }
+        if (-not $count) { $e; continue }
+        $destination = Join-Path $Staging "md/$($e.relative)"
+        [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
+        [IO.File]::WriteAllText($destination, $text, [Text.UTF8Encoding]::new($false))
+        $rewritten[$e.relative] = $count
+        $new = New-PackEntry -Relative $e.relative -Path $destination -Extra $e.extra
+        $new.lastWrite = $e.lastWrite
+        $new
+    }
+    [pscustomobject]@{ entries = @($out); rewritten = $rewritten }
+}
+
+<#
+.SYNOPSIS
+  把封存內 masking.json 的遮罩登記改到轉檔後的 .webp：鍵改名、sha256 改成 WebP 的雜湊、加 derivedFrom（原檔名與原雜湊）。
+  沒有 masking.json 或沒有轉檔時原樣回傳。
+#>
+function Update-PackMaskLedger {
+    param([Parameter(Mandatory)][object[]]$Entries, [object[]]$Converted = @(), [Parameter(Mandatory)][string]$Staging)
+    $ledgerEntry = $Entries | Where-Object { $_.relative -eq 'masking.json' } | Select-Object -First 1
+    if (-not $ledgerEntry -or -not $Converted.Count) { return $Entries }
+    $data = [IO.File]::ReadAllText($ledgerEntry.path, [Text.Encoding]::UTF8) | ConvertFrom-Json -AsHashtable
+    $files = if ($data.ContainsKey('files') -and $data.files) { $data.files } else { [ordered]@{} }
+    $byName = @{}
+    foreach ($e in $Entries) { $byName[$e.relative] = $e }
+    foreach ($c in $Converted) {
+        if (-not $files.Contains($c.from)) { continue }
+        $old = $files[$c.from]
+        $record = [ordered]@{}
+        foreach ($k in $old.Keys) { $record[$k] = $old[$k] }
+        $record.sha256 = $byName[$c.to].sha256
+        $record.derivedFrom = [ordered]@{ name = $c.from; sha256 = $old.sha256 }
+        $files.Remove($c.from)
+        $files[$c.to] = $record
+    }
+    $sorted = [ordered]@{}
+    foreach ($k in @($files.Keys | Sort-Object { $_ } -CaseSensitive)) { $sorted[$k] = $files[$k] }
+    $destination = Join-Path $Staging 'mask/masking.json'
+    [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
+    [IO.File]::WriteAllText($destination, (([ordered]@{ files = $sorted }) | ConvertTo-Json -Depth 8) + "`n", [Text.UTF8Encoding]::new($false))
+    @($Entries | ForEach-Object {
+        if ($_.relative -ne 'masking.json') { $_; return }
+        $n = New-PackEntry -Relative 'masking.json' -Path $destination -Extra $_.extra
+        $n.lastWrite = $_.lastWrite
+        $n
+    })
+}
+
+<#
+.SYNOPSIS
+  依內容去重：每種 SHA-256 只存第一個（依相對路徑排序），其餘記為 alias。
+  回傳 stored（要寫進 ZIP 的項目）、aliases（alias → canonical）、files（每個相對路徑的 manifest 紀錄，含 extra）。
+#>
+function Get-DedupPlan([Parameter(Mandatory)][object[]]$Entries) {
+    $files = [ordered]@{}
+    $aliases = [ordered]@{}
+    $canonical = @{}
+    $stored = [Collections.Generic.List[object]]::new()
+    foreach ($e in @($Entries | Sort-Object -Property relative -CaseSensitive)) {
+        if ($files.Contains($e.relative)) { throw "封存內有重複的路徑：$($e.relative)" }
+        $record = [ordered]@{ sha256 = $e.sha256; size = $e.size }
+        foreach ($k in $e.extra.Keys) { $record[$k] = $e.extra[$k] }
+        $files[$e.relative] = $record
+        if ($canonical.ContainsKey($e.sha256)) { $aliases[$e.relative] = $canonical[$e.sha256] }
+        else { $canonical[$e.sha256] = $e.relative; $stored.Add($e) }
+    }
+    [pscustomobject]@{ stored = @($stored); aliases = $aliases; files = $files }
+}
+
+<#
+.SYNOPSIS
+  把 stored 項目與 manifest 寫成 ZIP（第一層為 Prefix），逐檔驗證後才搬到 Target。
+  Target 已存在就丟例外；任何失敗都不留下暫存檔。
+#>
+function Write-BddZip {
+    param(
+        [Parameter(Mandatory)][object[]]$Stored,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Prefix,
+        [Parameter(Mandatory)][string]$ManifestJson,
+        [Parameter(Mandatory)][string]$Target
+    )
+    if (Test-Path -LiteralPath $Target) { throw "封存檔已存在，請使用新檔名，避免覆蓋：$Target" }
+    $parent = Split-Path -Path $Target -Parent
+    [IO.Directory]::CreateDirectory($parent) | Out-Null
+    $temporary = Join-Path $parent ([IO.Path]::GetRandomFileName() + '.zip.tmp')
+    try {
+        $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew)
+        $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $false, [Text.Encoding]::UTF8)
+        try {
+            foreach ($f in $Stored) {
+                $ext = [IO.Path]::GetExtension($f.relative).ToLowerInvariant()
+                $level = if ($PrecompressedExtensions -contains $ext) { 'NoCompression' } else { 'Optimal' }
+                $entry = $archive.CreateEntry($Prefix + $f.relative, [IO.Compression.CompressionLevel]::$level)
+                $entry.LastWriteTime = $f.lastWrite
+                $out = $entry.Open(); $in = [IO.File]::OpenRead($f.path)
+                try { $in.CopyTo($out) } finally { $in.Dispose(); $out.Dispose() }
+            }
+            $entry = $archive.CreateEntry($Prefix + $script:ManifestName, [IO.Compression.CompressionLevel]::Optimal)
+            $writer = [IO.StreamWriter]::new($entry.Open(), [Text.UTF8Encoding]::new($false))
+            try { $writer.Write($ManifestJson) } finally { $writer.Dispose() }
+        } finally { $archive.Dispose(); $stream.Dispose() }
+
+        $archive = [IO.Compression.ZipFile]::OpenRead($temporary)
+        try {
+            $entries = @($archive.Entries | Where-Object { -not $_.FullName.EndsWith('/') })
+            if ($entries.Count -ne $Stored.Count + 1) { throw "封存檔案數不符：應有 $($Stored.Count + 1)、ZIP $($entries.Count)" }
+            foreach ($f in $Stored) {
+                $entry = $archive.GetEntry($Prefix + $f.relative)
+                if (-not $entry -or $entry.Length -ne $f.size) { throw "封存缺少或大小不符：$($f.relative)" }
+                $s = $entry.Open()
+                try { $hash = Get-Sha256Hex -Stream $s } finally { $s.Dispose() }
+                if ($hash -ne $f.sha256) { throw "封存內容不符：$($f.relative)" }
+            }
+        } finally { $archive.Dispose() }
+
+        Move-Item -LiteralPath $temporary -Destination $Target
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+Export-ModuleMember -Function * -Variable ManifestName
