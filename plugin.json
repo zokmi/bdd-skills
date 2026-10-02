@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "bdd-skills",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "繁體中文 BDD 情境撰寫與本機實測技能",
   "author": {
     "name": "zokmi"
