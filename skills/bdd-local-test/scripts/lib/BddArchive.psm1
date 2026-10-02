@@ -228,8 +228,22 @@ function Add-ArchiveIndexEvent([Parameter(Mandatory)][string]$Root, [Parameter(M
 
 <#
 .SYNOPSIS
+  從封存檔所在目錄往上最多 4 層尋找 index.jsonl，回傳封存庫根目錄；找不到丟例外。
+#>
+function Find-ArchiveIndexRoot([Parameter(Mandatory)][string]$ArchivePath) {
+    $dir = Split-Path (Get-NormalizedPath $ArchivePath) -Parent
+    for ($i = 0; $i -lt 4 -and $dir; $i++) {
+        if (Test-Path -LiteralPath (Join-Path $dir 'index.jsonl')) { return $dir }
+        $dir = Split-Path $dir -Parent
+    }
+    throw "找不到封存索引 index.jsonl（從 $ArchivePath 往上 4 層），請以 -ArchiveRoot 指定"
+}
+
+<#
+.SYNOPSIS
   彙整索引事件，回傳每個封存檔目前的狀態清單。
-  每筆含 archive、name、issue、topic、commit、sha256、bytes、repo、createdAt、status、attachments、statusAt、legacy（舊版匯入、沒有 manifest）。
+  每筆含 archive、name、issue、topic、commit、sha256、bytes、repo、createdAt、status、attachments、statusAt、legacy（舊版匯入、沒有 manifest）、recompressed（是否重新壓縮過）、
+  issueCopySha256（issue 附件那一版的 SHA-256，未重新壓縮為 null）。
 #>
 function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
     $states = [ordered]@{}
@@ -241,11 +255,19 @@ function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
                 sha256 = $e.sha256; bytes = $e.bytes; repo = $e.repo; createdAt = $e.at
                 status = 'local-only'; attachments = @(); statusAt = $e.at
                 legacy = [bool]($e.PSObject.Properties['legacy'] -and $e.legacy)
+                recompressed = $false
+                issueCopySha256 = $null
             }
         } elseif ($e.event -eq 'status' -and $states.Contains($key)) {
             $states[$key].status = $e.status
             $states[$key].statusAt = $e.at
             if ($e.PSObject.Properties['attachments'] -and $e.attachments) { $states[$key].attachments = @($e.attachments) }
+        } elseif ($e.event -eq 'recompressed' -and $states.Contains($key)) {
+            # 重新壓縮：檔案內容換成 WebP 版，狀態不變；issue 上的附件仍是第一次重新壓縮前的版本
+            if (-not $states[$key].issueCopySha256) { $states[$key].issueCopySha256 = $e.previousSha256 }
+            $states[$key].sha256 = $e.sha256
+            $states[$key].bytes = $e.bytes
+            $states[$key].recompressed = $true
         }
     }
     @($states.Values | ForEach-Object { [pscustomobject]$_ })

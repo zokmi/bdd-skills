@@ -607,3 +607,71 @@ Describe 'WebP 封存的清理與還原' {
         @($names | Where-Object { $_ -like 'features/*' }) | Should -Be @('features/m/01.feature')
     }
 }
+
+Describe 'recompress-bdd.ps1' {
+    BeforeAll {
+        $env:BDD_WEBP_ENCODER = $null
+        Import-Module (Join-Path $script:Scripts 'lib/BddImage.psm1') -Force
+        Import-Module (Join-Path $script:Scripts 'lib/BddArchive.psm1') -Force
+        $script:HasPillow = (Get-WebpEncoder).kind -eq 'pillow'
+    }
+    BeforeEach {
+        $env:BDD_ARCHIVE_ROOT = $null
+        $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $t = New-TestRepo $base
+        $archiveRoot = Join-Path $base 'archives'
+        # 先以「沒有編碼器」產生一份 PNG 版封存，模擬 1.3.0 留下的舊封存
+        $env:BDD_WEBP_ENCODER = 'none'
+        Register-AllExempt $t.bdd
+        $old = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $env:BDD_WEBP_ENCODER = $null
+    }
+    AfterEach { $env:BDD_WEBP_ENCODER = $null }
+
+    It '重新壓縮後路徑不變、改成 WebP、索引記錄 recompressed 且狀態繼承' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        & "$script:Scripts/bdd-archive-index.ps1" -Mark -Archive $old.archive -Status uploaded-verified -Attachment 99 -ArchiveRoot $archiveRoot | Out-Null
+        $r = & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive | ConvertFrom-Json
+        $r.changed | Should -BeTrue
+        $r.archive | Should -Be $old.archive
+        $r.converted | Should -Be 3
+        $r.sha256 | Should -Be (Get-FileHash -LiteralPath $old.archive -Algorithm SHA256).Hash
+        (Read-Manifest $old.archive).files.PSObject.Properties.Name | Should -Contain 'evidence/R1_DM-01_首頁.webp'
+        (Read-Manifest $old.archive).recompressedFrom.sha256 | Should -Be $old.sha256
+
+        $state = Get-ArchiveStates $archiveRoot | Where-Object archive -eq $old.archive
+        $state.status | Should -Be 'uploaded-verified'
+        $state.recompressed | Should -BeTrue
+        $state.issueCopySha256 | Should -Be $old.sha256
+        $state.sha256 | Should -Be $r.sha256
+        Test-Path -LiteralPath "$($old.archive).bak" | Should -BeFalse
+    }
+
+    It '重新壓縮後 prune-bdd.ps1 仍可據以清理' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        & "$script:Scripts/bdd-archive-index.ps1" -Mark -Archive $old.archive -Status uploaded-verified -Attachment 99 -ArchiveRoot $archiveRoot | Out-Null
+        & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive | Out-Null
+        $plan = & "$script:Scripts/prune-bdd.ps1" -Repo $t.repo -ArchiveRoot $archiveRoot | ConvertFrom-Json
+        ($plan.items | Where-Object topic -eq '1234-demo').action | Should -Be 'prune'
+    }
+
+    It '已是 WebP 的封存再跑一次時 changed = false，檔案不動' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive | Out-Null
+        $hash = (Get-FileHash -LiteralPath $old.archive -Algorithm SHA256).Hash
+        $again = & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive | ConvertFrom-Json
+        $again.changed | Should -BeFalse
+        (Get-FileHash -LiteralPath $old.archive -Algorithm SHA256).Hash | Should -Be $hash
+    }
+
+    It '封存檔與索引記錄的 SHA-256 不同時拒絕' {
+        [IO.File]::AppendAllText($old.archive, 'x')
+        { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*SHA-256*'
+    }
+
+    It '沒有編碼器時拒絕' {
+        $env:BDD_WEBP_ENCODER = 'none'
+        try { { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*Pillow*' }
+        finally { $env:BDD_WEBP_ENCODER = $null }
+    }
+}

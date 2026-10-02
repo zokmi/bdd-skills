@@ -43,11 +43,7 @@ if (@($List, $Mark, $Import | Where-Object { $_ }).Count -ne 1) { throw '請擇�
 function Find-IndexRoot {
     if ($ArchiveRoot) { return Get-NormalizedPath $ArchiveRoot }
     if ($Archive -and -not $Import) {
-        $dir = Split-Path (Get-NormalizedPath $Archive) -Parent
-        for ($i = 0; $i -lt 4 -and $dir; $i++) {
-            if (Test-Path -LiteralPath (Join-Path $dir 'index.jsonl')) { return $dir }
-            $dir = Split-Path $dir -Parent
-        }
+        try { return Find-ArchiveIndexRoot $Archive } catch { if (-not $Repo) { throw } }
     }
     if ($Repo) {
         # Resolve-ArchiveRoot 以「輸出目錄的上一層」找 .bdd/config.json，所以傳入 <repo>/.bdd/ 底下的虛擬子目錄
