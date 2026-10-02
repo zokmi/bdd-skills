@@ -251,10 +251,10 @@ git status --porcelain
 報告寫完後，**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）：
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir <輸出資料夾>   -Base <基準分支> -Passed N -Failed N -Blocked N -NotRun N   -ChangedScenarios <本單新增或修改的 .feature，逗號分隔>   -RegressionScenarios "<回歸的 .feature>::<編號>,<編號>"   -Note "<一句話，例如：自 yuanlih 同步後複測>"
+pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir <輸出資料夾>   -Base <基準分支> -Passed N -Failed N -Blocked N -NotRun N   -ChangedScenarios "<本單新增或修改的 .feature，多個以 ; 分隔>"   -RegressionScenarios "<回歸的 .feature>::<編號>,<編號>"   -Note "<一句話，例如：自 yuanlih 同步後複測>"
 ```
 
-`-ChangedScenarios`／`-RegressionScenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」。
+`-ChangedScenarios`／`-RegressionScenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。
 情境檔要先 commit：封存時會從受測 commit 取出當時那一版放進 ZIP，受測時未提交的情境會讓封存失敗。
 
 範圍不是 `<基準>..HEAD`（例如使用者指定了 commit、或在別的分支上 cherry-pick 過來的一串）時，
@@ -268,7 +268,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
 
 1. **確認目標與準備提交**：由使用者指定的單號、分支或專案設定找出唯一 issue 與其系統（如 Redmine），確認目前是對應的功能分支、遠端 `develop` 存在、最新一輪所有情境全通過。若單號、issue、目標 repo 或 `develop` 不明，先查專案文件與遠端；仍無法唯一確認就停止收尾並回報。檢查原有未提交異動，只挑本次修正與專案允許追蹤的 BDD 檔案提交，不夾帶其他人的變更；無法分離時停止合併並說明。提交修正後，從**乾淨的受測 commit** 再完整重跑一次，更新 `verification.json` 與報告；未通過就回到〈6-1〉，不得合併。若報告受版控追蹤，測後另提交純報告更新並確認沒有改動受測程式，保留真正受測的 commit SHA。
 2. **合併與驗證 develop**：先把功能分支的 `.bdd/` 報告、`verification.json` 和新舊證據保存在可讀的暫存位置；若這些檔案未進版控，整合工作區不會自動帶入。`git fetch origin develop`，從最新 `origin/develop` 建立隔離的整合工作區；用 `git log origin/develop..<功能分支>` 與 diff 確認待合併範圍沒有無關變更，再將已驗證功能分支合併進去。把前輪材料帶到整合工作區，保留舊輪次檔名、不覆蓋既有證據，後續截圖使用新的 `R<輪次>_`。
-   **衝突只發生在 `.bdd/modules/` 底下時自行解**，做法見 [模組情境集](references/modules.md)〈並行分支撞號〉；合併後一律跑 `bdd-modules.ps1 -Lint`，有問題先改號再重跑。
+   **衝突全部落在 `.bdd/modules/` 底下時自行解**，做法見 [模組情境集](references/modules.md)〈並行分支撞號〉；合併後一律跑 `bdd-modules.ps1 -Lint`，有問題先改號再重跑。
    遇衝突就保留原分支與整合工作區供檢查，停止並回報衝突檔案；不動 `origin/develop`，不推未解衝突版本。合併後依〈1-1〉及本流程在整合工作區**完整重跑所有情境**，確認 API、UI、資料庫與既有整合沒有退步；若有失敗或阻塞，不推 `develop`，回報原因與證據。全部通過才用非強制的 `git push origin HEAD:refs/heads/develop` 推送整合工作區的 HEAD，再查遠端 SHA 核對；遠端前進、權限不足或分支保護拒絕時，不用 `--force`，回報本機結果與待處理步驟。若原本就在 `develop`，跳過合併，但仍要完整複測、正常推送並核對遠端版本。這輪受測程式 SHA 與最後的遠端 HEAD 都要記錄。
 3. **更新對應 issue**：只在 `develop` 合併／推送及合併後驗證成功後，用可用的 issue 工具追加「問題或需求、根因、修正內容、測試範圍與全通過數字、功能分支與 develop 的受測 SHA、報告位置」說明，並**實際上傳最後一輪的修正後截圖**，逐張說明畫面證明了哪個情境。優先先上傳附件、取得可用附件識別或連結，再一次儲存註記；若是 Redmine，先讀 `~/.redmine-issue-guides/SKILL.md`（存在時）與專案指引，保留原概述與驗收標準，在適當欄位追加註記；狀態只依專案流程更新。
    上傳前檢查截圖不含帳密或不應外傳的資料，並以 `mask-evidence.ps1 -Status` 確認要上傳的圖片全部是 `masked`；有 `unmasked`／`stale` 就先遮罩、登記再上傳。確認 issue 註記與每張截圖附件真的儲存成功，記下 issue 連結及附件清單。若註記已儲存但附件失敗，分別記錄「註記已更新／附件未完成」，重試前先讀現有註記，避免重複留言。沒有可用工具、附件上傳失敗或權限不足時，保留截圖與可貼上的說明，回報使用者；不要假稱已更新或只貼尚未上傳的圖片連結。

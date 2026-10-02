@@ -67,7 +67,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-modules.ps1" -Lint
 兩條分支都從 develop 開出、都新增了 `SS-13`：
 
 1. 〈7-1〉把功能分支合併進最新的 `origin/develop` 時處理。
-2. **只有 `.bdd/modules/` 底下有衝突**時自行解：`.feature` 兩邊的情境都保留，本分支新增的情境改用 `-NextId` 取得的新號；`MODULE.md` 的 `issues`、`removed` 取聯集。只要有 `.bdd/modules/` 以外的檔案衝突，就照現行規則停下來回報，`.bdd/modules/` 的衝突也不先解。
+2. 合併衝突**全部**落在 `.bdd/modules/` 底下時，自行解：`.feature` 兩邊的情境都保留，本分支新增的情境改用 `-NextId` 取得的新號；`MODULE.md` 的 `issues`、`removed` 取聯集。只要同時有任何 `.bdd/modules/` 以外的檔案衝突，整個合併就照現行規則停下來回報，連 `.bdd/modules/` 的衝突也先不動。
 3. 沒有文字衝突、但 `-Lint` 報 `duplicate-id` 時，同樣把本分支新增的改號。
 4. 改號寫進 REPORT〈情境修訂〉（例如「`SS-13`→`SS-15`（與 #5401 撞號）」）；合併後重跑那一輪的證據用新編號，舊輪次證據保留原檔名。
 
