@@ -59,6 +59,21 @@ BeforeAll {
             $r = [IO.StreamReader]::new($e.Open()); try { $r.ReadToEnd() | ConvertFrom-Json } finally { $r.Dispose() }
         } finally { $z.Dispose() }
     }
+
+    # 把 repo 改成模組情境格式：情境移到 .bdd/modules/m/01.feature 並 commit，verification.json 記錄 scenarios；回傳新的 head 與 blob
+    function Convert-ToModuleLayout([hashtable]$T, [switch]$KeepIssueFeature) {
+        $mod = Join-Path $T.repo '.bdd/modules/m'
+        New-Item -ItemType Directory -Path $mod -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $mod 'MODULE.md') -Encoding utf8 -Value @('---', 'prefix: DM', 'paths:', '  - src/**', '---')
+        Set-Content -LiteralPath (Join-Path $mod '01.feature') -Encoding utf8 -Value "功能: 示範`n  @DM-01 @#1234 @UI`n  場景: 首頁`n    當 a"
+        git -C $T.repo add .bdd/modules ; git -C $T.repo commit -q -m scenarios
+        if (-not $KeepIssueFeature) { Remove-Item -LiteralPath (Join-Path $T.bdd '01-demo.feature') }
+        $head = (git -C $T.repo rev-parse HEAD).Trim()
+        $blob = (git -C $T.repo rev-parse 'HEAD:.bdd/modules/m/01.feature').Trim()
+        $doc = @{ rounds = @(@{ head = $head; scenarios = @(@{ path = '.bdd/modules/m/01.feature'; blob = $blob; ids = @('DM-01'); role = 'changed' }) }) }
+        Set-Content -LiteralPath (Join-Path $T.bdd 'verification.json') -Value ($doc | ConvertTo-Json -Depth 6) -Encoding utf8
+        @{ head = $head; blob = $blob }
+    }
 }
 
 Describe 'archive-bdd.ps1' {
@@ -369,5 +384,64 @@ Describe 'mask-evidence.ps1' {
 
     It '沒有 mask.rects 規則時 -Apply 拒絕' {
         { & $mask -Dir $t.bdd -Apply } | Should -Throw '*mask.rects*'
+    }
+}
+
+Describe 'archive-bdd.ps1 情境快照' {
+    BeforeEach {
+        $env:BDD_ARCHIVE_ROOT = $null
+        $env:BDD_WEBP_ENCODER = 'none'
+        $base = Join-Path $TestDrive ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $t = New-TestRepo $base
+        $archiveRoot = Join-Path $base 'archives'
+    }
+    AfterEach { $env:BDD_WEBP_ENCODER = $null }
+
+    It 'issue 資料夾沒有 .feature 時，依 scenarios 收入受測當時的情境' {
+        $m = Convert-ToModuleLayout $t
+        # 受測之後模組情境又被改過：封存要收的是受測當時那一版
+        Add-Content -LiteralPath (Join-Path $t.repo '.bdd/modules/m/01.feature') -Value '  # 之後的修改'
+        git -C $t.repo commit -qam later
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+
+        $manifest = Read-Manifest $r.archive
+        @($manifest.features) | Should -Be @('.bdd/modules/m/01.feature')
+        $manifest.files.'features/m/01.feature'.blob | Should -Be $m.blob
+        $zip = [IO.Compression.ZipFile]::OpenRead($r.archive)
+        try {
+            $reader = [IO.StreamReader]::new($zip.GetEntry('1234-demo/features/m/01.feature').Open())
+            try { $reader.ReadToEnd() | Should -Not -Match '之後的修改' } finally { $reader.Dispose() }
+        } finally { $zip.Dispose() }
+    }
+
+    It '受測時情境檔未提交（blob 為 null）時拒絕封存' {
+        Convert-ToModuleLayout $t | Out-Null
+        $doc = Get-Content -LiteralPath (Join-Path $t.bdd 'verification.json') -Raw | ConvertFrom-Json -AsHashtable
+        $doc.rounds[0].scenarios[0].blob = $null
+        Set-Content -LiteralPath (Join-Path $t.bdd 'verification.json') -Value ($doc | ConvertTo-Json -Depth 6) -Encoding utf8
+        Register-AllExempt $t.bdd
+        { Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot } } | Should -Throw '*尚未提交*'
+    }
+
+    It '紀錄的 blob 與受測 commit 不符時拒絕封存' {
+        Convert-ToModuleLayout $t | Out-Null
+        $doc = Get-Content -LiteralPath (Join-Path $t.bdd 'verification.json') -Raw | ConvertFrom-Json -AsHashtable
+        $doc.rounds[0].scenarios[0].blob = '0000000000000000000000000000000000000000'
+        Set-Content -LiteralPath (Join-Path $t.bdd 'verification.json') -Value ($doc | ConvertTo-Json -Depth 6) -Encoding utf8
+        Register-AllExempt $t.bdd
+        { Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot } } | Should -Throw '*不符*'
+    }
+
+    It '沒有 .feature 也沒有 scenarios 時拒絕封存' {
+        Remove-Item -LiteralPath (Join-Path $t.bdd '01-demo.feature')
+        Register-AllExempt $t.bdd
+        { Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot } } | Should -Throw '*情境*'
+    }
+
+    It '舊格式（issue 資料夾內有 .feature、沒有 scenarios）照舊封存，features 為空' {
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        @((Read-Manifest $r.archive).features).Count | Should -Be 0
     }
 }

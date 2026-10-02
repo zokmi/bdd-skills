@@ -103,6 +103,28 @@ function Get-RepoTopLevel([Parameter(Mandatory)][string]$AnyPath) {
 
 <#
 .SYNOPSIS
+  把 git blob 的內容以二進位原樣寫到 Destination（不經 PowerShell 管線，避免換行與編碼被改動）。失敗時丟例外且不留檔。
+#>
+function Save-GitBlob([Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$Blob, [Parameter(Mandatory)][string]$Destination) {
+    [IO.Directory]::CreateDirectory((Split-Path $Destination -Parent)) | Out-Null
+    $psi = [Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($a in @('-C', $Repo, 'cat-file', 'blob', $Blob)) { $psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $process = [Diagnostics.Process]::Start($psi)
+    $out = [IO.File]::Create($Destination)
+    try { $process.StandardOutput.BaseStream.CopyTo($out) } finally { $out.Dispose() }
+    $err = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        throw "無法取出 git blob $Blob：$err"
+    }
+}
+
+<#
+.SYNOPSIS
   讀取 BDD 設定檔 .bdd/config.json。
   先找輸出目錄上一層（也就是本 worktree 的 .bdd/），沒有再找主 checkout 的 .bdd/。
   回傳 @{ path = 設定檔路徑或 $null; data = 設定內容（PSCustomObject，可能為空物件） }。

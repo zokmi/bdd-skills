@@ -40,6 +40,30 @@ function New-PackEntry {
 
 <#
 .SYNOPSIS
+  依 verification.json 的 scenarios，取出受測 commit 當時的模組情境檔放進暫存目錄，回傳對應的封存項目。
+  封存內路徑為 features/<去掉 .bdd/modules/ 的路徑>；extra 記錄 scenarioPath、blob、role。
+  紀錄的 blob 為 null（受測時未提交）或與 <Commit>:<path> 不同時丟例外。
+#>
+function Get-ScenarioSnapshotEntries {
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$Commit,
+        [object[]]$Scenarios = @(),
+        [Parameter(Mandatory)][string]$Staging
+    )
+    foreach ($s in $Scenarios) {
+        if (-not $s.blob) { throw "情境檔受測時尚未提交，無法取出受測版本：$($s.path)；請 commit 後重新以 bdd-verification.ps1 -Record 記錄" }
+        $actual = git -C $RepoRoot rev-parse --verify --quiet "${Commit}:$($s.path)"
+        if (-not $actual -or "$actual".Trim() -ne $s.blob) { throw "情境檔在受測 commit $Commit 的版本與紀錄不符：$($s.path)" }
+        $relative = 'features/' + ($s.path.Replace('\', '/') -replace '^\.bdd/modules/', '')
+        $destination = Join-Path $Staging $relative
+        Save-GitBlob -Repo $RepoRoot -Blob $s.blob -Destination $destination
+        New-PackEntry -Relative $relative -Path $destination -Extra ([ordered]@{ scenarioPath = $s.path; blob = $s.blob; role = $s.role })
+    }
+}
+
+<#
+.SYNOPSIS
   依內容去重：每種 SHA-256 只存第一個（依相對路徑排序），其餘記為 alias。
   回傳 stored（要寫進 ZIP 的項目）、aliases（alias → canonical）、files（每個相對路徑的 manifest 紀錄，含 extra）。
 #>

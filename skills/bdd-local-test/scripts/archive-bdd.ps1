@@ -64,7 +64,13 @@ foreach ($required in @('REPORT.md', 'verification.json')) {
 if (Get-ChildItem -LiteralPath $source -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) {
     throw 'BDD 輸出含符號連結或 junction；請先確認來源，避免封存 worktree 外的資料'
 }
-if (-not @(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.feature').Count) { throw '缺少 .feature 情境檔，不能封存' }
+# 讀取最後一輪驗證紀錄：受測版本與本輪執行的模組情境
+$verification = Get-Content -LiteralPath (Join-Path $source 'verification.json') -Raw -Encoding utf8 | ConvertFrom-Json
+$rounds = @(Get-ConfigValue $verification 'rounds' @())
+$lastRound = if ($rounds.Count) { $rounds[-1] } else { $null }
+$scenarios = @(Get-ConfigValue $lastRound 'scenarios' @())
+$hasIssueFeature = [bool]@(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.feature').Count
+if (-not $hasIssueFeature -and -not $scenarios.Count) { throw '缺少情境：輸出資料夾沒有 .feature，verification.json 最後一輪也沒有 scenarios，不能封存' }
 if (Test-Path -LiteralPath (Join-Path $source $ManifestName)) { throw "輸出目錄不可自帶 $ManifestName（封存時會產生）" }
 
 # 1. 攤平：舊輪次的 evidence.zip 解回 evidence/，同名同內容略過、同名不同內容停止
@@ -116,21 +122,33 @@ if ($unmasked.Count -and $maskConfig.required -and -not $AllowUnmaskedReason) {
         "專案確定不需遮罩時，在 .bdd/config.json 設定 mask.required = false。")
 }
 
+# 4. 受測版本與單號（情境快照需要受測 commit，所以放在蒐集之前）
+if (-not $Commit) {
+    if (-not $lastRound -or -not (Get-ConfigValue $lastRound 'head')) { throw 'verification.json 沒有任何輪次的 head，請以 -Commit 指定受測 SHA' }
+    $Commit = $lastRound.head
+}
+$shortCommit = if ($Commit.Length -gt 7) { $Commit.Substring(0, 7) } else { $Commit }
+if (-not $Issue -and $topic -match '^(\d+)-') { $Issue = $Matches[1] }
+
 # 3. 蒐集（舊 evidence.zip 已攤平，不再收入）
 $entries = @(Get-ChildItem -LiteralPath $source -Recurse -File -Force |
     Where-Object { -not ($_.FullName.Equals($legacyZip, [StringComparison]::OrdinalIgnoreCase)) } |
     ForEach-Object { New-PackEntry -Relative ([IO.Path]::GetRelativePath($source, $_.FullName)) -Path $_.FullName })
 $sourceFileCount = $entries.Count
 
-# 4. 受測版本與單號
-if (-not $Commit) {
-    $verification = Get-Content -LiteralPath (Join-Path $source 'verification.json') -Raw -Encoding utf8 | ConvertFrom-Json
-    $rounds = @(Get-ConfigValue $verification 'rounds' @())
-    if (-not $rounds.Count -or -not (Get-ConfigValue $rounds[-1] 'head')) { throw 'verification.json 沒有任何輪次的 head，請以 -Commit 指定受測 SHA' }
-    $Commit = $rounds[-1].head
+$staging = Join-Path ([IO.Path]::GetTempPath()) ('bdd-archive-' + [IO.Path]::GetRandomFileName())
+[IO.Directory]::CreateDirectory($staging) | Out-Null
+try {
+# 3-1. 模組情境快照：取受測 commit 當時的版本；輸出資料夾已有同路徑同內容（例如從封存還原）就不重複收
+$existing = @{}
+foreach ($e in $entries) { $existing[$e.relative] = $e }
+foreach ($snap in @(Get-ScenarioSnapshotEntries -RepoRoot $repoRoot -Commit $Commit -Scenarios $scenarios -Staging $staging)) {
+    if ($existing.ContainsKey($snap.relative)) {
+        if ($existing[$snap.relative].sha256 -ne $snap.sha256) { throw "輸出資料夾已有 $($snap.relative)，但內容與受測 commit 的情境不同，請人工確認" }
+        continue
+    }
+    $entries += $snap
 }
-$shortCommit = if ($Commit.Length -gt 7) { $Commit.Substring(0, 7) } else { $Commit }
-if (-not $Issue -and $topic -match '^(\d+)-') { $Issue = $Matches[1] }
 
 # 5. 決定封存位置並檢查不在任何 worktree 內
 $root = Resolve-ArchiveRoot -BddDir $source -ArchiveRoot $ArchiveRoot
@@ -149,6 +167,7 @@ $manifest = [ordered]@{
     issue = $Issue
     topic = $topic
     commit = $Commit
+    features = @($scenarios | ForEach-Object { $_.path })
     createdAt = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
     masked = ($unmasked.Count -eq 0)
     maskRequired = $maskConfig.required
@@ -203,3 +222,6 @@ if ($limit -and $size -gt $limit) { $warnings += "封存檔 $size 位元組超�
     exceedsAttachmentLimit = [bool]($limit -and $size -gt $limit)
     warnings = $warnings
 } | ConvertTo-Json -Depth 4
+} finally {
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+}
