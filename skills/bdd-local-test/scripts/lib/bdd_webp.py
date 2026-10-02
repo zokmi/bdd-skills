@@ -19,6 +19,14 @@ def _rgba(path):
     from PIL import Image
     with Image.open(path) as im:
         im.load()
+        if im.mode not in ("1", "L", "LA", "P", "RGB", "RGBA"):
+            raise ValueError("unsupported image mode for lossless WebP: " + im.mode)
+        # Pillow 可能先把 16 位元 RGB PNG 降位再呈現為 RGB，必須檢查原始 IHDR。
+        if im.format == "PNG":
+            with open(path, "rb") as source:
+                header = source.read(25)
+            if len(header) >= 25 and header[24] > 8:
+                raise ValueError("unsupported PNG bit depth for lossless WebP")
         return im.convert("RGBA")
 
 

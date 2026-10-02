@@ -66,11 +66,11 @@ try {
 
     $paths = @($ForPaths | Where-Object { $_ })
     if ($Base) {
-        $diff = @(git -C $top diff --name-only "$Base...HEAD")
+        $diff = @(git -c core.quotepath=false -C $top diff --name-only "$Base...HEAD")
         if ($LASTEXITCODE -ne 0) { throw "無法取得 $Base...HEAD 的差異" }
         $paths += $diff
-        $paths += @(git -C $top diff --name-only HEAD)
-        $paths += @(git -C $top ls-files --others --exclude-standard)
+        $paths += @(git -c core.quotepath=false -C $top diff --name-only HEAD)
+        $paths += @(git -c core.quotepath=false -C $top ls-files --others --exclude-standard)
     }
     $r = Find-ModulesForPaths -RepoRoot $top -Paths $paths
     [pscustomobject]@{ repo = $top; modules = $r.modules; unmatched = $r.unmatched } | ConvertTo-Json -Depth 4

@@ -113,7 +113,8 @@ function Format-RepoUrl([string]$url) {
 # 列出相關檔案的未提交異動（排除 .bdd 自己）
 function Get-DirtyPaths([string[]]$paths) {
     if ($paths.Count -eq 0) { return @() }
-    @(git status --porcelain -- @paths | ForEach-Object { $_.Substring(3) })
+    $root = (git rev-parse --show-toplevel).Trim()
+    @(git -C $root status --porcelain -- @paths | ForEach-Object { $_.Substring(3) })
 }
 
 # 把 -ChangedScenarios／-RegressionScenarios 的每一項轉成紀錄：path、blob（受測版本的 git blob；該版本沒有此檔為 null）、ids、role
@@ -127,7 +128,7 @@ function ConvertTo-ScenarioRecords([string[]]$Entries, [string]$Role, [string]$H
         $blob = git rev-parse --verify --quiet "${HeadSha}:$path"
         $ids = if ($parts.Count -gt 1) { @($parts[1] -split '[,\s]+' | Where-Object { $_ }) }
                else { @(Get-FeatureScenarios $full | ForEach-Object { $_.ids }) }
-        [ordered]@{ path = $path; blob = if ($blob) { "$blob".Trim() } else { $null }; ids = $ids; role = $Role }
+        [ordered]@{ path = $path; blob = if ($blob) { "$blob".Trim() } else { $null }; ids = @($ids); role = $Role }
     }
 }
 

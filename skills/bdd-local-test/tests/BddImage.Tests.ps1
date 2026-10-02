@@ -91,6 +91,18 @@ Describe 'Convert-ToLosslessWebp（假編碼器）' {
 }
 
 Describe 'Convert-ToLosslessWebp（Pillow）' {
+    It '16 位元 PNG 保留原圖，不接受降為 8 位元的 WebP' {
+        if ($script:Pillow.kind -ne 'pillow') { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $src = Join-Path $TestDrive '16bit.png'
+        $dst = Join-Path $TestDrive '16bit.webp'
+        & $script:Pillow.command @($script:Pillow.prefixArgs) -c 'from PIL import Image; import sys; Image.new("I;16", (400,400), 1000).save(sys.argv[1])' $src
+        $before = (Get-FileHash $src).Hash
+        $r = Convert-ToLosslessWebp -Source $src -Destination $dst -Encoder $script:Pillow
+        $r.ok | Should -BeFalse
+        Test-Path $dst | Should -BeFalse
+        (Get-FileHash $src).Hash | Should -Be $before
+    }
+
     It '中文與空白檔名、含透明像素的 PNG 轉成無損 WebP，逐像素一致且較小' {
         if ($script:Pillow.kind -ne 'pillow') { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
         $dir = Join-Path $TestDrive 'pillow'

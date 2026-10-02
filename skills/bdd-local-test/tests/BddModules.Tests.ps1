@@ -101,6 +101,11 @@ Describe 'BddModules.psm1' {
         @(Test-BddModules $repo).Count | Should -Be 0
     }
 
+    It '一位數的情境編號不能通過 lint' {
+        Set-TestModule -Repo $repo -Name 'm' -Prefix 'SS' -Features @{ '01.feature' = $script:ValidFeature.Replace('@SS-01', '@SS-1') } | Out-Null
+        @(Test-BddModules $repo).rule | Should -Contain 'scenario-id'
+    }
+
     It '同模組編號重複' {
         $dup = $script:ValidFeature.Replace('@SS-02', '@SS-01')
         Set-TestModule -Repo $repo -Name 'm' -Prefix 'SS' -Features @{ '01.feature' = $dup } | Out-Null
@@ -216,6 +221,19 @@ Describe 'bdd-modules.ps1' {
         $r = Invoke-Modules @{ Repo = $repo; Base = 'HEAD~1' }
         $r.code | Should -Be 0
         @($r.json.modules.name) | Should -Be @('m')
+    }
+
+    It '-Base 能對應中文的未追蹤路徑' {
+        Set-TestModule -Repo $repo -Name 'm' -Prefix 'SS' -Paths @('src/**') | Out-Null
+        git -C $repo add .
+        git -C $repo commit -q -m base
+        git -C $repo config core.quotepath true
+        New-Item -ItemType Directory (Join-Path $repo 'src') | Out-Null
+        Set-Content (Join-Path $repo 'src/中文.txt') 'x'
+        $r = Invoke-Modules @{ Repo = $repo; Base = 'HEAD' }
+        $r.code | Should -Be 0
+        @($r.json.modules.name) | Should -Be @('m')
+        @($r.json.unmatched).Count | Should -Be 0
     }
 
     It '沒有指定模式時 exit 2' {

@@ -419,6 +419,19 @@ Describe 'archive-bdd.ps1 情境快照' {
         } finally { $zip.Dispose() }
     }
 
+    It '同一情境檔分列 changed 與 regression 時只收一份快照' {
+        Convert-ToModuleLayout $t | Out-Null
+        $doc = Get-Content (Join-Path $t.bdd 'verification.json') -Raw | ConvertFrom-Json -AsHashtable
+        $original = $doc.rounds[0].scenarios[0]
+        $doc.rounds[0].scenarios += @{ path = $original.path; blob = $original.blob; ids = @('SS-02'); role = 'regression' }
+        Set-Content (Join-Path $t.bdd 'verification.json') ($doc | ConvertTo-Json -Depth 8)
+        Register-AllExempt $t.bdd
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        $zip = [IO.Compression.ZipFile]::OpenRead($r.archive)
+        try { @($zip.Entries | Where-Object FullName -eq '1234-demo/features/m/01.feature').Count | Should -Be 1 }
+        finally { $zip.Dispose() }
+    }
+
     It '受測時情境檔未提交（blob 為 null）時拒絕封存' {
         Convert-ToModuleLayout $t | Out-Null
         $doc = Get-Content -LiteralPath (Join-Path $t.bdd 'verification.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -616,7 +629,7 @@ Describe 'recompress-bdd.ps1' {
         $script:HasPillow = (Get-WebpEncoder).kind -eq 'pillow'
 
         # 手工組一個沒有 manifest 的舊版封存並登記進索引；WithFolder 為 $false 時項目直接放在 ZIP 根目錄
-        function New-LegacyZip([string]$Zip, [string]$Root, [bool]$WithFolder) {
+        function New-LegacyZip([string]$Zip, [string]$Root, [bool]$WithFolder, [bool]$EvidenceOnly = $false) {
             $png = Join-Path $Root 'legacy.png'
             New-TestPng $png '#aa5522'
             [IO.Directory]::CreateDirectory((Split-Path $Zip -Parent)) | Out-Null
@@ -625,7 +638,7 @@ Describe 'recompress-bdd.ps1' {
             $za = [IO.Compression.ZipArchive]::new($fs, [IO.Compression.ZipArchiveMode]::Create)
             try {
                 [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $png, "${p}evidence/R1_舊版.png")
-                $e = $za.CreateEntry("${p}REPORT.md"); $w = [IO.StreamWriter]::new($e.Open()); $w.Write('# 舊報告'); $w.Dispose()
+                if (-not $EvidenceOnly) { $e = $za.CreateEntry("${p}REPORT.md"); $w = [IO.StreamWriter]::new($e.Open()); $w.Write('# 舊報告'); $w.Dispose() }
             } finally { $za.Dispose(); $fs.Dispose() }
             Add-ArchiveIndexEvent $archiveRoot ([ordered]@{
                 event = 'created'; archive = $Zip; name = (Split-Path $Zip -Leaf); issue = '1234'; topic = 'legacy-topic'; commit = 'abc1234'
@@ -697,6 +710,15 @@ Describe 'recompress-bdd.ps1' {
         $env:BDD_WEBP_ENCODER = 'none'
         try { { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*Pillow*' }
         finally { $env:BDD_WEBP_ENCODER = $null }
+    }
+
+    It '舊版只有 evidence 資料夾時仍可重新壓縮' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有 Pillow'; return }
+        $zip = Join-Path $archiveRoot '1234/legacy/evidence-only.zip'
+        New-LegacyZip $zip $base $false $true
+        $r = & "$script:Scripts/recompress-bdd.ps1" -Archive $zip | ConvertFrom-Json
+        $r.changed | Should -BeTrue
+        (Get-ZipNames $zip) | Should -Contain 'legacy-topic/evidence/R1_舊版.webp'
     }
 
     It '舊版沒有 manifest 的封存（有第一層資料夾）可轉檔並補上 legacy manifest' {

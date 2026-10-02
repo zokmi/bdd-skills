@@ -52,7 +52,10 @@ Describe 'bdd-verification.ps1 模組情境' {
         $s[0].ids | Should -Be @('SS-01', 'SS-02')
         $s[0].blob | Should -Be (git -C $t.repo rev-parse 'HEAD:.bdd/modules/m/01.feature').Trim()
         $s[1].role | Should -Be 'regression'
+        ($s[1].ids -is [array]) | Should -BeTrue
         $s[1].ids | Should -Be @('SS-05')
+        $saved = Get-Content (Join-Path $t.bdd 'verification.json') -Raw | ConvertFrom-Json
+        ($saved.rounds[-1].scenarios[1].ids -is [array]) | Should -BeTrue
     }
 
     It '情境檔沒變、HEAD 前進時判 still-valid' {
@@ -83,10 +86,19 @@ Describe 'bdd-verification.ps1 模組情境' {
         $c.json.verdict | Should -Be 'rerun'
     }
 
+    It '從 repo 子目錄比對也能偵測未提交的情境異動' {
+        Invoke-Verification $t.repo @{ Record = $true; Dir = '.bdd/1-demo'; Base = $t.base; ChangedScenarios = @('.bdd/modules/m/01.feature') } | Out-Null
+        Add-Content (Join-Path $t.repo '.bdd/modules/m/01.feature') '  # dirty'
+        $c = Invoke-Verification (Join-Path $t.repo '.bdd') @{ Check = $true; Dir = $t.bdd }
+        $c.json.verdict | Should -Be 'rerun'
+        $c.json.dirtyPaths | Should -Contain '.bdd/modules/m/01.feature'
+    }
+
     It '新建未提交的情境檔：blob 為 null' {
         Set-Content -LiteralPath (Join-Path $t.repo '.bdd/modules/m/03.feature') -Encoding utf8 -Value "功能: z`n  @SS-09 @#2 @UI`n  場景: 九`n    當 a"
         $r = Invoke-Verification $t.repo @{ Record = $true; Dir = '.bdd/1-demo'; Base = $t.base; ChangedScenarios = @('.bdd/modules/m/03.feature') }
         $r.json.scenarios[0].blob | Should -BeNullOrEmpty
+        ($r.json.scenarios[0].ids -is [array]) | Should -BeTrue
         $r.json.scenarios[0].ids | Should -Be @('SS-09')
     }
 

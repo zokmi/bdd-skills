@@ -82,7 +82,7 @@ function Get-FeatureScenarios([Parameter(Mandatory)][string]$Path) {
                 line = $i + 1
                 title = $Matches[2]
                 tags = $tags
-                ids = @($tags | Where-Object { $_ -cmatch '^@[A-Z]{2,3}-\d+$' } | ForEach-Object { $_.Substring(1) })
+                ids = @($tags | Where-Object { $_ -cmatch '^@[A-Z]{2,3}-\d{2,}$' } | ForEach-Object { $_.Substring(1) })
                 issues = @($tags | Where-Object { $_ -match '^@#\d+$' } | ForEach-Object { $_.Substring(2) })
                 methods = @($tags | Where-Object { $_ -cin '@UI', '@API', '@DB' } | ForEach-Object { $_.Substring(1) })
             }

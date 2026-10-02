@@ -150,6 +150,7 @@ foreach ($snap in @(Get-ScenarioSnapshotEntries -RepoRoot $repoRoot -Commit $Com
         continue
     }
     $entries += $snap
+    $existing[$snap.relative] = $snap
 }
 
 # 3-2. 截圖轉無損 WebP（遮罩檢查已對原圖做過）；接著改寫封存內的遮罩紀錄與報告連結

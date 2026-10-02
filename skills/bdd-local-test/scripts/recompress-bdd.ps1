@@ -63,7 +63,7 @@ try {
             try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
         }
         $firstSegments = @($entries | ForEach-Object { ($_.FullName -split '/', 2)[0] } | Sort-Object -Unique)
-        $hasFolder = $firstSegments.Count -eq 1 -and @($entries | Where-Object { $_.FullName -notlike '*/*' }).Count -eq 0
+        $hasFolder = $firstSegments.Count -eq 1 -and $firstSegments[0] -notin @('evidence', 'features') -and @($entries | Where-Object { $_.FullName -notlike '*/*' }).Count -eq 0
         $prefix = if ($hasFolder) { "$($firstSegments[0])/" } else { '' }
         foreach ($entry in $entries) {
             if ($manifestEntry -and $entry.FullName -eq $manifestEntry.FullName) { continue }
