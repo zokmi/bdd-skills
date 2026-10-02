@@ -21,6 +21,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python for WebP tests
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
       - name: Check tag, main ancestry, and plugin versions
         shell: pwsh
         run: |
@@ -45,6 +50,9 @@ jobs:
       - name: Run Pester tests
         shell: pwsh
         run: |
+          python -m pip install Pillow==11.3.0
+          $webp = python skills/bdd-local-test/scripts/lib/bdd_webp.py check | ConvertFrom-Json
+          if (-not $webp.ok) { throw 'Pillow WebP encoder is unavailable' }
           Install-Module Pester -RequiredVersion 5.6.1 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
           Import-Module Pester -RequiredVersion 5.6.1 -ErrorAction Stop
           Invoke-Pester -Path skills/bdd-local-test/tests -CI
