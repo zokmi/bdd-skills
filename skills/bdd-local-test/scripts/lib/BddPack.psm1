@@ -48,10 +48,7 @@ function Get-DedupPlan([Parameter(Mandatory)][object[]]$Entries) {
     $aliases = [ordered]@{}
     $canonical = @{}
     $stored = [Collections.Generic.List[object]]::new()
-    # 以序數（ordinal）比較排序，結果不受文化特性影響，canonical 的選擇才穩定
-    $sorted = [Collections.Generic.List[object]]::new($Entries)
-    $sorted.Sort([Comparison[object]]{ param($x, $y) [string]::CompareOrdinal($x.relative, $y.relative) })
-    foreach ($e in $sorted) {
+    foreach ($e in @($Entries | Sort-Object -Property relative -CaseSensitive)) {
         if ($files.Contains($e.relative)) { throw "封存內有重複的路徑：$($e.relative)" }
         $record = [ordered]@{ sha256 = $e.sha256; size = $e.size }
         foreach ($k in $e.extra.Keys) { $record[$k] = $e.extra[$k] }

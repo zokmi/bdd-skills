@@ -36,7 +36,7 @@ Describe 'BddPack.psm1' {
         $b = New-PackEntry -Relative 'evidence/R2_a.txt' -Path (New-TextFile $dir 'b.txt' 'same') -Extra ([ordered]@{ originalName = 'evidence/R2_a.png' })
         $c = New-PackEntry -Relative 'REPORT.md' -Path (New-TextFile $dir 'c.md' 'report')
         $plan = Get-DedupPlan @($b, $c, $a)
-        @($plan.stored).relative | Should -Be @('REPORT.md', 'evidence/R1_a.txt')
+        @($plan.stored).relative | Should -Be @('evidence/R1_a.txt', 'REPORT.md')
         $plan.aliases['evidence/R2_a.txt'] | Should -Be 'evidence/R1_a.txt'
         $plan.files['evidence/R2_a.txt'].originalName | Should -Be 'evidence/R2_a.png'
         $plan.files.Count | Should -Be 3
