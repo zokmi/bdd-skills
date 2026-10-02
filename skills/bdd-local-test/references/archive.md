@@ -6,7 +6,7 @@
 
 | 層 | 位置 | 存什麼 | 生命週期 |
 |----|------|--------|----------|
-| 工作區 | `<worktree>/.bdd/<單號-主題>/` | `.feature`、`REPORT.md`、`verification.json`、`masking.json`、`evidence/` | 證據在封存並確認上傳後由 `prune-bdd.ps1` 清掉；報告與情境保留 |
+| 工作區 | `<worktree>/.bdd/<單號-主題>/` | `REPORT.md`、`verification.json`、`masking.json`、`evidence/`（模組情境在 `.bdd/modules/`，不在這裡） | 證據在封存並確認上傳後由 `prune-bdd.ps1` 清掉；報告保留 |
 | 本機封存庫 | 預設 `<使用者目錄>/bdd-archives/<主 checkout 資料夾名>/` | `<單號>/<輸出資料夾名>-<短 SHA>-<時間戳>.zip` 與 `index.jsonl` | 長期保存，只增不改 |
 | issue 附件 | 對應 issue | 與本機封存庫同一個 ZIP | 正式紀錄 |
 
@@ -18,6 +18,7 @@
 {
   "archiveRoot": "~/bdd-archives/my-repo",
   "maxAttachmentBytes": 5242880,
+  "webp": "auto",
   "mask": {
     "required": true,
     "selectors": [".header-avatar", ".user-name", "[data-pii]"],
@@ -32,6 +33,7 @@
 |------|------|----------|
 | `archiveRoot` | 本機封存庫根目錄，必須是絕對路徑，可用 `~` 開頭 | 依序看 `-ArchiveRoot` 參數、環境變數 `BDD_ARCHIVE_ROOT`，最後用預設位置 |
 | `maxAttachmentBytes` | issue 附件大小上限（Redmine 預設 5 MB，以站台設定為準） | 不檢查 |
+| `webp` | `auto`：有支援 WebP 的 Python Pillow 就把截圖轉成無損 WebP；`off`：不轉 | `auto` |
 | `mask.required` | 圖片沒有有效遮罩登記就拒絕封存 | `true` |
 | `mask.selectors` | 截圖前要遮蓋的元素（CSS 選擇器） | 由當次判斷畫面上的個資元素 |
 | `mask.rects` | 事後依座標塗色的規則，`rect` 為 `[左, 上, 右, 下]` 像素 | 無 |
@@ -70,12 +72,14 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/archive-bdd.ps1" -Dir <最終 .bdd
 
 腳本依序：
 
-1. 檢查 `.feature`、`REPORT.md`、`verification.json` 與證據都在，且沒有符號連結。
+1. 檢查 `REPORT.md`、`verification.json` 與證據都在、沒有符號連結；情境來自輸出資料夾的 `.feature`（舊格式）或 `verification.json` 最後一輪的 `scenarios`，兩者都沒有就停止。
 2. **攤平**：舊輪次的 `evidence.zip` 解回 `evidence/`；同名同內容略過，同名不同內容就停止。`evidence.zip` 本身不收入封存。
-3. **遮罩檢查**：每張圖片都要有有效的遮罩登記，否則列出缺漏的檔案並停止（已解回的檔案留在 `evidence/`，補登記後重跑即可）。
-4. **去重**：內容相同的檔案只存一份，其餘記在 `bdd-manifest.json` 的 `aliases`。多輪重拍、畫面沒變的截圖通常可省 40% 以上。
-5. 打包成暫存檔，逐檔核對 SHA-256 後才搬到封存庫；任何失敗都不留半成品。
-6. 在 `index.jsonl` 追加 `created`，並把同 repo 同主題、尚未被取代的舊封存標為 `superseded`。
+3. **遮罩檢查**：每張圖片都要有有效的遮罩登記，否則列出缺漏的檔案並停止。
+4. **情境快照**：依 `scenarios` 從受測 commit 取出當時的 `.feature`，放在 ZIP 的 `features/<模組路徑>/`。紀錄的 blob 與受測 commit 不符，或受測時情境未提交，就停止。
+5. **轉無損 WebP**：`evidence/` 底下的 PNG／JPG／BMP 轉成無損 WebP，解碼回來逐像素比對一致、而且檔案變小才採用，否則保留原檔並記在 manifest 的 `webp.skipped`。ZIP 內的 `masking.json` 改以 `.webp` 登記（保留 `derivedFrom`），`.md` 檔裡的截圖連結改成 `.webp`；工作區的原檔都不動。沒有 Pillow 時保留原格式，`warnings` 出現 `webpUnavailable`。
+6. **去重**：內容相同的檔案只存一份，其餘記在 `bdd-manifest.json` 的 `aliases`。
+7. 打包成暫存檔，逐檔核對 SHA-256 後才搬到封存庫；任何失敗都不留半成品。
+8. 在 `index.jsonl` 追加 `created`，並把同 repo 同主題、尚未被取代的舊封存標為 `superseded`。
 
 受測 SHA 預設取 `verification.json` 最後一輪的 `head`，單號取資料夾名稱開頭的數字；必要時以 `-Commit`、`-Issue` 指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
 
@@ -87,6 +91,16 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/extract-bdd.ps1" -Archive <zip> -T
 
 還原時不覆蓋既有檔案（同內容略過、不同內容停止），也不解出 manifest，所以還原後的資料夾可以直接接續下一輪並再次封存。
 
+## 重新壓縮既有封存
+
+1.3.0 以前的封存（或封存時沒有 Pillow）截圖仍是 PNG，可以事後轉成無損 WebP：
+
+```bash
+pwsh -NoProfile -File "<skill 目錄>/scripts/recompress-bdd.ps1" -Archive <zip>
+```
+
+路徑與檔名不變，索引追加 `recompressed` 事件，狀態（例如 `uploaded-verified`）不變。issue 上的附件仍是原本的 PNG 版，那是正式紀錄，不重新上傳；索引以 `issueCopySha256` 記錄那一版的 SHA-256。`prune-bdd.ps1` 以 manifest 的 `originalSha256` 比對工作區原圖，所以重新壓縮後仍可據以清理。
+
 ## 索引與狀態
 
 `index.jsonl` 每行一個事件，只增不改；每個封存檔的目前狀態以最後一筆 `status` 為準：
@@ -97,6 +111,8 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/extract-bdd.ps1" -Archive <zip> -T
 | `uploaded` | 已上傳 issue，尚未確認可下載 |
 | `uploaded-verified` | 已上傳並確認附件可下載；**只有這個狀態允許清理工作區證據** |
 | `superseded` | 同主題有更新的封存；檔案保留，但不再當作清理依據 |
+
+`recompressed` 事件只換檔案內容，不改狀態。
 
 上傳並確認後登記（附件 ID 或網址必填；登記前會重算 SHA-256，與建立時不同就拒絕）：
 

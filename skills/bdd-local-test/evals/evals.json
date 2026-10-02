@@ -134,6 +134,21 @@
         "逐張判斷是否含個資，exempt 有寫理由",
         "重新封存後輸出 masked 為 true"
       ]
+    },
+    {
+      "id": 10,
+      "prompt": "#5410 又改了賽制管理列表（organizer/schedule-settings 已有模組情境 SS-01～SS-12），幫我寫情境、本機測到全部通過並收尾。",
+      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；bdd-modules.ps1 -Lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression；封存 ZIP 內有 features/ 快照且截圖為 WebP。",
+      "files": [],
+      "assertions": [
+        "情境寫在 .bdd/modules/organizer/schedule-settings/，issue 資料夾沒有 .feature",
+        "新情境編號從 SS-13 起且未重用 MODULE.md removed 的編號",
+        "新增或修改的情境帶 @#5410 標籤",
+        "送審前執行 bdd-modules.ps1 -Lint 且結果為通過",
+        "verification.json 最後一輪有 scenarios，含 changed 與 regression",
+        "REPORT〈本輪執行情境〉與 scenarios 一致",
+        "封存 manifest 的 features 列出模組情境檔，截圖項目為 .webp 或 webp.skipped 說明原因"
+      ]
     }
   ]
 }
