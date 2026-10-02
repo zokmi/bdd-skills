@@ -40,3 +40,16 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 安裝後可在 Codex 使用 `bdd-local-test` skill。
 
 實際執行測試前，請先閱讀目標專案的指引與環境設定，並依 `SKILL.md` 的安全確認流程操作。
+
+## 發布 GitHub Release
+
+發版時先將 `plugin.json`、`.claude-plugin/plugin.json`、`.codex-plugin/plugin.json` 的 `version` 一起更新為相同的 `MAJOR.MINOR.PATCH`，並將變更合併到 `main`。接著從該提交建立並推送對應的 tag：
+
+```sh
+git checkout main
+git pull --ff-only
+git tag v1.3.1
+git push origin v1.3.1
+```
+
+推送 `vMAJOR.MINOR.PATCH` tag 會觸發 [Release workflow](.github/workflows/release.yml)。它會確認 tag 所指提交位於 `main`、三份版本資訊與 tag 一致，並在 Pester 測試通過後建立 GitHub Release 與自動產生發行說明。檢查失敗時不會發布 Release。上方 `v1.3.1` 只是指令範例，請換成實際要發布的版本。
