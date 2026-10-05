@@ -22,6 +22,6 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 1. **確定範圍、版本與情境**：讀 [範圍、版本比對與情境撰寫](references/workflow-and-scenarios.md)。寫 `.feature` 前讀 [情境寫法](references/feature-guide.md)；使用模組時讀 [模組情境集](references/modules.md)。情境寫完後讀 [情境審核](references/scenario-review.md)。使用者只要情境時，在審核與未執行報告完成後停止。
 2. **本機實測與修正**：需要執行時讀 [本機執行與複測](references/local-execution.md) 及 [報告與驗證紀錄](references/reporting.md)；worktree 另讀 [loopback 隔離](references/worktree-loopback.md)。逐情境保留證據，每輪先記錄結果與版本；失敗後修正、重啟並重測。
 3. **報告**：需要報告時讀 [報告與驗證紀錄](references/reporting.md) 和 [報告範本](assets/REPORT-template.md)。使用者只要測試報告時不整合或更新 issue；若需封存，再讀下階段的封存步驟。
-4. **全通過後收尾**：讀 [整合與封存](references/closeout.md)，先詢問「合併回 develop／轉為正式 feature 分支／只保留測試報告」；本輪已指定時沿用。合併模式完成 `develop` 複測、issue 更新與封存；feature 模式確認名稱並轉換分支、保留工作區。未回答前不合併或清理。最新一輪 BDD 全通過且 issue 註記與修正後截圖附件更新完成後，自動停止本輪 worktree 啟動的服務，不等待封存；保留工作區與證據至各模式的後續步驟。遮罩、封存或清理時再讀 [封存指引](references/archive.md)。
+4. **全通過後收尾**：讀 [整合與封存](references/closeout.md)，先詢問「合併回 develop／轉為正式 feature 分支／只保留測試報告」；本輪已指定時沿用。合併模式完成 `develop` 複測、issue 更新與封存；feature 模式確認名稱並轉換分支、保留工作區。未回答前不合併或刪除證據／worktree；服務停止獨立依收尾指引的共用條件判定，不等待模式選擇或封存。遮罩、封存或清理時再讀 [封存指引](references/archive.md)。
 
 各階段只讀當前需要的參考文件，不把整套參考文件一次載入。腳本的參數、輸出與錯誤處理以對應階段文件為準。

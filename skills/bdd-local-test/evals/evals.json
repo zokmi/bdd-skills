@@ -4,10 +4,10 @@
     {
       "id": 1,
       "prompt": "幫我把 commit 7b98bdc2（#94452 移除區域設定的「從選樣項目匯入」）寫成 BDD 測試情境，然後在本機跑一遍驗證。",
-      "expected_output": ".bdd/94452-<主題>/ 下有 zh-TW .feature（含情境編號、@UI/@API/@DB 標籤、BDD- 測試資料）、evidence/ 與 REPORT.md；無帳密時需登入的情境標阻塞，匿名可驗證的（例如端點已移除回 404）照跑。",
+      "expected_output": "zh-TW .feature 存於 .bdd/modules/<portal>/<主路由>/（含情境編號、@UI/@API/@DB 標籤、BDD- 測試資料）；.bdd/94452-<主題>/ 只放 evidence/、REPORT.md 與 verification.json。無帳密時需登入的情境標阻塞，匿名可驗證的照跑。",
       "files": [],
       "assertions": [
-        "輸出放在 <單號>-<英文 kebab 主題> 資料夾",
+        "情境存於 .bdd/modules/<portal>/<主路由>/；報告與證據存於 .bdd/<單號>-<英文 kebab 主題>/，不另放 .feature",
         "至少一個 .feature 且宣告 # language: zh-TW",
         "每個情境都有唯一編號標籤（如 @IC-01）",
         "每個情境都標了 @UI/@API/@DB 驗證手段",
@@ -27,7 +27,7 @@
       "expected_output": "只針對價格版本區塊的 .feature，涵蓋成功、驗證失敗、權限、零值、版本號遞增、歷程保留等邊界；有讀程式找已知缺陷；REPORT.md 誠實列出阻塞原因（缺帳密）並完成可做的 DB 唯讀驗證。",
       "files": [],
       "assertions": [
-        "輸出放在 <單號>-<英文 kebab 主題> 資料夾",
+        "情境存於 .bdd/modules/<portal>/<主路由>/；報告與證據存於 .bdd/<單號>-<英文 kebab 主題>/，不另放 .feature",
         "至少一個 .feature 且宣告 # language: zh-TW",
         "每個情境都有唯一編號標籤（如 @IC-01）",
         "每個情境都標了 @UI/@API/@DB 驗證手段",
@@ -87,7 +87,7 @@
     {
       "id": 6,
       "prompt": "#94544 的 BDD 已全過，develop 已推送，issue 附件也好了；請完成收尾。驗證用的 .bdd 在本輪 worktree 中，請記得移除 worktree。",
-      "expected_output": "不建立或推送 issue/* tag。先同步最終報告，再把 .feature、REPORT.md、verification.json 與所有證據封存到 worktree 外；逐檔驗證 ZIP、上傳 issue 並確認附件可下載。停止服務，檢查 worktree 內剩餘資料後從外部用 git worktree remove 移除本輪 worktree，核對清單並回報封存 SHA-256 和清理結果。",
+      "expected_output": "核對 BDD 全通過、issue 註記與必要證據完成後先自動停止本輪 worktree 服務，不等待封存。不建立 issue/* tag。同步最終報告，再封存模組 features/ 快照、REPORT.md、verification.json 與證據到 worktree 外，逐檔驗證並上傳 issue、確認可下載；符合保存條件後移除本輪 worktree 並核對清單。",
       "files": [],
       "assertions": [
         "沒有建立、推送或要求使用者處理 issue/* tag",
@@ -96,7 +96,8 @@
         "封存檔實際上傳 issue 並確認附件可讀",
         "清理前確認 develop 遠端與最終報告已同步、服務已停止",
         "僅移除本輪已核對且沒有其他未保存資料的 worktree，不使用 --force",
-        "最後回報封存位置、SHA-256 與 worktree 移除狀態"
+        "最後回報封存位置、SHA-256 與 worktree 移除狀態",
+        "停止服務在最終報告同步與 ZIP 上傳之前；不重問已明確指定的合併收尾模式"
       ]
     },
     {
@@ -138,7 +139,7 @@
     {
       "id": 10,
       "prompt": "#5410 又改了賽制管理列表（organizer/schedule-settings 已有模組情境 SS-01～SS-12），幫我寫情境、本機測到全部通過並收尾。",
-      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；bdd-modules.ps1 -Lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression；封存 ZIP 內有 features/ 快照且截圖為 WebP。",
+      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；bdd-modules.ps1 -Lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression；封存 ZIP 內有 features/ 快照且截圖為 WebP。 全通過後先詢問收尾模式，未回答前不合併、不更新未授權的 issue、不刪除 worktree；只有選擇合併模式才完成 develop、issue 與封存清理。",
       "files": [],
       "assertions": [
         "情境寫在 .bdd/modules/organizer/schedule-settings/，issue 資料夾沒有 .feature",
@@ -147,8 +148,64 @@
         "送審前執行 bdd-modules.ps1 -Lint 且結果為通過",
         "verification.json 最後一輪有 scenarios，含 changed 與 regression",
         "REPORT〈本輪執行情境〉與 scenarios 一致",
-        "封存 manifest 的 features 列出模組情境檔，截圖項目為 .webp 或 webp.skipped 說明原因"
+        "未選收尾模式時不要求已封存；選擇合併模式並完成封存後，manifest features 有模組快照，截圖為 WebP 或有 skipped 原因"
       ]
+    },
+    {
+      "expected_output": "立即停止本輪 worktree 服務並保留報告、證據與 worktree，詢問收尾模式。",
+      "assertions": [
+        "停止服務不等待模式選擇",
+        "不合併、不推送、不刪除證據或 worktree",
+        "不重複更新 issue"
+      ],
+      "files": [],
+      "id": 11,
+      "prompt": "BDD 全通過，issue 註記和必要截圖已儲存；我還沒決定收尾模式。"
+    },
+    {
+      "expected_output": "沿用目前分支，不因同名分支存在重問；記錄 HEAD 與工作區，保留工作區，只回報 feature 模式結果。",
+      "assertions": [
+        "不重問名稱、不改名、不建立重複分支",
+        "不推送、不更新 issue、不合併 develop",
+        "不自動停止服務或移除 worktree",
+        "不要求封存或 uploaded-verified"
+      ],
+      "files": [],
+      "id": 12,
+      "prompt": "BDD 全通過，只要轉為 feature/5410-schedule，目前已在這個分支；不要推送或更新 issue。"
+    },
+    {
+      "expected_output": "保留本輪服務與證據，記錄註記完成而附件未完成，回報重試條件，不宣稱 issue 更新全部完成。",
+      "assertions": [
+        "不自動停止服務",
+        "區分註記與附件狀態",
+        "重試前讀現有註記避免重複留言"
+      ],
+      "files": [],
+      "id": 13,
+      "prompt": "BDD 全通過，issue 註記已儲存，但本輪必要 UI 截圖附件上傳失敗。"
+    },
+    {
+      "expected_output": "截圖記不適用，核對必要證據已保存後自動停止本輪 worktree 服務，不等待 ZIP 上傳。",
+      "assertions": [
+        "不要求無關 UI 截圖",
+        "自動停止本輪服務且保留工作區證據",
+        "不停止主 checkout 或其他 worktree 服務"
+      ],
+      "files": [],
+      "id": 14,
+      "prompt": "本輪只有 API/DB 情境，全通過，issue 註記已存好並含請求回應與查詢證據，沒有 UI 截圖；服務在 worktree。"
+    },
+    {
+      "expected_output": "API loopback 算本機但獨立確認資料庫；未確認前不写入資料。報告保存在本機，不強制加入 git 或更新 issue。",
+      "assertions": [
+        "不因 127.0.0.3 判為非本機 API",
+        "不把本機 API 當成資料庫安全證明",
+        "不寫未確認資料庫、不上傳 issue、不強制追蹤 .bdd"
+      ],
+      "files": [],
+      "id": 15,
+      "prompt": "只給本機測試報告，.bdd 被 gitignore 忽略；API 在 127.0.0.3，資料庫是未確認的區網主機。"
     }
   ]
 }
