@@ -206,6 +206,50 @@
       "files": [],
       "id": 15,
       "prompt": "只給本機測試報告，.bdd 被 gitignore 忽略；API 在 127.0.0.3，資料庫是未確認的區網主機。"
+    },
+    {
+      "id": 16,
+      "prompt": "已指定合併 develop。功能 worktree 修正與相關回歸通過，提交後程式未變，尚未整合最新 develop。請完成 BDD 收尾。",
+      "expected_output": "直接準備最新 develop 的隔離整合；不在功能分支因提交再完整重跑。整合後建置或重啟，在乾淨 commit 完整執行本次全部情境與必要回歸，通過才推送。",
+      "assertions": [
+        "局部通過不稱整體 all pass",
+        "完整驗證集中於整合後推送前",
+        "保留各輪證據與受測 SHA"
+      ],
+      "files": []
+    },
+    {
+      "id": 17,
+      "prompt": "最新 develop 已整合，乾淨 commit 的本次全部 BDD 與必要回歸通過，程式情境環境未變，現在推送同 SHA。",
+      "expected_output": "沿用完整驗證結果，正常推送並核對遠端 SHA，不因收尾或推送再完整重跑。",
+      "assertions": [
+        "不新增完整測試輪次",
+        "核對遠端 SHA",
+        "純報告提交保留受測與文件 SHA 對照"
+      ],
+      "files": []
+    },
+    {
+      "id": 18,
+      "prompt": "整合後 BDD 全通過，但推送時 develop 已前進，需要重新整合；Check 顯示 still-valid。",
+      "expected_output": "不以 still-valid 取代整合驗證。重新整合後建置重啟並完整執行本次情境與必要回歸，通過才非強制推送。",
+      "assertions": [
+        "不強制推送",
+        "重新整合後完整驗證",
+        "不沿用舊整合結果"
+      ],
+      "files": []
+    },
+    {
+      "id": 19,
+      "prompt": "功能修正與相關情境通過，只要測試報告；另一次任務整合全通過後資料庫結構改了，Check 仍為 current。",
+      "expected_output": "只要報告的任務在功能工作區完成本次完整驗證，不合併。資料庫結構改變的任務重新確認環境並建置重啟及完整驗證，不以 current 跳過。",
+      "assertions": [
+        "報告模式仍完整驗證",
+        "環境變動須完整重測",
+        "不擅自合併或更新 issue"
+      ],
+      "files": []
     }
   ]
 }
