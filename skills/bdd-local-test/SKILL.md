@@ -15,6 +15,7 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 - 執行可能寫入資料前，確認連到本機或使用者已確認的測試環境；SIT／UAT／PROD 或無法判定時停止寫入並詢問。缺帳密時不得繞過驗證，相關情境列「阻塞」。
 - 情境新增或修改後先跑 `bdd-modules.ps1 -Lint`，再按 [情境審核](references/scenario-review.md) 做獨立審核。子代理只讀原始需求與程式，不修改檔案；審核問題逐條處理。
 - 截圖當下遮蓋個資並登記；未遮罩的證據不得上傳或封存。全通過表示失敗、阻塞、未執行皆為 0，且每個情境都經真實路徑驗證。
+- BDD 全通過後要更新 issue 時，先依當下 issue、repo、commit 範圍與可用 skill 動態選擇唯讀一致性審核 skill；Redmine 且需要需求／程式雙向比對時優先選 `issue-code-consistency-check`。派子代理審核結果只有 `PASS` 才能寫入 issue，其他結果一律阻擋並回報。Redmine 註記逐項使用「修正項目 N」後緊接「圖片 N」，純 API／DB 情境改附替代證據。
 - 用檔案編輯工具寫 `.feature` 與 `REPORT.md`；內容常含引號與反引號，避免用會被 shell 解析的 heredoc。
 
 ## 按階段讀取
