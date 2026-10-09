@@ -87,7 +87,7 @@
     {
       "id": 6,
       "prompt": "#94544 的 BDD 已全過，develop 已推送，issue 附件也好了；請完成收尾。驗證用的 .bdd 在本輪 worktree 中，請記得移除 worktree。",
-      "expected_output": "核對 BDD 全通過、issue 註記與必要證據完成後先自動停止本輪 worktree 服務，不等待封存。不建立 issue/* tag。同步最終報告，再封存模組 features/ 快照、REPORT.md、verification.json 與證據到 worktree 外，逐檔驗證並上傳 issue、確認可下載；符合保存條件後移除本輪 worktree 並核對清單。",
+      "expected_output": "核對 BDD 全通過、issue 註記與必要證據完成後先自動停止本輪 worktree 服務，不等待封存。不建立 issue/* tag。完成最終報告，不提交每輪報告、驗證與遮罩紀錄或證據，不另建純報告 commit；Git 保留模組規格與共用設定，再封存模組 features/ 快照、REPORT.md、verification.json 與證據到 worktree 外，逐檔驗證並上傳 issue、確認可下載；符合保存條件後移除本輪 worktree 並核對清單。",
       "files": [],
       "assertions": [
         "沒有建立、推送或要求使用者處理 issue/* tag",

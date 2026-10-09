@@ -4,6 +4,8 @@
 
 ## 三層儲存
 
+以下三層均保存每輪執行結果；Git 另存模組規格與共用設定，不提交本輪報告、驗證或遮罩紀錄。見 [版控分工](version-control.md)。
+
 | 層 | 位置 | 存什麼 | 生命週期 |
 |----|------|--------|----------|
 | 工作區 | `<worktree>/.bdd/<單號-主題>/` | `REPORT.md`、`verification.json`、`masking.json`、`evidence/`（模組情境在 `.bdd/modules/`，不在這裡） | 證據在封存並確認上傳後由 `prune-bdd.ps1` 清掉；報告保留 |

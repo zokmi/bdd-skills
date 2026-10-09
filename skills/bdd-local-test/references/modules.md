@@ -11,6 +11,8 @@
 
 同一個模組被多張單修改時，後一張單**修改模組裡的情境**，不另寫一份。issue 層只留本輪的結果與證據，`verification.json` 記錄跑了哪些模組情境。
 
+模組 `.feature` 與 `MODULE.md` 進 Git；issue 層全部輸出由本機及完整封存保存，不提交。忽略規則與既有資料遷移見 [版控分工](version-control.md)。
+
 ## 模組怎麼切
 
 - 預設 **portal＋主路由**，例如 `organizer/schedule-settings`、`organizer/matches`、`member/ad-cooperation`；排程程式用 `job/<程式名>`。

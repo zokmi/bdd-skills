@@ -21,6 +21,6 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
 情境檔要先 commit：封存時會從受測 commit 取出當時那一版放進 ZIP，受測時未提交的情境會讓封存失敗。
 
 範圍不是 `<基準>..HEAD`（例如使用者指定了 commit、或在別的分支上 cherry-pick 過來的一串）時，
-改用 `-Commits <sha1>,<sha2>` 明列。`verification.json` 與 `REPORT.md` 一樣要保留；若專案允許，跟著進版控，
-程式同步到別處時它也一起過去。若 `.bdd/` 被忽略，不要私自強制加入；已授權更新 issue 時，把報告與本輪必要證據附到 issue，並註明版本紀錄只留在本機與 issue。只要報告或未授權更新 issue 時，保存在本機並回報位置，不自行上傳。記錄前工作區若有受測檔案的未提交異動，腳本會記在 `dirtyPaths`，
+改用 `-Commits <sha1>,<sha2>` 明列。`verification.json`、`REPORT.md`、`masking.json` 與本輪證據均為執行產物，不新增到 Git；完整保存於本機輸出及封存包。Git 僅保存 `.bdd/modules/` 的 `.feature`、`MODULE.md` 與不含敏感或個人設定的共用 `.bdd/config.json`。版控與既有追蹤檔的遷移方式見 [版控分工](version-control.md)。
+程式同步到其他 repo 或 worktree 時，另行複製本輪輸出或從封存包還原，再執行版本比對；不能因 Git 沒帶入報告就視為沒有驗證紀錄。已授權更新 issue 時，上傳報告與必要證據或完整封存；只要報告或未授權更新 issue 時，保存在本機並回報位置，不自行上傳。記錄前工作區若有受測檔案的未提交異動，腳本會記在 `dirtyPaths`，
 之後的比對一律判 `rerun`——所以正式結案的那一輪，應在受測異動都 commit 之後再跑。
