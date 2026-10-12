@@ -1,6 +1,10 @@
 # BDD Skills
 
-Claude Code 與 Codex 跨專案 BDD 測試 skill。
+提供 Claude Code 與 Codex 使用的繁體中文 BDD 測試插件，協助團隊把需求整理成可判定的 Gherkin 驗收情境，透過真實的 UI、API 與資料庫路徑在本機驗證，並保留可追溯的測試報告與證據。
+
+## 插件介紹
+
+`bdd-skills` 目前提供 `bdd-local-test` skill，適合需要將功能異動轉成驗收情境、執行本機測試、處理失敗後修正並重新驗證的專案。它整合繁體中文情境撰寫、Playwright 或 Node Playwright 本機執行、測試證據保存、模組化情境維護，以及 BDD 結果整理與封存流程。
 
 ## 內容
 
@@ -44,16 +48,3 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 安裝後可在 Codex 使用 `bdd-local-test` skill。
 
 實際執行測試前，請先閱讀目標專案的指引與環境設定，並依 `SKILL.md` 的安全確認流程操作。
-
-## 發布 GitHub Release
-
-發版時先將 `plugin.json`、`.claude-plugin/plugin.json`、`.codex-plugin/plugin.json` 的 `version` 一起更新為相同的 `MAJOR.MINOR.PATCH`，並將變更合併到 `main`。接著從該提交建立並推送對應的 tag：
-
-```sh
-git checkout main
-git pull --ff-only
-git tag v1.3.1
-git push origin v1.3.1
-```
-
-推送 `vMAJOR.MINOR.PATCH` tag 會觸發 [Release workflow](.github/workflows/release.yml)。它會確認 tag 所指提交位於 `main`、三份版本資訊與 tag 一致，並在 Pester 測試通過後建立 GitHub Release 與自動產生發行說明。檢查失敗時不會發布 Release。上方 `v1.3.1` 只是指令範例，請換成實際要發布的版本。
