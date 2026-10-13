@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bdd-local-test.local/schemas/assignment.schema.json",
+  "title": "Parallel BDD assignment contract v1",
+  "type": "object",
+  "properties": {
+    "contractVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "groupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instructions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "source",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "feature": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "changed",
+              "regression"
+            ]
+          }
+        },
+        "required": [
+          "feature",
+          "id",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workDir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "dirtyPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "serviceVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "repo",
+        "workDir",
+        "head",
+        "dirtyPaths",
+        "serviceVersion"
+      ],
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "uiUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "apiUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "databaseTarget": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "writeAuthorized": {
+          "type": "boolean"
+        },
+        "confirmationBasis": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "uiUrl",
+        "apiUrl",
+        "databaseTarget",
+        "writeAuthorized",
+        "confirmationBasis"
+      ],
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "service",
+              "database",
+              "data",
+              "browser",
+              "account",
+              "file"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "exclusive-write",
+              "shared-read"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "owner",
+          "access"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "isolationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "chromiumArg": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "tool",
+        "isolationId",
+        "chromiumArg"
+      ],
+      "additionalProperties": false
+    },
+    "account": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "credentialRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "role",
+        "credentialRef"
+      ],
+      "additionalProperties": false
+    },
+    "dataScope": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "editablePaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "manageServiceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "externalActions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "editablePaths",
+        "manageServiceIds",
+        "externalActions"
+      ],
+      "additionalProperties": false
+    },
+    "dependsOn": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "outputDir": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "contractVersion",
+    "runId",
+    "groupId",
+    "attempt",
+    "agent",
+    "instructions",
+    "requirements",
+    "scenarios",
+    "target",
+    "environment",
+    "resources",
+    "browser",
+    "account",
+    "dataScope",
+    "permissions",
+    "dependsOn",
+    "outputDir"
+  ],
+  "additionalProperties": false
+}

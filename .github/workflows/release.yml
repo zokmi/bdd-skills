@@ -57,6 +57,12 @@ jobs:
           Import-Module Pester -RequiredVersion 5.6.1 -ErrorAction Stop
           Invoke-Pester -Path skills/bdd-local-test/tests -CI
 
+      - name: Run parallel BDD contract and summary checks
+        shell: pwsh
+        run: |
+          & ./skills/bdd-local-test/tests/Test-ParallelBdd.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Parallel BDD checks failed' }
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -17,6 +17,8 @@
 
 ## BDD 版控分工
 
+支援由主代理派遣子代理同時執行多組 BDD：先分配情境、檔案與測試資料範圍，每組使用獨立瀏覽器及輸出目錄；需要修改程式時隔離 worktree，共用服務與資料無法隔離時序列執行。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
+
 Git 僅保存 `.bdd/modules/` 的情境與 `MODULE.md`、不含敏感或個人設定的 `.bdd/config.json`。每輪 `.bdd/<單號>-<主題>/` 的報告、驗證與遮罩紀錄、截圖、log 和瀏覽器 profile 均不新增到 Git，由本機輸出及完整封存包保存；收尾不另建純報告提交。維持既有輸出路徑，忽略規則、既有追蹤資料遷移與跨工作區還原見 [版控分工](skills/bdd-local-test/references/version-control.md)。
 
 ## 安裝到 Claude Code

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bdd-local-test.local/schemas/resource-release.schema.json",
+  "title": "Parallel BDD resource-release contract v1",
+  "type": "object",
+  "properties": {
+    "contractVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "groupId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "released": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "released"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "testProcessesStopped": {
+      "type": "boolean"
+    },
+    "savedResult": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "contractVersion",
+    "runId",
+    "groupId",
+    "attempt",
+    "requestId",
+    "resources",
+    "testProcessesStopped",
+    "savedResult",
+    "reason"
+  ],
+  "additionalProperties": false
+}
