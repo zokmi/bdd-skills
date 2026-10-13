@@ -60,7 +60,7 @@ jobs:
       - name: Run parallel BDD contract and summary checks
         shell: pwsh
         run: |
-          & ./skills/bdd-local-test/tests/Test-ParallelBdd.ps1
+          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-ParallelBdd.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Parallel BDD checks failed' }
 
       - name: Publish GitHub Release
