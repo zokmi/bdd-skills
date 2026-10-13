@@ -40,7 +40,7 @@
 | `mask.selectors` | 截圖前要遮蓋的元素（CSS 選擇器） | 由當次判斷畫面上的個資元素 |
 | `mask.rects` | 事後依座標塗色的規則，`rect` 為 `[左, 上, 右, 下]` 像素 | 無 |
 
-設定檔先找本 worktree 的 `.bdd/config.json`，沒有再找主 checkout 的。是否進版控由團隊決定。
+設定檔先找本 worktree 的 `.bdd/config.json`，沒有再找主 checkout 的。提交時只保留無敏感資料的團隊共用設定，個人路徑改用參數或環境變數；見 [版控分工](version-control.md)。
 
 ## 遮罩：在截圖當下處理
 

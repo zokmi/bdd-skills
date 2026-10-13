@@ -4,7 +4,8 @@
   讓報告跟著 cherry-pick／merge 同步到別的分支或別的 repo 時，能判斷要不要重新驗證。
 
 .DESCRIPTION
-  紀錄檔是輸出資料夾裡的 verification.json，與 REPORT.md 一起進版控、一起被同步。
+  紀錄檔是輸出資料夾裡的 verification.json，與 REPORT.md 一起保存於本機及完整封存，不進版控。
+  跨分支或 repo 驗證時，從本機輸出或封存還原紀錄，再核對受測版本。
   每一輪實測結束時 -Record 追加一筆 rounds；-Check 讀最後一筆，與目前 repo 比對：
 
     - repo 是否相同（origin URL）
