@@ -2,6 +2,62 @@
   "skill_name": "bdd-local-test",
   "evals": [
     {
+      "id": 30,
+      "prompt": "worktree 修正完成，已指定合併 develop。Check=rerun，全部有 60 個情境，其中修正與相關回歸只有 8 個；兩組子代理可用。請測到全部通過並交付。",
+      "expected_output": "先派工 8 個開發回饋情境，通過後提交並候選整合；在候選 commit 完整跑 60 個一次，推送同一 HEAD 後只核對 SHA。不因 rerun 或子代理可用先在功能 worktree 全跑。",
+      "assertions": ["實測入口先確認階段", "整合前只跑 8 個必要情境", "整合後完整 60 個一次", "推送後不重跑"],
+      "files": []
+    },
+    {
+      "id": 31,
+      "prompt": "worktree 新增情境完成，沒有 verification.json，也還沒決定轉 feature 或合併；修正與相關回歸已通過。請繼續測到全過。",
+      "expected_output": "no-record 不直接觸發完整測試；先詢問既有兩種交付方式，保留成果；若選合併則候選整合後完整驗證，選 feature 則在功能工作區完整驗證。",
+      "assertions": ["未選模式前不開完整驗證", "沿用相關回歸結果進模式確認", "不自動合併或推送"],
+      "files": []
+    },
+    {
+      "id": 32,
+      "prompt": "候選整合 worktree 的乾淨 commit 已完整 BDD 通過，推送 develop 相同 HEAD 成功。現在切回 develop 目錄，程式、情境與環境皆未變。",
+      "expected_output": "只核對遠端 SHA 與已驗證版本，沿用候選結果，不因換目錄或推送新增 BDD 輪次；若遠端前進需重新整合才重新驗證。",
+      "assertions": ["不因 worktree 或分支名稱重跑", "不以 current 代替尚未完成的整合驗證", "遠端改變版本才重新整合驗證"],
+      "files": []
+    },
+    {
+      "id": 29,
+      "prompt": "有三組可安全獨立執行的 BDD，但只有一個空閒子代理名額；執行子代理又發現自己的情境還能拆組。請安排驗證。",
+      "expected_output": "主代理建立各組契約並分批派工，不因只有一個名額放棄派工；報告標子代理分批而非同時並行。執行子代理只回報拆分建議，不遞迴派工。",
+      "assertions": ["一個可用名額仍分批實際派工", "不宣稱各組同時執行", "子代理不遞迴派工"],
+      "files": []
+    },
+    {
+      "id": 25,
+      "prompt": "請把密碼 OTP 與區域預約上傳兩組既有 BDD 在本機測到全部通過，只給報告。兩個子代理名額可用，兩組帳號、資料及瀏覽器可隔離，固定同一服務版本。沒有要求並行。",
+      "expected_output": "每輪實測前主動判斷執行模式；確認可拆成兩組後自動建立 assignment.json 並派執行子代理，不等待使用者說並行。主代理核對 result.json、版本、證據與覆蓋後交付報告，不更新 issue。",
+      "assertions": ["實測前記錄執行模式與分組依據", "實際派執行子代理，不以情境審核代理代替", "每組獨立輸出與派工契約，確認同一受測版本", "僅交報告不代表由主代理獨自測試"],
+      "files": []
+    },
+    {
+      "id": 26,
+      "prompt": "跨 repo cherry-pick 後 Check=rerun，兩組獨立情境的環境、資料與瀏覽器已確認可隔離，還有兩個子代理名額。只要完整實測報告，不合併。請確認現在都正常。",
+      "expected_output": "完整重跑前重新評估模式並自動派工兩組；不沿用舊分組或來源版本通過結果。情境未變不重做情境審核，但仍派實測代理。",
+      "assertions": ["rerun 重新評估並自動派執行子代理", "情境未修改不審核不等於不派實測代理", "不拼接來源 repo 的結果"],
+      "files": []
+    },
+    {
+      "id": 27,
+      "prompt": "請測兩組 UI，唯一 Playwright MCP session 無法隔離，沒有 Node Playwright；兩組會修改同一筆賽事。另有一組讀取不相關資料的 API 情境。子代理可用。",
+      "expected_output": "先評估並記錄資源衝突，兩組 UI 合為序列組；獨立 API 組可與 UI 組並行派工，不因局部衝突放棄所有派工，也不共用 session 同時操作。",
+      "assertions": ["衝突 UI 序列執行", "獨立 API 組仍派工", "記錄混合模式及具體資源衝突"],
+      "files": []
+    },
+    {
+      "id": 28,
+      "prompt": "只重跑一個未修改的 BDD 情境；另一個任務明確要求不要派子代理；第三個環境根本沒有子代理工具。請分別安排。",
+      "expected_output": "三者皆記錄主代理序列模式與對應原因，不為湊兩組拆單一情境、不違反使用者限制、不假稱派工。",
+      "assertions": ["只有一組可執行範圍時不強制派工", "遵守明確禁用與工具不可用", "不虛構代理 ID 或子代理結果"],
+      "files": []
+    },
+    {
       "id": 1,
       "prompt": "幫我把 commit 7b98bdc2（#94452 移除區域設定的「從選樣項目匯入」）寫成 BDD 測試情境，然後在本機跑一遍驗證。",
       "expected_output": "zh-TW .feature 存於 .bdd/modules/<portal>/<主路由>/（含情境編號、@UI/@API/@DB 標籤、BDD- 測試資料）；.bdd/94452-<主題>/ 只放 evidence/、REPORT.md 與 verification.json。無帳密時需登入的情境標阻塞，匿名可驗證的照跑。",
@@ -45,7 +101,7 @@
     {
       "id": 3,
       "prompt": "#94541 已經從元利 cherry-pick 到產品 repo 的 develop 了，.bdd/94541-resign-rollback-detach 也一起帶過來，幫我確認一下在這邊還是正常的。",
-      "expected_output": "先以 bdd-verification.ps1 -Check 比對 verification.json，判定跨 repo（rerun）後不問使用者、直接開新一輪完整重跑所有情境；重新做環境安全確認；證據加 R<n>_ 前綴不覆蓋舊證據；REPORT 版本紀錄新增一列、填同步對照表（來源 SHA→本 repo SHA 與對應方式）；最後以 -Record 追加一輪紀錄。",
+      "expected_output": "先以 bdd-verification.ps1 -Check 比對 verification.json；本案例已同步至目標 develop，現在驗證整合版本，因此跨 repo（rerun）後直接完整重跑所有情境，不是所有 rerun 都立即全跑。重新做環境安全確認；證據加 R<n>_ 前綴不覆蓋舊證據；REPORT 版本紀錄新增一列、填同步對照表（來源 SHA→本 repo SHA 與對應方式）；最後以 -Record 追加一輪紀錄。",
       "files": [],
       "assertions": [
         "執行前有跑 bdd-verification.ps1 -Check 並依 verdict 決定重測",
@@ -139,7 +195,7 @@
     {
       "id": 10,
       "prompt": "#5410 又改了賽制管理列表（organizer/schedule-settings 已有模組情境 SS-01～SS-12），幫我寫情境、本機測到全部通過並收尾。",
-      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；bdd-modules.ps1 -Lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression；封存 ZIP 內有 features/ 快照且截圖為 WebP。 全通過後先詢問收尾模式，未回答前不合併、不更新未授權的 issue、不刪除 worktree；只有選擇合併模式才完成 develop、issue 與封存清理。",
+      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；bdd-modules.ps1 -Lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression。修正與相關回歸通過後先詢問收尾模式，未回答前不完整驗收、不合併、不更新未授權的 issue、不刪除 worktree；選擇合併時候選整合後完整驗證一次，完成 develop、issue 與封存清理；封存 ZIP 內有 features/ 快照且截圖為 WebP。",
       "files": [],
       "assertions": [
         "情境寫在 .bdd/modules/organizer/schedule-settings/，issue 資料夾沒有 .feature",
