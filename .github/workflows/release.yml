@@ -63,6 +63,12 @@ jobs:
           pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-ParallelBdd.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Parallel BDD checks failed' }
 
+      - name: Verify test browser cleanup
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-StopSlotServices.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Test browser cleanup checks failed' }
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -143,7 +143,7 @@
     {
       "id": 6,
       "prompt": "#94544 的 BDD 已全過，develop 已推送，issue 附件也好了；請完成收尾。驗證用的 .bdd 在本輪 worktree 中，請記得移除 worktree。",
-      "expected_output": "核對 BDD 全通過、issue 註記與必要證據完成後先自動停止本輪 worktree 服務，不等待封存。不建立 issue/* tag。完成最終報告，不提交每輪報告、驗證與遮罩紀錄或證據，不另建純報告 commit；Git 保留模組規格與共用設定，再封存模組 features/ 快照、REPORT.md、verification.json 與證據到 worktree 外，逐檔驗證並上傳 issue、確認可下載；符合保存條件後移除本輪 worktree 並核對清單。",
+      "expected_output": "核對 BDD 全通過、本機結果與必要證據保存後先自動停止本輪 worktree 服務與測試瀏覽器，不等待封存。不建立 issue/* tag。完成最終報告，不提交每輪報告、驗證與遮罩紀錄或證據，不另建純報告 commit；Git 保留模組規格與共用設定，再封存模組 features/ 快照、REPORT.md、verification.json 與證據到 worktree 外，逐檔驗證並上傳 issue、確認可下載；符合保存條件後移除本輪 worktree 並核對清單。",
       "files": [],
       "assertions": [
         "沒有建立、推送或要求使用者處理 issue/* tag",
@@ -223,7 +223,7 @@
       "assertions": [
         "不重問名稱、不改名、不建立重複分支",
         "不推送、不更新 issue、不合併 develop",
-        "不自動停止服務或移除 worktree",
+        "自動停止本輪服務與測試瀏覽器，但不移除 worktree",
         "不要求封存或 uploaded-verified"
       ],
       "files": [],
@@ -231,9 +231,9 @@
       "prompt": "BDD 全通過，只要轉為 feature/5410-schedule，目前已在這個分支；不要推送或更新 issue。"
     },
     {
-      "expected_output": "保留本輪服務與證據，記錄註記完成而附件未完成，回報重試條件，不宣稱 issue 更新全部完成。",
+      "expected_output": "核對本機結果與證據已保存後，停止本輪服務與測試瀏覽器並保留證據；記錄註記完成而附件未完成，回報重試條件，不宣稱 issue 更新全部完成。",
       "assertions": [
-        "不自動停止服務",
+        "停止本輪服務與測試瀏覽器不等待 issue 附件上傳",
         "區分註記與附件狀態",
         "重試前讀現有註記避免重複留言"
       ],

@@ -19,7 +19,8 @@
   只列出會被停止的程序，不實際結束。
 
 .OUTPUTS
-  JSON：isWorktree、ip、stopped（已結束）、skipped（監聽中但不符條件而略過）、remaining（結束後仍在監聽的埠）。
+  JSON：isWorktree、ip、stopped（服務選取清單）、browsers（以本 worktree profile 辨識的瀏覽器主程序）、skipped、remaining。
+  DryRun 僅列出選取清單；實際執行後仍須核對瀏覽器是否退出。
 
 .EXAMPLE
   pwsh -File stop-slot-services.ps1 -Ports 9453,4200,4201 -DryRun
@@ -83,6 +84,22 @@ function Get-TopOwnedProcess($cim) {
 $stopped = @()
 $skipped = @()
 $targets = @{}
+$browsers = @()
+
+# 登入用 persistent Chromium 不一定監聽服務埠；以獨立 profile 的歸屬辨識。
+# 不用命令列中任意出現 worktree 路徑作為瀏覽器歸屬，避免誤停開啟本機頁面的個人瀏覽器。
+foreach ($browser in @(Get-CimInstance Win32_Process)) {
+    if ($browser.Name -notmatch '^(chrome|chromium|msedge)(\.exe)?$') { continue }
+    if ($browser.CommandLine -match '(?:^|\s)--type=') { continue }
+    $profileMatch = [regex]::Match($browser.CommandLine, '(?i)--user-data-dir=(?:"([^"]+)"|([^\s]+))')
+    if (-not $profileMatch.Success) { continue }
+    $profile = if ($profileMatch.Groups[1].Success) { $profileMatch.Groups[1].Value } else { $profileMatch.Groups[2].Value }
+    if (-not [IO.Path]::IsPathRooted($profile)) { continue }
+    $profileKey = ([IO.Path]::GetFullPath($profile) -replace '/', '\').ToLowerInvariant()
+    if (-not $profileKey.StartsWith($rootKey)) { continue }
+    $targets[[int]$browser.ProcessId] = $browser
+    $browsers += [pscustomobject]@{ pid = [int]$browser.ProcessId; process = $browser.Name; profile = $profile }
+}
 
 foreach ($p in $portList) {
     foreach ($l in @(Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue)) {
@@ -123,6 +140,7 @@ foreach ($p in $portList) {
     ip         = $ip
     dryRun     = [bool]$DryRun
     stopped    = $stopped
+    browsers   = $browsers
     skipped    = $skipped
     remaining  = $remaining
 } | ConvertTo-Json -Depth 4
