@@ -7,7 +7,9 @@
 | 測試版本 | 第 N 輪：`<完整 SHA>`；<乾淨／未提交異動檔案> |
 | 驗證紀錄 | `verification.json` 第 N 輪 |
 | 環境 | <UI/API 網址、資料庫主機／名稱；worktree slot、IP、埠、占用與服務版本確認> |
-| UI 測試工具 | <Playwright MCP／Node Playwright；未用 MCP 的原因> |
+| UI 測試工具 | <Playwright MCP；無法執行時記錄阻塞原因、排查結果與解除條件；純 API／DB 填不適用> |
+| MCP 隔離與導轉 | <worktree IP、原埠、isolationId、實際 MCP 連線識別、臨時設定路徑、前端／API 目標與版本證據> |
+| 原始設定保留 | <localhost／埠號未異動的 diff；本輪 MCP 與服務程序停止結果> |
 | 執行時間 | <YYYY-MM-DD HH:mm> |
 | 測試帳號 | 具備「<權限名稱>」的本機測試帳號（不寫帳密） |
 | 情境審核 | <獨立審核輪次與結果／未經獨立審核的原因> |

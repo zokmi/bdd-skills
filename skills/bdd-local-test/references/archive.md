@@ -46,13 +46,13 @@
 
 目的是讓未遮罩的原圖**從來不落地**，整個流程只產生一份可外傳的證據，不再有「原檔＋遮罩版」兩個封存。
 
-1. **截圖前注入遮罩樣式**（首選）。Playwright MCP 用 `browser_evaluate`，Node Playwright 用 `page.addStyleTag`：
+1. **截圖前注入遮罩樣式**（首選）。Playwright MCP 用 `browser_evaluate`：
    ```js
    () => { const s = document.createElement('style'); s.id = 'bdd-mask';
      s.textContent = `.header-avatar, .user-name, [data-pii] { filter: blur(8px) !important; }`;
      document.head.appendChild(s); }
    ```
-   Node Playwright 的 `page.screenshot({ mask: [locator] })` 也可以。選擇器以 `mask.selectors` 為準；沒有設定時，依畫面判斷帳號名稱、頭像、Email、電話、身分證號等欄位。截完圖照常操作，頁面重新導覽後要再注入一次。
+   以 Playwright MCP 的 `browser_take_screenshot` 保存遮罩後畫面。選擇器以 `mask.selectors` 為準；沒有設定時，依畫面判斷帳號名稱、頭像、Email、電話、身分證號等欄位。截完圖照常操作，頁面重新導覽後要再注入一次。
 2. **登記**：截圖確認已遮罩後，登記到 `masking.json`（記錄當下的 SHA-256，之後檔案被改動就會失效）：
    ```bash
    pwsh -NoProfile -File "<skill 目錄>/scripts/mask-evidence.ps1" -Dir <輸出資料夾> -Mark -Pattern 'R2_*' -Method css

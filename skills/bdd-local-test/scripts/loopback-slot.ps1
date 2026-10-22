@@ -52,6 +52,19 @@ function Get-ListenersOnIp([string]$ip) {
 if (-not $isWorktree) {
     $slot = 1
 } else {
+    # 所有 worktree 共用同一個檔案鎖；鎖檔保留，避免刪除再建立的競態。
+    $lockPath = Join-Path $commonDir 'bdd-loopback-allocation.lock'
+    $lock = $null
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not $lock) {
+        try {
+            $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        } catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw '取得 worktree slot 分配鎖逾時，未變更 slot' }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    try {
     $slotFile = Join-Path $gitDir 'bdd-loopback-slot'
     if (Test-Path $slotFile) {
         $slot = [int](Get-Content $slotFile -Raw).Trim()
@@ -70,6 +83,15 @@ if (-not $isWorktree) {
         }
         if (-not $slot) { throw '127.0.0.2 ~ 127.0.0.254 都已被分配，請清理不用的 worktree' }
         Set-Content -Path $slotFile -Value $slot -NoNewline
+    }
+    if ($slot -lt 2 -or $slot -gt 254) { throw "無效的 worktree slot：$slot" }
+    $duplicates = @(Get-ChildItem (Join-Path $commonDir 'worktrees') -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName 'bdd-loopback-slot' } |
+        Where-Object { $_ -ne $slotFile -and (Test-Path $_) } |
+        Where-Object { [int](Get-Content $_ -Raw).Trim() -eq $slot })
+    if ($duplicates.Count) { throw "worktree slot $slot 重複，停止測試並確認既有服務歸屬；不自動重新分配" }
+    } finally {
+        $lock.Dispose()
     }
 }
 

@@ -9,9 +9,12 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 
 ## 共同規則
 
+- 原始專案的 localhost 網址與埠號禁止異動。多 worktree 僅以程序啟動參數與獨立 Playwright MCP 瀏覽器的臨時 localhost 對應分流，不修改專案設定、CORS、系統 hosts 或全域代理；依 [worktree 隔離](references/worktree-loopback.md) 產生臨時 MCP 設定並確認前端與 API 的實際版本。設定產生不等於隔離驗證完成。
+
 - 先讀目標專案的 `AGENTS.md`／`CLAUDE.md`／README、環境設定及 `.bdd/config.json`。本 skill 不預設埠號、帳號、基準分支或資料庫。下文的 `<skill 目錄>` 是此檔所在資料夾。
 - 依 [版控分工](references/version-control.md)，Git 只保存模組情境、`MODULE.md` 與共用設定；每輪報告、驗證與遮罩紀錄及證據保存在本機輸出與完整封存，不新增到 Git、不另建純報告提交。既有追蹤輸出先驗證封存，再依明確授權遷移。
 - 「那麼」以需求為準，不照抄錯誤實作；發現不符時標 `@已知缺陷`，實測讓它失敗。只有走真實路徑驗到的結果才能記「通過」；模擬回應、假 token 或旁證不能代替端對端驗證。
+- BDD 的 `@UI` 情境必須使用 Playwright MCP 操作與取證，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。MCP 無法連線或無法滿足隔離時先排查；仍無法執行則列「阻塞」。共用 MCP session 的 UI 情境序列執行；純 `@API`／`@DB` 情境維持各自的真實驗證工具。
 - 報告只對記錄的 repo、commit 與工作區狀態有效。同步或受測檔案變更時先用 `bdd-verification.ps1 -Check` 判定；`rerun` 代表舊結果失效，完整重跑的時機依下節驗證階段決定，不在合併前後各跑一輪。
 - 執行可能寫入資料前，確認連到本機或使用者已確認的測試環境；SIT／UAT／PROD 或無法判定時停止寫入並詢問。缺帳密時不得繞過驗證，相關情境列「阻塞」。
 - 情境新增或修改後先跑 `bdd-modules.ps1 -Lint`，再按 [情境審核](references/scenario-review.md) 做獨立審核。情境審核子代理只讀原始需求與程式，不修改檔案；審核問題逐條處理。

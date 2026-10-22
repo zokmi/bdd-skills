@@ -117,14 +117,14 @@
     {
       "id": 4,
       "prompt": "我在 git worktree 測 #94542。主目錄的 localhost:4200 和 localhost:9453 已經有別的服務在跑；請保持原埠號，寫 BDD 並跑 UI/API 情境。",
-      "expected_output": "啟動服務前執行 loopback-slot.ps1 並讀取 worktree-loopback.md；依回傳 IP 檢查 occupied，將本輪服務綁到該 IP 的原埠號。UI 用帶 chromiumArg 的隔離 Node Playwright，API 直接打該 IP。報告記錄 slot、IP、占用判定與受測版本，沒有完整 preflight 不宣稱 all pass。",
+      "expected_output": "啟動服務前執行 loopback-slot.ps1 並讀取 worktree-loopback.md；依回傳 IP 檢查 occupied，將本輪服務綁到該 IP 的原埠號。UI 必須使用可配置 chromiumArg 的隔離 Playwright MCP session；無法配置時列為阻塞，不得改用 Node Playwright 或其他工具。API 直接打該 IP。報告記錄 slot、IP、占用判定與受測版本，沒有完整 preflight 不宣稱 all pass。",
       "files": [],
       "assertions": [
         "啟動服務前執行 loopback-slot.ps1，記錄 isWorktree、slot、ip、chromiumArg、occupied",
         "讀取 references/worktree-loopback.md 並確認占用程序歸屬",
         "沒有停止或借用主目錄 localhost 服務，也沒有更改原埠號或專案設定",
         "本輪服務只綁分配的 IP，並確認 HTTP 回應屬於本輪版本",
-        "UI 使用帶 chromiumArg 的 Node Playwright，API 使用該 IP",
+        "UI 必須使用帶 chromiumArg 的隔離 Playwright MCP；無法配置則阻塞，API 使用該 IP",
         "REPORT 環境欄含 slot、IP、原埠號、占用判定、實際網址與版本確認方式"
       ]
     },
@@ -310,7 +310,7 @@
     {
       "id": 20,
       "prompt": "派子代理同時跑三組 BDD：A 刪除賽事，B 編輯同一賽事，C 只讀該賽事 API；共享 checkout、資料庫和唯一 Playwright MCP session。A 發現共用登入程式缺陷，準備直接修正重啟；大家都寫同一 REPORT.md 和 verification.json。請安排執行。",
-      "expected_output": "主代理先分組並分配唯一寫入者、輸出目錄與測試資料；A/B/C 涉及同一賽事須隔離資料或依賴序列執行，UI 使用獨立 Node Playwright 或序列共用 MCP。共用登入修正前通知受影響組保存證據並暫停，唯一寫入者修正重啟並確認版本，再派發複測；主代理核對覆蓋、版本與證據後彙整。",
+      "expected_output": "主代理先分組並分配唯一寫入者、輸出目錄與測試資料；A/B/C 涉及同一賽事須隔離資料或依賴序列執行，UI 必須使用獨立 Playwright MCP session 或序列共用 MCP，不得改用 Node Playwright。共用登入修正前通知受影響組保存證據並暫停，唯一寫入者修正重啟並確認版本，再派發複測；主代理核對覆蓋、版本與證據後彙整。",
       "assertions": [
         "派工包含情境編號、版本、資源、檔案修改權及每組獨立輸出目錄",
         "不把唯讀 C 視為必然不受共用賽事寫入影響",
@@ -363,6 +363,18 @@
         "不重問已指定模式或分支名",
         "僅改名不新增完整測試輪次",
         "僅回報 feature 功能驗收通過，不稱 develop 整合通過"
+      ],
+      "files": []
+    },
+    {
+      "id": 25,
+      "prompt": "同專案兩個 worktree 同時測 UI，必須用 Playwright MCP。原始 localhost 與 port 完全不能改；目前只有共用 MCP 分頁，先改 API URL 或 hosts 讓它能跑可以嗎？",
+      "expected_output": "保留原 localhost 與埠號，不修改 API URL、專案設定、hosts 或全域代理。各 worktree 以臨時啟動參數綁獨立 loopback IP，使用 prepare-worktree-mcp.ps1 產生隔離 MCP 設定，再建立可識別的獨立 MCP 連線，驗證前端與 API 的目標和版本。只產生設定或開不同分頁不算隔離；無法建立所需連線則相關 UI 阻塞，可獨立的 API／DB 繼續。",
+      "assertions": [
+        "不修改原 localhost、埠號、專案設定或系統 hosts",
+        "只用臨時服務參數與獨立 MCP 瀏覽器對應進行導轉",
+        "要求實際連線與前端及 API 路由版本證據，不把 isolationId 當隔離證據",
+        "共用分頁不能並行，無法配置時阻塞且不改用 Node Playwright"
       ],
       "files": []
     }

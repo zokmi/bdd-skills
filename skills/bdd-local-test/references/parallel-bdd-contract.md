@@ -33,7 +33,7 @@
     "confirmationBasis": "已獨立核對資料庫連線目標為本機測試庫"
   },
   "resources": [{"id": "api-5410", "type": "service", "owner": "main", "access": "shared-read"}, {"id": "race-group-ui", "type": "data", "owner": "schedule-ui", "access": "exclusive-write"}],
-  "browser": {"tool": "node-playwright", "isolationId": "schedule-ui-browser", "chromiumArg": null},
+  "browser": {"tool": "playwright-mcp", "isolationId": "schedule-ui-browser", "chromiumArg": null},
   "account": {"role": "organizer", "credentialRef": "專案指定的本機測試帳密來源"},
   "dataScope": ["race-group-ui"],
   "permissions": {"editablePaths": [], "manageServiceIds": [], "externalActions": []},
@@ -45,6 +45,8 @@
 `resources[].type` 使用 `service`、`database`、`data`、`browser`、`account` 或 `file`；`access` 使用 `exclusive-write` 或 `shared-read`。shared-read 表示不能變更該資源，不表示呼叫 API 必然唯讀；會寫資料的流程另須對 data 資源取得明確範圍。owner 是唯一管理者。無修改權的 editablePaths 為空；外部操作權僅反映本輪既有授權，不能由派工自行產生。writeAuthorized 也不授權清除未知歸屬資料。
 
 dirtyPaths 非空時，在派工附文列出異動快照／雜湊及取得位置，子代理開始前核對。不同組若無法確認測到同一工作區內容，不以同 HEAD 判定版本相同。
+
+browser.isolationId 是協調識別，不會自動建立 MCP session。UI 派工附文須列臨時 configPath、實際 server／工具前綴及前端／API 導轉與版本確認證據，依 [worktree 隔離](worktree-loopback.md) 產生設定並確認連線。不得只更改 tool 名稱就視為已隔離；並行 UI 各用獨立 MCP，原 localhost 網址與埠號保持不變。
 
 ## 結果輸出：result.json
 
@@ -58,7 +60,7 @@ dirtyPaths 非空時，在派工附文列出異動快照／雜湊及取得位置
   "attempt": 1,
   "taskStatus": "completed",
   "verification": {"path": "verification.json", "roundIndex": 0},
-  "execution": {"tool": "node-playwright", "uiUrl": "http://localhost:4200", "apiUrl": "http://localhost:5000", "serviceVersion": "build-5410-1"},
+  "execution": {"tool": "playwright-mcp", "uiUrl": "http://localhost:4200", "apiUrl": "http://localhost:5000", "serviceVersion": "build-5410-1"},
   "scenarios": [{
     "feature": ".bdd/modules/organizer/schedule-settings/list.feature",
     "id": "SS-13",

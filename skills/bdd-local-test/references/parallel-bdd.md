@@ -28,7 +28,7 @@
 
 - **檔案與 Git**：唯讀測試可共享固定版本 checkout；會修改程式的組別使用獨立 worktree，或由主代理指定唯一寫入者序列修改。不得同時修改同一 .feature、MODULE.md、共用設定或操作同一 checkout 的 checkout／reset／merge／commit。情境編號由主代理預先分配，避免撞號。
 - **服務**：不同 worktree 各自依 [loopback 隔離](worktree-loopback.md) 執行 preflight，不自行猜 IP。同一固定版本服務可供互不影響的組別共用，但指定唯一管理者；子代理不得自行重啟或停止共用服務。IP 與 worktree 隔離不代表資料庫隔離。
-- **瀏覽器**：多組 UI 不共用 Playwright MCP session、分頁、持久化 profile 或可變登入狀態。工具無法提供明確獨立 session 時，依 [本機執行](local-execution.md) 改用每組獨立的 Node Playwright 瀏覽器／context；worktree 使用其 chromiumArg。只能使用共用 MCP 時，UI 序列執行。
+- **瀏覽器**：多組 UI 不共用 Playwright MCP session、分頁、持久化 profile 或可變登入狀態。必須使用 Playwright MCP；只有工具提供明確獨立 session 時才能並行 UI。只能使用共用 MCP 時，UI 序列執行；worktree 的 MCP session 必須能配置其 chromiumArg，無法隔離時列「阻塞」，不得改用其他工具替代。
 - **資料與帳號**：每組使用可辨識且互不重疊的測試資料範圍，帳號角色符合情境；同帳號若有單一登入或全域設定也屬衝突。建立／刪除同一賽事、共用 seed、migration、清庫與全域設定不能並行；無法隔離時排依賴序列，其他獨立組可繼續。唯讀組若依賴被修改資料，也須等待資料穩定。清理僅限本組已確認的測試資料，不清除其他組或歸屬未知資料。
 - **證據與紀錄**：不同單號沿用各自 `.bdd/<單號>-<主題>/`；同一單號拆組時可用該目錄下 `groups/<組別>/` 保存各組 REPORT.md、verification.json、masking.json 與 evidence/，依 [報告與驗證紀錄](reporting.md) 分別記錄。每個檔案只有一位寫入者，各輪證據保留不覆蓋。使用既有封存腳本時，以各組輸出目錄分別封存，不假設腳本會自動合併或遞迴辨識 groups。
 
