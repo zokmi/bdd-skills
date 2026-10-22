@@ -18,6 +18,8 @@
 
 ## BDD 版控分工
 
+每次 BDD 開始前自動執行 `ensure-bdd-gitignore.ps1`，驗證並補齊目標專案忽略規則，保留模組情境及共用設定；重跑不重複新增，衝突回報，既有追蹤產物只列出待處理項目。`-Check` 僅檢查。回歸測試：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-BddGitignore.ps1`。
+
 同專案多 worktree 保留原 localhost 網址與埠號，禁止修改原始專案設定、系統 hosts 或全域代理。以臨時服務啟動參數綁定各自 loopback IP，並用 `prepare-worktree-mcp.ps1` 產生獨立 MCP 的暫時 localhost 對應；slot 分配加鎖避免同時啟動撞 IP。產生設定後仍須建立獨立 MCP 連線並確認前端與 API 版本，才可並行 UI；無法建立則阻塞。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。
 
 每輪實測自動評估子代理分組：兩組以上可安全獨立執行且有可用子代理時，主代理直接派工，不必明說「並行」。先分配情境、檔案與測試資料範圍，每組使用獨立瀏覽器及輸出目錄；需要修改程式時隔離 worktree，共用服務與資料無法隔離的組別序列執行，其他獨立組繼續派工。報告記錄執行模式、實際代理與未派工原因；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。

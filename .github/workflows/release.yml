@@ -69,6 +69,12 @@ jobs:
           pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-WorktreeMcp.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Worktree MCP checks failed' }
 
+      - name: Verify automatic BDD ignore rules
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-BddGitignore.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'BDD ignore checks failed' }
+
       - name: Verify test browser cleanup
         shell: pwsh
         run: |

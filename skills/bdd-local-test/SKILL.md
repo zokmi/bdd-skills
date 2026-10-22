@@ -54,6 +54,8 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 3. **報告**：需要報告時讀 [報告與驗證紀錄](references/reporting.md) 和 [報告範本](assets/REPORT-template.md)。使用者只要測試報告時不整合或更新 issue；若需封存，再讀下階段的封存步驟。
 4. **整合與收尾**：讀 [整合與封存](references/closeout.md)。worktree 開發與相關回歸通過後，未指定交付方式時自動詢問「轉為正式 feature 分支／合併回 develop」，不等使用者要求收尾；本任務已指定時沿用。合併模式開發中只測修正與相關回歸，於最新 develop 候選整合後、推送前完整驗證一次，推送後只核對 SHA，再完成已授權的 issue 更新與封存；feature 模式先在功能 worktree 完整 BDD 通過，確認名稱後才轉換分支並保留工作區，僅改名且版本與環境未變不重測。未回答前不轉換分支、合併、推送或刪除證據／worktree。只要情境或報告的明確要求依限定範圍完成，不列為第三個開發交付選項。每輪保存本機驗證結果與必要證據後，立即依收尾指引判定並停止本輪服務及登入／測試瀏覽器；不等待 issue 更新、附件上傳、模式選擇或封存。最終回覆前核對實際程序與埠，不能只宣稱稍後自動清理。遮罩、封存或清理時再讀 [封存指引](references/archive.md)。
 
+建立 `.bdd` 輸出前，依範圍指引執行 `scripts/ensure-bdd-gitignore.ps1`，自動驗證並補齊目標 repo 的忽略規則；切換 repo/worktree 或整合後重新檢查。衝突及已追蹤產物依 [版控分工](references/version-control.md) 處理。
+
 各階段只讀當前需要的參考文件，不把整套參考文件一次載入。腳本的參數、輸出與錯誤處理以對應階段文件為準。
 
 合併模式的完整驗證時機依 [整合與封存](references/closeout.md) 執行；rerun 集中在整合後、推送前，不在整合前多跑一輪。current／still-valid 未涵蓋所有共用程式與環境，不能代替整合驗證。
