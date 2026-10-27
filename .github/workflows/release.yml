@@ -75,6 +75,12 @@ jobs:
           pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-BddGitignore.ps1
           if ($LASTEXITCODE -ne 0) { throw 'BDD ignore checks failed' }
 
+      - name: Verify cross-project loopback allocation
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Cross-project loopback checks failed' }
+
       - name: Verify test browser cleanup
         shell: pwsh
         run: |

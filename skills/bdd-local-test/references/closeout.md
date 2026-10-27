@@ -56,7 +56,7 @@
 **證據先維持 `evidence/` 原狀**，供 issue 上傳、報告連結與最後檢查使用。不要提前刪除原圖或只壓 `evidence/`；最終依〈7-3〉把 `.feature`、`REPORT.md`、`verification.json` 與全部證據一次封成完整 BDD 包。若舊輪次已有 `evidence.zip`，保留它及本輪新證據，不能覆蓋舊檔；封存腳本會把它攤平併入，不必事先手動處理。
 
 **達成上述條件且在 worktree 裡測時，逐一停止本輪功能與整合 worktree 綁在各自 `127.0.0.N` 上的前後端服務**，
-釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；主目錄（`isWorktree=false`）一律不停。
+釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；一般主目錄（`isWorktree=false` 且未指定 `-Isolate`）一律不停。明確以 `-Isolate` 啟動的多專案主 checkout 屬於本輪隔離服務，清理時對同一工作區使用 `stop-slot-services.ps1 -Isolate`，仍須核對路徑歸屬，不能套用到使用者一般 localhost 服務。
 
 1. 先核對背景工作確實屬於本輪 worktree 啟動的服務，再用可用的背景工作停止工具結束（例如 `run_in_background`／`TaskStop`）；不停止其他工作區或無法確認歸屬的背景工作。
 2. 在每個本輪 worktree 的目錄內分別跑停止腳本，帶上該 worktree 使用 `loopback-slot.ps1` 時的埠號，收掉殘留的子程序與先前 session 留下的服務：

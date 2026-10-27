@@ -4,20 +4,21 @@
 #>
 param(
     [Parameter(Mandatory)][string[]]$Ports,
-    [Parameter(Mandatory)][string]$OutputDir
+    [Parameter(Mandatory)][string]$OutputDir,
+    [switch]$Isolate
 )
 $ErrorActionPreference = 'Stop'
 $portList = @($Ports | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
 if (-not $portList.Count -or @($portList | Where-Object { $_ -lt 1 -or $_ -gt 65535 }).Count) {
     throw 'Ports 必須是專案原有埠號（1..65535），不得改埠分流'
 }
-$preflight = & (Join-Path $PSScriptRoot 'loopback-slot.ps1') -Ports $Ports | ConvertFrom-Json
+$preflight = & (Join-Path $PSScriptRoot 'loopback-slot.ps1') -Ports $Ports -Isolate:$Isolate | ConvertFrom-Json
 $output = [IO.Path]::GetFullPath($OutputDir)
 $null = New-Item -ItemType Directory -Path $output -Force
 $isolationId = 'bdd-mcp-' + [guid]::NewGuid().ToString('N')
 $configPath = Join-Path $output "$isolationId.json"
 $browserArgs = @()
-if ($preflight.isWorktree) { $browserArgs += $preflight.chromiumArg }
+if ($preflight.isolated) { $browserArgs += $preflight.chromiumArg }
 $config = @{
     browser = @{
         browserName = 'chromium'

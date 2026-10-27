@@ -7,6 +7,8 @@
 | 測試版本 | 第 N 輪：`<完整 SHA>`；<乾淨／未提交異動檔案> |
 | 驗證紀錄 | `verification.json` 第 N 輪 |
 | 環境 | <UI/API 網址、資料庫主機／名稱；worktree slot、IP、埠、占用與服務版本確認> |
+| API port 與啟動契約 | <逐服務：repo/worktree、原 localhost URL、實際監聽 port、設定來源、本輪 IP、啟動命令（遮罩秘密）、啟動後 IP/port/PID 與版本；API port 禁止異動、自動換埠檢查結果> |
+| 多專案同 port 檢查 | <各工作區 isolated、registryPath（須相同）、IP/port、程序歸屬及衝突檢查；主 checkout 是否 -Isolate；無安全分配時阻塞；或不適用> |
 | 資料庫環境確認 | <待確認／使用者已明確確認；全部主機／執行個體、埠、庫名、租戶、環境、設定來源、讀寫範圍、回覆摘要及對話位置／時間、適用輪次；未確認不得實測，不填帳密> |
 | UI 測試工具 | <Playwright MCP；無法執行時記錄阻塞原因、排查結果與解除條件；純 API／DB 填不適用> |
 | MCP 隔離與導轉 | <worktree IP、原埠、isolationId、實際 MCP 連線識別、臨時設定路徑、前端／API 目標與版本證據> |

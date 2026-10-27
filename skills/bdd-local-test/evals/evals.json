@@ -398,6 +398,18 @@
         "共用分頁不能並行，無法配置時阻塞且不改用 Node Playwright"
       ],
       "files": []
+    },
+    {
+      "id": 36,
+      "prompt": "兩個不同 repo 的 worktree 同時測，API 原 port 都是 9453，前端都是 4200。slot 腳本回傳相同 IP，啟動工具建議 API 換 9454。趕時間，用 Chrome 導轉啟動服務，改臨時參數就好，不改設定檔。",
+      "expected_output": "先逐服務記錄原 localhost URL、API 實際 port 與來源、本輪 IP 和啟動命令。拒絕改成 9454 或自動換埠；核對是否使用新版跨 repo 共用 registry、registryPath 是否一致，舊 slot 衝突須先確認服務歸屬，不偷偷換 IP。主 checkout 多專案加 -Isolate；無安全分配則阻塞。Chrome resolver 只導轉瀏覽器 localhost、不啟動服務；安全分配可得時另行啟動服務，驗證監聽、版本與真實 API 路徑，再使用獨立 MCP Chrome／Chromium。",
+      "assertions": [
+        "明列 API 實際 port、來源及服務啟動命令，不猜示例 port",
+        "API port 禁止異動包含臨時參數與自動換埠",
+        "使用同一跨 repo registry 並檢查舊 slot 衝突，不停用其他服務或自行選 IP",
+        "區分服務啟動與 Chrome 導轉，驗證 UI/API 版本與實際目標"
+      ],
+      "files": []
     }
   ]
 }

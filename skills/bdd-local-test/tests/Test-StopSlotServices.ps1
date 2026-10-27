@@ -30,6 +30,22 @@ try {
     $result = & $stop -Ports 9453,4200,4201 | ConvertFrom-Json
     if ($killed.Count -ne 1 -or $killed[0] -ne 101) { throw 'Must kill only the owned browser root' }
     'PASS browser ownership, no listener, DryRun and process-tree cleanup'
+    function git {
+        if ($args -contains '--show-toplevel') { return "$fixture/repo" }
+        if ($args -contains '--absolute-git-dir') { return "$fixture/git" }
+        if ($args -contains '--git-common-dir') { return "$fixture/git" }
+        throw 'Unexpected git invocation'
+    }
+    $killed.Clear()
+    $result = & $stop -Ports 9453 | ConvertFrom-Json
+    if ($killed.Count -or $result.isWorktree) { throw 'Default main checkout must not stop anything' }
+    $result = & $stop -Ports 9453 -Isolate | ConvertFrom-Json
+    if ($result.isWorktree -or -not $result.isolated -or $killed.Count -ne 1) { throw 'Explicit isolated main checkout cleanup failed' }
+    Set-Content "$fixture/git/bdd-loopback-slot" '1'
+    $rejected = $false
+    try { & $stop -Ports 9453 -Isolate | Out-Null } catch { $rejected = $true }
+    if (-not $rejected -or $killed.Count -ne 1) { throw 'Isolated cleanup must reject localhost slot 1' }
+    'PASS main checkout opt-in cleanup and invalid slot safety'
 } finally {
     Remove-Item -LiteralPath $fixture -Recurse -Force
 }

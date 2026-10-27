@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('bdd-mcp-' + [guid]::NewGuid())
+$previousRegistry = $env:BDD_LOOPBACK_REGISTRY_DIR
+$env:BDD_LOOPBACK_REGISTRY_DIR = Join-Path $fixture 'registry'
 $null = New-Item -ItemType Directory -Path "$fixture/repo", "$fixture/common/worktrees/a", "$fixture/common/worktrees/b"
 $scripts = Join-Path $PSScriptRoot '../scripts'
 function git {
@@ -77,6 +79,7 @@ try {
     'PASS stable slot, MCP isolation/config, unchanged ports, unique identity, duplicate rejection'
     'PASS invalid port/slot rejection and unchanged main-checkout resolution'
 } finally {
+    $env:BDD_LOOPBACK_REGISTRY_DIR = $previousRegistry
     if ($jobs) { $jobs | Stop-Job; $jobs | Remove-Job -Force }
     if ([IO.Path]::GetFullPath($fixture).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))) {
         Remove-Item -LiteralPath $fixture -Recurse -Force

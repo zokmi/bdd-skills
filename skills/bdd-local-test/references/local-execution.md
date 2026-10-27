@@ -25,12 +25,14 @@
 
 ### 5. 準備環境
 
+**固定 API 實際 port 的啟動契約**：先逐一列出前端／API 原 localhost URL、實際監聽 port、設定來源、本輪 IP 與啟動命令，寫入報告。API port 禁止異動，包含臨時參數與工具自動換埠；port 未知先釐清，不套用示例。多專案／worktree 同 port 時先讀 [啟動契約與 Chrome 導轉](worktree-loopback.md)，核對跨 repo IP 衝突；分別啟動服務後，用獨立 MCP Chrome／Chromium 的 localhost 導轉連到本輪 IP、原 port。Chrome 導轉本身不會啟動服務，也不會隔離 SSR／proxy 的請求。
+
 **啟動服務前的 worktree preflight（每輪測試都先做）**：先從專案文件找出本輪前後端原埠號，
 在受測 repo 根目錄執行 `pwsh -NoProfile -File "<skill 目錄>/scripts/loopback-slot.ps1" -Ports <原埠號，逗號分隔>`，
 讀取 JSON 的 `isWorktree`、`slot`、`ip`、`chromiumArg`、`occupied`；腳本失敗或無法確認埠號時，
 先釐清環境，不要猜 IP 或直接啟動服務。
 
-- `isWorktree=false`：照一般 localhost 流程測試。
+- `isWorktree=false`：單專案可照一般 localhost 流程；多專案同 port 則重新加 `-Isolate` 做 preflight 與產生 MCP 設定，依 `isolated=true` 的流程綁定服務並導轉，不直接共用 localhost。
 - `isWorktree=true`：**先讀 [worktree loopback 操作細節](worktree-loopback.md)**，確認 `occupied` 的程序歸屬後，
   用 `prepare-worktree-mcp.ps1` 產生本輪臨時 MCP 設定，建立可識別的獨立連線並核對前端／API 實際目標與版本；不能只產生設定就視為隔離完成。原始 localhost、埠號與設定檔不可異動。
   讓本輪前後端只綁分配的 `ip`、沿用原埠號；`@UI` 用可配置 `chromiumArg` 的隔離 Playwright MCP session（無法配置時列為阻塞），

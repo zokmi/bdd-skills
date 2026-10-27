@@ -27,7 +27,8 @@
 #>
 param(
     [string[]]$Ports = @(),
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Isolate
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,7 +44,7 @@ if (-not [IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $root $co
 $commonDir = (Resolve-Path $commonDir).Path
 $isWorktree = $gitDir -ne $commonDir
 
-if (-not $isWorktree) {
+if (-not $isWorktree -and -not $Isolate) {
     [pscustomobject]@{ isWorktree = $false; ip = '127.0.0.1'; stopped = @(); skipped = @(); remaining = @()
         message = '主目錄不是 worktree，不停止任何服務' } | ConvertTo-Json -Depth 4
     return
@@ -51,7 +52,9 @@ if (-not $isWorktree) {
 
 $slotFile = Join-Path $gitDir 'bdd-loopback-slot'
 if (-not (Test-Path $slotFile)) { throw '本 worktree 尚未分配 slot（找不到 bdd-loopback-slot），沒有可停止的服務' }
-$ip = "127.0.0.$([int](Get-Content $slotFile -Raw).Trim())"
+$slot = [int](Get-Content $slotFile -Raw).Trim()
+if ($slot -lt 2 -or $slot -gt 254) { throw '無效的隔離 slot，不停止任何程序' }
+$ip = "127.0.0.$slot"
 
 # 路徑比對統一成反斜線、小寫，並以結尾分隔符避免 foo 誤中 foo-bar
 $rootKey = ((Resolve-Path $root).Path -replace '/', '\').TrimEnd('\').ToLowerInvariant() + '\'
@@ -136,7 +139,8 @@ foreach ($p in $portList) {
 }
 
 [pscustomobject]@{
-    isWorktree = $true
+    isWorktree = $isWorktree
+    isolated   = $true
     ip         = $ip
     dryRun     = [bool]$DryRun
     stopped    = $stopped
