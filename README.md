@@ -18,6 +18,8 @@
 
 ## BDD 版控分工
 
+開始任何 UI／API／DB 實測前，插件必須展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，並等待使用者明確確認。本機與唯讀情境也適用；只告知或使用者只說「測到全過」不算確認。未確認時不實測、不派實測子代理；同任務目標與範圍未變的複測沿用確認，變更或跨 repo 則重新確認，並在報告保留依據。
+
 每次 BDD 開始前自動執行 `ensure-bdd-gitignore.ps1`，驗證並補齊目標專案忽略規則，保留模組情境及共用設定；重跑不重複新增，衝突回報，既有追蹤產物只列出待處理項目。`-Check` 僅檢查。回歸測試：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-BddGitignore.ps1`。
 
 同專案多 worktree 保留原 localhost 網址與埠號，禁止修改原始專案設定、系統 hosts 或全域代理。以臨時服務啟動參數綁定各自 loopback IP，並用 `prepare-worktree-mcp.ps1` 產生獨立 MCP 的暫時 localhost 對應；slot 分配加鎖避免同時啟動撞 IP。產生設定後仍須建立獨立 MCP 連線並確認前端與 API 版本，才可並行 UI；無法建立則阻塞。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。

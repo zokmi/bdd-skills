@@ -6,6 +6,10 @@
 
 ## 派工輸入：assignment.json
 
+引用報告位置時，該紀錄必須能追溯至本任務使用者的原始確認回覆；報告單獨宣稱「已確認」不能作為授權。
+
+實測派工前，主代理必須已取得使用者對具體資料庫與讀寫範圍的明確確認；`environment.confirmationBasis` 記錄回覆摘要與可追溯對話位置／時間或報告位置，`databaseTarget` 列出全部實際主機／執行個體與庫名。本機判定、`writeAuthorized=true` 或代理自行核對都不能代替使用者確認。唯讀組同樣適用；缺少確認或實際目標不符時，子代理停止並回報主代理，不執行情境。
+
 主代理在啟動子代理前寫入。`scenarios` 必須列出每個編號，不用「全部」等不明確值；`kind` 僅可為 `changed` 或 `regression`。路徑 `feature` 相對於該 repo，以 `/` 分隔；workDir／outputDir／instructions 使用絕對路徑。`dependsOn` 是本輪前置 groupId，依賴尚未解除不能執行受影響情境。
 
 ```json
@@ -28,9 +32,9 @@
   "environment": {
     "uiUrl": "http://localhost:4200",
     "apiUrl": "http://localhost:5000",
-    "databaseTarget": "local-test-db",
+    "databaseTarget": "(localdb)\\MSSQLLocalDB / App_Test",
     "writeAuthorized": true,
-    "confirmationBasis": "已獨立核對資料庫連線目標為本機測試庫"
+    "confirmationBasis": "使用者於本任務對話明確回覆：確認上述 App_Test 與本輪資料讀寫範圍，可以測試；詳見 REPORT.md 資料庫環境確認，本輪已核對設定未變"
   },
   "resources": [{"id": "api-5410", "type": "service", "owner": "main", "access": "shared-read"}, {"id": "race-group-ui", "type": "data", "owner": "schedule-ui", "access": "exclusive-write"}],
   "browser": {"tool": "playwright-mcp", "isolationId": "schedule-ui-browser", "chromiumArg": null},
