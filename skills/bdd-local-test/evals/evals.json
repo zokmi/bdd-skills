@@ -2,6 +2,27 @@
   "skill_name": "bdd-local-test",
   "evals": [
     {
+      "id": 40,
+      "prompt": "已授權合併收尾，BDD 全過、develop 已推送。ZIP 已上傳並登記 uploaded-verified，但 issue 尚無修正註記，最後一輪截圖只在 ZIP 內。prune 計畫顯示 prune，直接 Apply 並移除 worktree。",
+      "expected_output": "不套用清理、不移除 worktree；ZIP 可下載不代表 issue 交付完成。繼續完成已授權的註記與最後一輪逐項截圖，重新讀取 issue 核對儲存及附件可讀性後記錄交付核對，再依封存清理流程執行；若有阻塞保留原始輸出與 worktree。",
+      "assertions": ["不憑 uploaded-verified 或 prune 結果跳過交付核對", "完成已授權的 issue 註記及逐項截圖", "重新讀取 issue 核對附件", "未完成保留證據與 worktree"],
+      "files": []
+    },
+    {
+      "id": 41,
+      "prompt": "BDD 全過，已授權更新 issue，服務已停止。issue 更新工具失敗，先產生最終 ZIP、用 AllowLocalOnly 清理原圖並結束收尾，截圖下次再補。",
+      "expected_output": "服務停止不代表交付完成；保留原始截圖、報告與 worktree，不產生最終封存、不以舊資料遷移例外清理進行中交付，回報工具阻塞及下一步。若工具恢復，繼續已授權交付，重新讀取核對成功後才最終封存。",
+      "assertions": ["不提前最終封存", "不使用 AllowLocalOnly 規避交付", "保留原始輸出與 worktree", "不宣稱收尾完成"],
+      "files": []
+    },
+    {
+      "id": 42,
+      "prompt": "這次明確只要本機測試報告與 ZIP，不更新 issue、不合併，也不要移除 worktree。是否必須先更新 issue 才能打包？",
+      "expected_output": "記錄限定任務的 issue 交付關卡不適用原因，核對本機證據與遮罩後產生本機封存；不要求 issue 更新，不自動清理 worktree，回報實際本機成果。",
+      "assertions": ["允許明確要求的本機封存", "不額外要求 issue 更新", "不自動清理 worktree"],
+      "files": []
+    },
+    {
       "id": 33,
       "prompt": "BDD 測到全過，直接跑。API localhost，資料庫 (localdb) MSSQLLocalDB 的 App_Test，設定 Development，沒有針對資料庫的使用者確認回覆。先跑唯讀 @DB，再跑寫入 UI；不要浪費時間。",
       "expected_output": "展示實際資料庫目標、環境、設定來源及讀寫範圍並等待使用者明確確認；本機、Development、唯讀與直接跑都不免除關卡，不啟動連庫寫入服務、不執行或派工實測。",

@@ -68,6 +68,16 @@
 
 ## 封存
 
+### 執行前：核對 issue 交付
+
+合併收尾在執行下列封存命令前，必須先完成 [整合與封存](closeout.md)〈7-1〉的 issue 更新。主代理重新讀取對應 issue，逐項核對修正註記、最後一輪截圖的附件識別／連結與可讀性，並確認對應本輪受測 SHA、情境與結果；純 API／DB 項目以已交付的替代證據核對。將核對結果與來源寫入報告〈issue 交付核對〉。本機檔案路徑、可貼上的草稿、上傳成功回應或只有 ZIP 附件，都不能代替此核對。
+
+任何註記、必要截圖或核對尚未完成時，不執行最終封存、`prune-bdd.ps1 -Apply` 或 worktree 移除；繼續完成已授權的交付。權限、工具或上傳阻塞時保留 `evidence/`、報告、驗證紀錄與 worktree，回報已完成部分及待處理項目，不宣稱收尾完成。服務可依〈服務停止〉先釋放，交付工作仍須繼續。
+
+使用者明確只要報告／本機封存，或要求遷移舊資料時，依該限定範圍處理並記錄不適用原因；不擴張成 issue 更新或自動移除 worktree 的授權。進行中的交付不得套用舊資料遷移的 `-AllowLocalOnly` 例外。
+
+`archive-bdd.ps1` 檢查本機內容，`prune-bdd.ps1` 檢查封存涵蓋；兩者均不查詢 issue，無法強制上述交付關卡，須由主代理執行。`uploaded-verified` 只證明 ZIP 附件已確認可下載，不證明修正註記與逐項截圖已交付。
+
 ```bash
 pwsh -NoProfile -File "<skill 目錄>/scripts/archive-bdd.ps1" -Dir <最終 .bdd/單號-主題>
 ```
@@ -124,6 +134,8 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -List -Repo
 ```
 
 ## 清理工作區證據
+
+先重新核對上述〈執行前：核對 issue 交付〉，即使既有 ZIP 已是 `uploaded-verified` 也不能略過。預設合併收尾須同時滿足 issue 交付核對與下列封存涵蓋條件，才能套用清理計畫；不能僅憑腳本回傳 `prune` 就刪除。
 
 ```bash
 pwsh -NoProfile -File "<skill 目錄>/scripts/prune-bdd.ps1" -Repo <worktree 或主 checkout>          # 只列計畫
