@@ -1,6 +1,6 @@
 {
   "name": "bdd-skills",
-  "version": "1.5.10",
+  "version": "1.5.11",
   "description": "繁體中文 BDD 情境撰寫與本機實測技能",
   "author": {
     "name": "zokmi"
@@ -13,6 +13,6 @@
     "developerName": "zokmi",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
-    "defaultPrompt": "使用 bdd-local-test 撰寫 BDD 情境並在本機驗證。"
+    "defaultPrompt": "使用 bdd-local-test 撰寫 BDD 情境並在本機驗證；指定 issue 的最終完整 BDD 全通過且一致性審核 PASS 後，自動追加修正說明、上傳最後一輪已遮罩驗證截圖或 API／DB 替代證據，重新讀取 issue 核對註記與附件。feature 與 develop 模式皆適用；遵守只要報告或不要更新 issue 等明確限制，未另授權不改狀態或關單。"
   }
 }

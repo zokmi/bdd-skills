@@ -2,6 +2,27 @@
   "skill_name": "bdd-local-test",
   "evals": [
     {
+      "id": 50,
+      "prompt": "修正 Redmine #5410，交付 feature 分支；最終完整 BDD 全通過、證據已遮罩、一致性審核 PASS。未另說更新 issue，也未禁止。請繼續完成交付，不要推送。",
+      "expected_output": "自動追加修正項目與操作、預期及實際結果，上傳最後一輪已遮罩截圖或 API／DB 替代證據，附版本、環境與測試統計，回讀 issue 核對註記與附件。不重問是否更新，不推送、不改狀態或關單，保留 worktree。",
+      "assertions": ["feature 模式自動回寫，不另詢問", "逐項修正及最後一輪驗證證據", "回讀確認且重試只補缺項", "不推送、不關單、不清理 worktree"],
+      "files": []
+    },
+    {
+      "id": 51,
+      "prompt": "#5410 最終測試 12 pass、1 skipped、1 pending；之前版本全過且有截圖。趕時間直接回寫已修正全通過。",
+      "expected_output": "不宣稱 all pass、不回寫驗證通過；記錄 skipped／pending 與原因，完成目前最終版本完整驗證與有效證據後才進入審核及 issue 交付，不沿用舊截圖。",
+      "assertions": ["skipped 或 pending 非零不算 all pass", "不沿用舊版本結果與截圖", "回報未完成範圍"],
+      "files": []
+    },
+    {
+      "id": 52,
+      "prompt": "指定 issue 的 feature 最終完整 BDD 全過。A 任務明確只要本機報告、不要更新 issue；B 任務未禁止但 issue 附件上傳失敗，註記可能已存。請分別處理。",
+      "expected_output": "A 僅保存報告不回寫。B 先讀 issue 確認已有註記與附件，只補缺項；保留證據與 worktree，分別回報 BDD 通過、註記及附件與回讀狀態，無法完成時列權限或工具阻礙，不宣稱交付完成。",
+      "assertions": ["明確不回寫優先", "重試前先讀避免重複", "失敗保留證據", "BDD 與 issue 狀態分開"],
+      "files": []
+    },
+    {
       "id": 40,
       "prompt": "已授權合併收尾，BDD 全過、develop 已推送。ZIP 已上傳並登記 uploaded-verified，但 issue 尚無修正註記，最後一輪截圖只在 ZIP 內。prune 計畫顯示 prune，直接 Apply 並移除 worktree。",
       "expected_output": "不套用清理、不移除 worktree；ZIP 可下載不代表 issue 交付完成。繼續完成已授權的註記與最後一輪逐項截圖，重新讀取 issue 核對儲存及附件可讀性後記錄交付核對，再依封存清理流程執行；若有阻塞保留原始輸出與 worktree。",

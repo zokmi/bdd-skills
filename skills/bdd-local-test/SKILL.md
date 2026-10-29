@@ -21,7 +21,7 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 - 每輪實測前依下節判定執行模式；可拆成至少兩組安全獨立執行的情境且有可用子代理時，自動派實測子代理，不等待使用者說「並行」。情境審核、實測派工與 issue 前一致性審核是三個不同步驟，完成其中一項不代表完成其他項。
 - 截圖當下遮蓋個資並登記；未遮罩的證據不得上傳或封存。全通過表示失敗、阻塞、未執行皆為 0，且每個情境都經真實路徑驗證。
 - **issue 交付是最終封存與清理的前置關卡**：合併收尾須先完成已授權的 issue 註記及最後一輪逐項截圖／替代證據上傳，重新讀取 issue 核對已儲存且附件可讀，再產生最終 ZIP、清理證據或移除 worktree。停止服務、本機 all pass、推送成功或 ZIP 的 `uploaded-verified` 都不能代替此關卡；未完成就保留原始輸出與 worktree，繼續完成已授權交付，遇阻塞明列原因。僅報告／本機封存及舊資料遷移依明確限定範圍處理，不藉此自動清理 worktree。
-- BDD 全通過後要更新 issue 時，先依當下 issue、repo、commit 範圍與可用 skill 動態選擇唯讀一致性審核 skill；Redmine 且需要需求／程式雙向比對時優先選 `issue-code-consistency-check`。派子代理審核結果只有 `PASS` 才能寫入 issue，其他結果一律阻擋並回報。Redmine 註記逐項使用「修正項目 N」後緊接「圖片 N」，純 API／DB 情境改附替代證據。
+- **最終完整 BDD 全通過後自動回寫 issue**：使用者已要求處理指定 issue 時，修正說明與驗證證據回寫屬於該任務交付，feature 與合併 develop 模式皆適用，不需再次詢問是否更新。先依 [共用 issue 交付](references/closeout.md#共用-issue-交付最終完整驗證後自動執行) 完成一致性審核，只有 `PASS` 才追加修正項目、上傳最後一輪已遮罩截圖／API／DB 替代證據，再重新讀取 issue 核對。只要情境／報告、不要更新 issue 等明確限制優先；沒有唯一 issue 時不猜單號。此步驟不授權關單、改狀態、推送或清理 worktree。失敗、阻塞、未執行、skipped、pending 任一非零或通過數為零均不算 all pass。
 - 用檔案編輯工具寫 `.feature` 與 `REPORT.md`；內容常含引號與反引號，避免用會被 shell 解析的 heredoc。
 
 ## 按階段讀取
