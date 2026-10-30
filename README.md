@@ -20,7 +20,7 @@
 
 ## BDD 版控分工
 
-處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理自動追加修正項目與驗證說明，上傳最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
+處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理先讀適用的 issue-writing skill 與驗證完成模板，優先依其回覆格式、標題、欄位順序與落點追加修正項目與驗證說明（不固定另一套格式或「IT 修正驗證完成」標題），上傳最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
 
 合併收尾在產生最終 ZIP、清理證據或移除 worktree 前，必須先完成 issue 修正註記與最後一輪逐項截圖／替代證據交付，重新讀取 issue 核對儲存與附件可讀性。ZIP 的 `uploaded-verified` 不代表交付完成；未完成時保留原始輸出及 worktree。明確只要報告／本機 ZIP 的任務依限定範圍處理。此關卡由主代理執行，封存與清理腳本不查詢 issue。
 

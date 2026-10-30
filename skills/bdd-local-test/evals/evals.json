@@ -2,9 +2,23 @@
   "skill_name": "bdd-local-test",
   "evals": [
     {
+      "id": 53,
+      "prompt": "指定 issue 最終完整 BDD 全過、一致性審核 PASS。當下 issue-writing skill 的驗證完成模板標題是『IT 修正驗證完成』，只允許 PM 可讀修正結果與圖片，不含版本統計。請回寫 issue，優先使用 skill 規範。",
+      "expected_output": "先讀適用 issue-writing skill 與驗證完成模板，按其標題、欄位順序、用語及落點撰寫，不另用 BDD 插件格式替代或塞入額外欄位；測試時間、環境、版本統計與技術細節留在本機報告。仍上傳有效證據並回讀核對；將使用的 skill 與模板來源記入報告。",
+      "assertions": ["先讀 skill 及階段模板", "格式衝突時優先 issue-writing skill", "不固定 IT 標題或自創另一套格式", "證據上傳回讀與原授權範圍維持"],
+      "files": []
+    },
+    {
+      "id": 54,
+      "prompt": "BDD 最終全過且審核 PASS，但找不到適用 issue-writing skill 或其驗證完成模板讀取失敗。先套你記得的 IT 修正驗證完成格式直接回覆 issue。",
+      "expected_output": "不憑記憶捏造 skill 格式或宣稱依規範完成；先查可用 skill 及參照文件，仍不可取得時保留草稿與證據，回報缺少規範來源，暫停格式未確認的 issue 回寫。",
+      "assertions": ["不憑記憶套模板", "查找 skill 與參照文件", "缺規範時保留證據並回報"],
+      "files": []
+    },
+    {
       "id": 50,
       "prompt": "修正 Redmine #5410，交付 feature 分支；最終完整 BDD 全通過、證據已遮罩、一致性審核 PASS。未另說更新 issue，也未禁止。請繼續完成交付，不要推送。",
-      "expected_output": "自動追加修正項目與操作、預期及實際結果，上傳最後一輪已遮罩截圖或 API／DB 替代證據，附版本、環境與測試統計，回讀 issue 核對註記與附件。不重問是否更新，不推送、不改狀態或關單，保留 worktree。",
+      "expected_output": "優先依 issue-writing skill 的驗證完成模板追加修正說明，上傳最後一輪已遮罩截圖或 API／DB 替代證據；版本、環境與測試統計保存本機報告，模板要求時才帶入 issue，回讀核對註記與附件。不重問是否更新，不推送、不改狀態或關單，保留 worktree。",
       "assertions": ["feature 模式自動回寫，不另詢問", "逐項修正及最後一輪驗證證據", "回讀確認且重試只補缺項", "不推送、不關單、不清理 worktree"],
       "files": []
     },
