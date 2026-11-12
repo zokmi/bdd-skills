@@ -34,7 +34,7 @@
 
 影響可界定的小 issue 可用 TARGETED 驗證受影響模組的 `@core`、本單情境及必要回歸。實測前由獨立子代理對照 issue 驗收條件與 diff 審核本輪清單，取得 PASS 才執行。詳見 [品質閘門](skills/bdd-local-test/references/quality-gate.md)與 [實測範圍審核](skills/bdd-local-test/references/execution-workflow.md#實測範圍審核)。
 
-每輪實測自動評估子代理分組：兩組以上可安全獨立執行且有可用子代理時，主代理直接派工，不必明說「並行」。先分配情境、檔案與測試資料範圍，每組使用獨立瀏覽器及輸出目錄；需要修改程式時隔離 worktree，共用服務與資料無法隔離的組別序列執行，其他獨立組繼續派工。報告記錄執行模式、實際代理與未派工原因；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
+每輪實際 BDD 測試都由實測子代理執行；主代理審核範圍、分組、派工、監督及彙整。單組也派一名子代理，多組按環境隔離與可用名額分批或並行派工；共用服務與資料無法隔離的組別由子代理序列執行。沒有子代理工具或使用者明確禁用時停止實測並回報阻塞。報告記錄執行模式、實際代理與派工契約；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
 
 Git 僅保存 `.bdd/modules/` 的情境與 `MODULE.md`、不含敏感或個人設定的 `.bdd/config.json`。每輪 `.bdd/<單號>-<主題>/` 的報告、驗證與遮罩紀錄、截圖、log 和瀏覽器 profile 均不新增到 Git，非圖片紀錄由本機輸出保存，已核對的截圖留在 Redmine；收尾不另建純報告提交。維持既有輸出路徑，忽略規則、既有追蹤資料遷移與跨工作區還原見 [版控分工](skills/bdd-local-test/references/version-control.md)。
 
