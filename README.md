@@ -16,13 +16,13 @@
 - 跨專案分配回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1`，使用真實暫存 Git repo／worktree 驗證首次並行分配、IP 重用與舊 slot 衝突拒絕。
 - Chrome 真實導轉實測：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <已安裝的 @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <證據目錄> -UseDefaultRegistry`。建立兩個暫存專案、四個 worktree 及兩個隔離主 checkout，以六組獨立無頭 Chrome／stdio MCP 同時驗證固定 UI 4200、API 9453 的真實 HTTP 身分、目的 IP、Origin 與儲存隔離，保存 `result.json` 後停止程序；不連資料庫、不下載套件。需可建立測試 Git 目錄及啟動本機服務的權限，並預先安裝 Chrome／Playwright MCP。省略 `-UseDefaultRegistry` 僅使用 fixture 專屬登記。
 
-執行本機 UI 情境時，skill 必須用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或無法滿足 worktree 隔離時，先排查並修復；仍無法執行的 UI 情境列為阻塞，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。共用 MCP session 的 UI 情境序列執行。情境照功能模組持續維護在 `.bdd/modules/`，每張單只留本輪結果與證據（見 `skills/bdd-local-test/references/modules.md`）。情境寫完會先交給子代理獨立審核（需求對應、預期是否照抄程式、覆蓋缺漏），處理完必修項目才執行，審核方式見 `skills/bdd-local-test/references/scenario-review.md`。截圖當下就遮蓋個資並登記。worktree 開發與相關回歸通過後，自動詢問兩種交付方式：轉為正式 feature 分支或合併回 develop；本任務已指定時沿用，不重問。未回答前保留工作區，不轉換分支、合併或推送；明確只要情境或報告的任務不觸發交付詢問，也不列為第三選項。服務停止獨立依收尾指引判定，BDD 全通過且本機結果與必要證據保存完成後自動停止本輪 worktree 服務與測試瀏覽器，不等待 issue 更新或附件上傳，不等待模式選擇或封存。feature 模式先在功能 worktree 完整 BDD 通過，再確認分支名稱並轉換，保留工作區與證據；僅改名且版本與環境未變不重跑。選擇合併模式時，開發中只測修正與相關回歸，完整驗證集中在最新 `develop` 整合後、推送前一次；同版本推送後只核對 SHA、更新對應 issue 並附修正後截圖；回讀 Redmine 附件後清理已確認的本機截圖，保留非圖片報告，合併模式再清理本輪 worktree。舊封存的核對與保留方式見 `skills/bdd-local-test/references/archive.md`。
+執行本機 UI 情境時，skill 必須用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或無法滿足 worktree 隔離時，先排查並修復；仍無法執行的 UI 情境列為阻塞，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。共用 MCP session 的 UI 情境序列執行。情境照功能模組持續維護在 `.bdd/modules/`，每張單只留本輪結果與必要交付證據（見 `skills/bdd-local-test/references/modules.md`）。情境寫完會先交給子代理獨立審核（需求對應、預期是否照抄程式、覆蓋缺漏），處理完必修項目才執行，審核方式見 `skills/bdd-local-test/references/scenario-review.md`。只保留 issue 明確需要的最後一輪截圖，遮罩並登記後上傳；代理驗證用途的臨時截圖判讀後立即刪除。worktree 開發與相關回歸通過後，自動詢問兩種交付方式：轉為正式 feature 分支或合併回 develop；本任務已指定時沿用，不重問。未回答前保留工作區，不轉換分支、合併或推送；明確只要情境或報告的任務不觸發交付詢問，也不列為第三選項。服務停止獨立依收尾指引判定，BDD 全通過且本機結果與必要證據保存完成後自動停止本輪 worktree 服務與測試瀏覽器，不等待 issue 更新或附件上傳，不等待模式選擇或封存。feature 模式先在功能 worktree 完整 BDD 通過，再確認分支名稱並轉換，保留工作區與必要交付證據；僅改名且版本與環境未變不重跑。選擇合併模式時，開發中只測修正與相關回歸，完整驗證集中在最新 `develop` 整合後、推送前一次；同版本推送後只核對 SHA、更新對應 issue 並附必要的最後輪修正證據；回讀 Redmine 附件後清理本機截圖，保留非圖片報告，合併模式再清理本輪 worktree。舊封存的核對與保留方式見 `skills/bdd-local-test/references/archive.md`。
 
 ## BDD 版控分工
 
-處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理先讀適用的 issue-writing skill 與驗證完成模板，優先依其回覆格式、標題、欄位順序與落點追加修正項目與驗證說明（不固定另一套格式或「IT 修正驗證完成」標題），上傳最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
+處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理先讀適用的 issue-writing skill 與驗證完成模板，優先依其回覆格式、標題、欄位順序與落點追加修正項目與驗證說明（不固定另一套格式或「IT 修正驗證完成」標題），只上傳 issue 明確需要的最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留必要交付證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
 
-清理本機截圖前，先回讀 Redmine 修正註記與對應附件。未能核對的舊圖與本輪截圖先保留。
+只保留 issue 交付明確需要的截圖；代理驗證用途的臨時截圖判讀後立即刪除。issue 必要截圖待回讀 Redmine 確認附件可讀後清理本機副本；附件未完成時只保留需要重試交付的圖片。
 
 開始任何 UI／API／DB 實測前，插件必須展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，並等待使用者明確確認。本機與唯讀情境也適用；只告知或使用者只說「測到全過」不算確認。未確認時不實測、不派實測子代理；同任務目標與範圍未變的複測沿用確認，變更或跨 repo 則重新確認，並在報告保留依據。
 
@@ -36,7 +36,7 @@
 
 每輪實際 BDD 測試都由實測子代理執行；主代理審核範圍、分組、派工、監督及彙整。單組也派一名子代理，多組按環境隔離與可用名額分批或並行派工；共用服務與資料無法隔離的組別由子代理序列執行。沒有子代理工具或使用者明確禁用時停止實測並回報阻塞。報告記錄執行模式、實際代理與派工契約；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
 
-Git 僅保存 `.bdd/modules/` 的情境與 `MODULE.md`、不含敏感或個人設定的 `.bdd/config.json`。每輪 `.bdd/<單號>-<主題>/` 的報告、驗證與遮罩紀錄、截圖、log 和瀏覽器 profile 均不新增到 Git，非圖片紀錄由本機輸出保存，已核對的截圖留在 Redmine；收尾不另建純報告提交。維持既有輸出路徑，忽略規則、既有追蹤資料遷移與跨工作區還原見 [版控分工](skills/bdd-local-test/references/version-control.md)。
+Git 僅保存 `.bdd/modules/` 的情境與 `MODULE.md`、不含敏感或個人設定的 `.bdd/config.json`。每輪 `.bdd/<單號>-<主題>/` 的報告、驗證與遮罩紀錄、必要交付截圖、log 和瀏覽器 profile 均不新增到 Git；非圖片紀錄由本機輸出保存，只有 issue 需要的已核對截圖留在 Redmine，代理驗證暫存圖判讀後立即刪除。收尾不另建純報告提交。維持既有輸出路徑，忽略規則、既有追蹤資料遷移與跨工作區還原見 [版控分工](skills/bdd-local-test/references/version-control.md)。
 
 ## 安裝到 Claude Code
 

@@ -11,7 +11,7 @@
 
 同一個模組被多張單修改時，後一張單**修改模組裡的情境**，不另寫一份。issue 層只留本輪的結果與證據，`verification.json` 記錄跑了哪些模組情境。
 
-模組 `.feature` 與 `MODULE.md` 進 Git；issue 層非圖片紀錄保存在本機，已核對的截圖留在 Redmine，不提交。忽略規則與既有資料遷移見 [版控分工](version-control.md)。
+模組 `.feature` 與 `MODULE.md` 進 Git；issue 層非圖片紀錄保存在本機，只有 issue 交付明確需要的已核對截圖留在 Redmine，不提交。供代理執行驗證時暫存的其他圖片讀取後立即刪除，不封存、不交付。忽略規則與既有資料遷移見 [版控分工](version-control.md)。
 
 ## 模組怎麼切
 
