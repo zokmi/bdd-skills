@@ -18,6 +18,22 @@ function Get-NetTCPConnection {
     }
 }
 try {
+    $statePath = Join-Path $fixture 'private state.json'
+    [IO.File]::WriteAllText($statePath, '{"cookies":[],"origins":[]}')
+    $withState = & "$scripts/prepare-worktree-mcp.ps1" -Ports 4200 -OutputDir "$fixture/auth-output" -StorageState $statePath | ConvertFrom-Json
+    if (-not $withState.server.args.Contains('--storage-state') -or -not $withState.server.args.Contains($statePath)) {
+        throw 'MCP must load the selected storage state'
+    }
+    $authConfig = Get-Content -LiteralPath $withState.configPath -Raw | ConvertFrom-Json
+    if (-not $authConfig.browser.isolated) { throw 'Loading state must preserve browser isolation' }
+    $rejected = $false
+    try {
+        & "$scripts/prepare-worktree-mcp.ps1" -Ports 4200 -OutputDir "$fixture/missing-state-output" -StorageState "$fixture/missing.json" | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected -or (Test-Path "$fixture/missing-state-output")) {
+        throw 'Missing state must fail before writing configuration'
+    }
+    'PASS storage state is optional, preserves isolation, and requires an existing file'
     $jobs = @()
     foreach ($index in 1..4) {
         $null = New-Item -ItemType Directory -Path "$fixture/common/worktrees/parallel-$index"
@@ -58,6 +74,7 @@ try {
     if ($config.browser.launchOptions.args -notcontains $first.chromiumArg) { throw 'Missing worktree resolver' }
     if (-not $config.browser.isolated) { throw 'Browser must be isolated' }
     if ($result.server.args -notcontains '--config') { throw 'MCP launch must use config' }
+    if ($result.server.args -contains '--storage-state') { throw 'Fresh runs must start without storage state' }
     if (@($result.ports) -join ',' -ne '4200,5000') { throw 'Original ports changed' }
     $owner = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, 0)
     $owner.ExclusiveAddressUse = $true

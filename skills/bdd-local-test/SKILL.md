@@ -28,6 +28,10 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 
 以一組相關修改為單位固定基準與候選版本，執行靜態檢查並 Review Diff，再按 [品質閘門](references/quality-gate.md) 選擇 FAST、TARGETED 或 FULL。只有確認不影響行為的純文件改動可走 FAST。局部行為改動選 TARGETED。高風險、PR、Release 或影響不明選 FULL。
 
+小 issue 在影響已界定時，以受影響模組的 `@core`、本單 `@#<單號>` 和必要回歸為本輪範圍。最終候選版本也按同一規則核對並執行該範圍。報告列出實測情境與略過理由。
+
 同一 UI 情境中，將相容的導航與 locator 檢查批次交給 Playwright MCP，逐項保留斷言與失敗位置。跨情境維持狀態隔離。
+
+通過環境確認後，需要登入的情境依 [登入自動化](references/authentication.md) 準備前置狀態：優先沿用已驗證的同環境、同帳號狀態，失效時執行專案提供的測試登入流程。
 
 需要實測、撰寫情境或收尾時，依 [分階段工作流程](references/execution-workflow.md) 讀取對應指引。開始實測前先核對驗證時機與資料庫授權，再選擇派工模式。FAST 符合略過條件時，直接記錄理由及靜態檢查結果。

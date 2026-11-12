@@ -6,12 +6,21 @@ param(
     [Parameter(Mandatory)][string[]]$Ports,
     [Parameter(Mandatory)][string]$OutputDir,
     [switch]$Isolate,
-    [switch]$KeepOriginalPorts
+    [switch]$KeepOriginalPorts,
+    [ValidateNotNullOrEmpty()][string]$StorageState
 )
 $ErrorActionPreference = 'Stop'
 $portList = @($Ports | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
 if (-not $portList.Count -or @($portList | Where-Object { $_ -lt 1 -or $_ -gt 65535 }).Count) {
     throw 'Ports 必須是專案原有埠號（1..65535）'
+}
+$statePath = $null
+if ($PSBoundParameters.ContainsKey('StorageState')) {
+    $stateFile = Get-Item -LiteralPath $StorageState
+    if ($stateFile -isnot [IO.FileInfo] -or $stateFile.Length -eq 0) {
+        throw 'StorageState must be an existing, nonempty file.'
+    }
+    $statePath = $stateFile.FullName
 }
 $preflight = & (Join-Path $PSScriptRoot 'loopback-slot.ps1') -Ports $Ports -Isolate:$Isolate -KeepOriginalPorts:$KeepOriginalPorts | ConvertFrom-Json
 $output = [IO.Path]::GetFullPath($OutputDir)
@@ -29,6 +38,8 @@ $config = @{
     outputDir = (Join-Path $output $isolationId)
 }
 [IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+$serverArgs = @('--no-install', '@playwright/mcp', '--config', $configPath)
+if ($statePath) { $serverArgs += @('--storage-state', $statePath) }
 [pscustomobject]@{
     isolationId = $isolationId
     configPath = $configPath
@@ -38,7 +49,7 @@ $config = @{
     preflight = $preflight
     server = @{
         command = 'npx'
-        args = @('--no-install', '@playwright/mcp', '--config', $configPath)
+        args = $serverArgs
     }
     status = 'configuration-only'
     verificationRequired = @('獨立 MCP 連線與瀏覽器', '前端及 API 的實際目標 IP、本輪有效埠與受測版本', '帳號及資料範圍隔離')

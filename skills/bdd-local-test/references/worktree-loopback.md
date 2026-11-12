@@ -32,6 +32,8 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <
 
 啟動描述使用 `npx --no-install @playwright/mcp --config <路徑>`，不在測試時自動下載套件或變更專案依賴。找不到已安裝套件時先處理工具前置條件；不得移除限制後默默安裝或改用另一種測試工具。
 
+核對本輪實際目標後，可依 [登入自動化](authentication.md) 選擇已對應的私有狀態檔，再以 `-StorageState <檔案>` 產生設定。回傳的 MCP 參數會帶入 `--storage-state`；每個 session 仍以獨立 context 啟動。未指定時從乾淨狀態開始。
+
 1. 核對 preflight.occupied 的程序歸屬，依下節臨時啟動本輪服務。
 2. 透過客戶端支援的任務範圍 MCP 連線方式，為每個 worktree／同時執行組別啟動獨立 stdio server，使用回傳的 command／args。`--config` 載入 `browser.isolated=true` 與 `browser.launchOptions.args` 的 localhost 對應；stdio 不新增專案服務埠。使用已安裝且確認支援這些欄位的 MCP 版本。格式見 [官方 MCP 文件](https://github.com/microsoft/playwright-mcp#configuration-file)。
 3. 記錄實際 server／工具前綴、configPath 與 isolationId，操作只呼叫所屬連線的 MCP 工具。isolationId 只是協調標記；不同 chat、子代理或分頁也不是隔離證據。客戶端不能建立或識別獨立連線時，相關 UI 列為阻塞。
