@@ -9,7 +9,7 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 
 ## 共同規則
 
-- **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠在本輪隔離 IP 被占用時，自動分配臨時有效埠。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫，核對 UI、API、proxy／SSR 的實際目標與版本，再開始測試。維持專案設定檔、系統 hosts 與全域代理原狀。
+- **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠在本輪隔離 IP 被占用時，自動分配臨時有效埠。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。用本輪 Playwright MCP 連線通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。
 
 - 先讀目標專案的 `AGENTS.md`／`CLAUDE.md`／README、環境設定及 `.bdd/config.json`。本 skill 不預設埠號、帳號、基準分支或資料庫。下文的 `<skill 目錄>` 是此檔所在資料夾。
 - 依 [版控分工](references/version-control.md)，Git 只保存模組情境、`MODULE.md` 與共用設定；報告、驗證與遮罩紀錄保存在本機，圖片暫存至 Redmine 附件核對完成，不新增到 Git、不另建純報告提交。既有追蹤輸出先核對非圖片紀錄及 Redmine 附件，再依明確授權遷移。

@@ -29,7 +29,7 @@
 
 **啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `-Isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `prepare-worktree-mcp.ps1 -Ports <原埠清單> -OutputDir <本輪輸出目錄>/mcp`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。
 
-- 依本輪有效埠啟動服務、設定前端 API／proxy／SSR 並導覽 Playwright MCP。直接 API 驗證使用本輪 IP 與有效埠。
+- 依本輪有效埠啟動服務並設定前端 API／proxy／SSR。隔離輪次使用 [專用 MCP 工作階段](worktree-loopback.md#啟動專用-mcp-工作階段)，看到本輪路由探測通過後，使用同一條連線導覽應用頁面。直接 API 驗證使用本輪 IP 與有效埠。
 - Node 專案若在 `npm run build` 時報埠號占用，檢查 `package.json` 的 `prebuild`、`build`、`postbuild` 及它們啟動的子程序。純建置可並行。啟動 dev server、preview 或 SSR 的命令須使用本輪有效埠；若流程可拆開，先完成 build，再以有效埠啟動提供建置產物的服務。建置時若會連到 API 或把 API URL 寫入產物，也要在建置程序中套用本輪 API 目標。
 - 核對前端及 API 的實際監聽位址、程序歸屬、版本及 HTTP 回應。UI 也須確認實際 API 請求進入本輪版本。若需要另起服務，從包含本輪待測異動的工作區建置，避免測到舊版本。缺少上述證據時，相關情境列為阻塞。
 - 報告記錄原 URL、原埠與有效埠、占用判定、實際 UI／API 網址及版本證據。清理時使用同一輪記錄的有效埠。

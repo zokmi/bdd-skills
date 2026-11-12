@@ -1,10 +1,13 @@
 param(
-    [Parameter(Mandatory)][string]$McpCli,
+    [string]$McpCli,
     [Parameter(Mandatory)][string]$ChromePath,
     [Parameter(Mandatory)][string]$OutputDir,
-    [switch]$UseDefaultRegistry
+    [switch]$UseDefaultRegistry,
+    [ValidateRange(1, 65535)][int]$UiPort = 4200,
+    [ValidateRange(1, 65535)][int]$ApiPort = 9453
 )
 $ErrorActionPreference = 'Stop'
+if ($UiPort -eq $ApiPort) { throw 'UI and API test ports must differ' }
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('bdd-loopback-live-' + [guid]::NewGuid())
 $scripts = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../scripts'))
 $previousRegistry = $env:BDD_LOOPBACK_REGISTRY_DIR
@@ -31,18 +34,20 @@ try {
     $services = foreach ($target in $targets) {
         Push-Location $target.path
         try {
-            $prepared = & "$scripts/prepare-worktree-mcp.ps1" -Ports 4200,9453 -Isolate:$target.isolate -OutputDir (Join-Path $OutputDir $target.id) | ConvertFrom-Json
+            $prepared = & "$scripts/prepare-worktree-mcp.ps1" -Ports $UiPort,$ApiPort -KeepOriginalPorts -Isolate:$target.isolate -OutputDir (Join-Path $OutputDir $target.id) | ConvertFrom-Json
             $config = Get-Content $prepared.configPath -Raw | ConvertFrom-Json
             $config.browser.launchOptions | Add-Member channel 'chrome'
             $config.browser.launchOptions | Add-Member executablePath $ChromePath
             $config.browser.launchOptions | Add-Member headless $true
             $config | ConvertTo-Json -Depth 8 | Set-Content $prepared.configPath -Encoding utf8
-            [pscustomobject]@{ id = $target.id; root = $target.path; ip = $prepared.preflight.ip; uiPort = 4200; apiPort = 9453; configPath = $prepared.configPath; isolationId = $prepared.isolationId; registryPath = $prepared.preflight.registryPath }
+            [pscustomobject]@{ id = $target.id; ip = $prepared.preflight.ip; isolationId = $prepared.isolationId; prepared = $prepared }
         } finally { Pop-Location }
     }
     if (@($services.ip | Sort-Object -Unique).Count -ne 6) { throw 'Six service instances must have distinct IPs' }
     $manifest = Join-Path $OutputDir 'manifest.json'
-    @{ services = @($services); mcpCli = [IO.Path]::GetFullPath($McpCli); outputDir = $OutputDir } | ConvertTo-Json -Depth 6 | Set-Content $manifest -Encoding utf8
+    $manifestData = @{ services = @($services); outputDir = $OutputDir; uiPort = $UiPort; apiPort = $ApiPort }
+    if ($McpCli) { $manifestData.mcpCli = [IO.Path]::GetFullPath($McpCli) }
+    $manifestData | ConvertTo-Json -Depth 10 | Set-Content $manifest -Encoding utf8
     & node (Join-Path $PSScriptRoot 'loopback-live.cjs') $manifest
     if ($LASTEXITCODE -ne 0) { throw 'Live Chrome/MCP verification failed' }
 } finally {

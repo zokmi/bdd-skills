@@ -50,7 +50,7 @@
 
 dirtyPaths 非空時，在派工附文列出異動快照／雜湊及取得位置，子代理開始前核對。不同組若無法確認測到同一工作區內容，不以同 HEAD 判定版本相同。
 
-browser.isolationId 是協調識別，不會自動建立 MCP session。UI 派工附文須列臨時 configPath、實際 server／工具前綴及前端／API 導轉與版本確認證據，依 [worktree 隔離](worktree-loopback.md) 產生設定並確認連線。不得只更改 tool 名稱就視為已隔離；並行 UI 各用獨立 MCP，原 localhost 網址與埠號保持不變。
+依 [worktree 隔離](worktree-loopback.md) 產生設定並啟動每組專用 MCP。UI 派工附文須列 `browser.isolationId`、臨時 `configPath`、實際終端 session ID 或工具前綴，以及路由探測、前端／API 目的地與版本證據。各組使用分配給本輪的有效埠。
 
 ## 結果輸出：result.json
 

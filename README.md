@@ -14,7 +14,7 @@
 - `tests/`：封存、遮罩與清理腳本的 Pester 測試（`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`）。
 - worktree／MCP 設定回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-WorktreeMcp.ps1`，涵蓋四程序同時分配、slot 重用、獨立 MCP 設定、原埠保留與占用時分配臨時埠。產品 UI BDD 另行驗證。
 - 跨專案分配回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1`，使用真實暫存 Git repo／worktree 驗證首次並行分配、IP 重用與舊 slot 衝突拒絕。
-- Chrome 真實導轉實測：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <已安裝的 @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <證據目錄> -UseDefaultRegistry`。建立兩個暫存專案、四個 worktree 及兩個隔離主 checkout，以六組獨立無頭 Chrome／stdio MCP 同時驗證固定 UI 4200、API 9453 的真實 HTTP 身分、目的 IP、Origin 與儲存隔離，保存 `result.json` 後停止程序；不連資料庫、不下載套件。需可建立測試 Git 目錄及啟動本機服務的權限，並預先安裝 Chrome／Playwright MCP。省略 `-UseDefaultRegistry` 僅使用 fixture 專屬登記。
+- Chrome 真實導轉實測：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <已安裝的 @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <證據目錄> -UseDefaultRegistry`。建立兩個暫存專案、四個 worktree 及兩個隔離主 checkout。六組獨立無頭 Chrome／stdio MCP 各自先通過 localhost 路由探測，再同時驗證 UI、API 的 HTTP 身分、目的 IP、Origin 與儲存隔離。預設共用 UI 4200、API 9453，埠被占用時可用 `-UiPort` 與 `-ApiPort` 指定測試埠。證據保存於 `result.json` 與各組的 `probe-evidence.json`。需可建立測試 Git 目錄及啟動本機服務的權限，並預先安裝 Chrome／Playwright MCP。省略 `-UseDefaultRegistry` 時使用 fixture 專屬登記。
 
 執行本機 UI 情境時，skill 必須用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或無法滿足 worktree 隔離時，先排查並修復；仍無法執行的 UI 情境列為阻塞，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。共用 MCP session 的 UI 情境序列執行。情境照功能模組持續維護在 `.bdd/modules/`，每張單只留本輪結果與必要交付證據（見 `skills/bdd-local-test/references/modules.md`）。情境寫完會先交給子代理獨立審核（需求對應、預期是否照抄程式、覆蓋缺漏），處理完必修項目才執行，審核方式見 `skills/bdd-local-test/references/scenario-review.md`。只保留 issue 明確需要的最後一輪截圖，遮罩並登記後上傳；代理驗證用途的臨時截圖判讀後立即刪除。worktree 開發與相關回歸通過後，自動詢問兩種交付方式：轉為正式 feature 分支或合併回 develop；本任務已指定時沿用，不重問。未回答前保留工作區，不轉換分支、合併或推送；明確只要情境或報告的任務不觸發交付詢問，也不列為第三選項。服務停止獨立依收尾指引判定，BDD 全通過且本機結果與必要證據保存完成後自動停止本輪 worktree 服務與測試瀏覽器，不等待 issue 更新或附件上傳，不等待模式選擇或封存。feature 模式先在功能 worktree 完整 BDD 通過，再確認分支名稱並轉換，保留工作區與必要交付證據；僅改名且版本與環境未變不重跑。選擇合併模式時，開發中只測修正與相關回歸，完整驗證集中在最新 `develop` 整合後、推送前一次；同版本推送後只核對 SHA、更新對應 issue 並附必要的最後輪修正證據；回讀 Redmine 附件後清理本機截圖，保留非圖片報告，合併模式再清理本輪 worktree。舊封存的核對與保留方式見 `skills/bdd-local-test/references/archive.md`。
 
@@ -31,6 +31,8 @@
 多專案或 worktree 使用各自的 loopback IP，原埠可用時沿用，占用時由 `prepare-worktree-mcp.ps1` 自動分配本輪有效埠。啟動、測試及清理使用同一份埠號對應，維持原始專案設定、系統 hosts 與全域代理原狀。並行 UI 測試前須建立獨立 MCP 連線，核對前端與 API 的實際目標及版本。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。
 
 需要登入的情境會優先沿用同環境、同帳號與角色的登入狀態，失效時改走專案配置的測試登入流程。若專案需要人工完成 MFA 等步驟，驗證成功後可保存狀態供下次重用。設定及使用方式見 [BDD 測試登入](skills/bdd-local-test/references/authentication.md)。
+
+隔離 UI 使用 [專用 MCP 工作階段](skills/bdd-local-test/references/worktree-loopback.md#啟動專用-mcp-工作階段) 自動載入本輪設定、驗證 localhost 路由，並在同一條連線依序呼叫 Playwright MCP 工具。Chrome 回歸測試可省略 `-McpCli` 以驗證插件預設的離線 npm 啟動路徑。
 
 影響可界定的小 issue 可用 TARGETED 驗證受影響模組的 `@core`、本單情境及必要回歸。實測前由獨立子代理對照 issue 驗收條件與 diff 審核本輪清單，取得 PASS 才執行。詳見 [品質閘門](skills/bdd-local-test/references/quality-gate.md)與 [實測範圍審核](skills/bdd-local-test/references/execution-workflow.md#實測範圍審核)。
 

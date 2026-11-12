@@ -30,19 +30,53 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <
 
 多專案主 checkout 在上述命令與 `loopback-slot.ps1` 加 `-Isolate`，同樣綁回傳 IP／有效埠 並使用 MCP resolver。未加時維持原 localhost 解析（可能是 IPv6），不代表已隔離；多專案同 port 不可直接沿用此模式。清理明確隔離的主 checkout 時，`stop-slot-services.ps1` 也加 `-Isolate`，仍只停止路徑歸屬符合的自有程序；未加時一律不停止主 checkout 服務。
 
-啟動描述使用 `npx --no-install @playwright/mcp --config <路徑>`，不在測試時自動下載套件或變更專案依賴。找不到已安裝套件時先處理工具前置條件；不得移除限制後默默安裝或改用另一種測試工具。
+啟動描述使用 `npx --offline --no-install @playwright/mcp@latest --config <路徑>`，重用與 Codex 預設 Playwright MCP 相同的 npm 快取鍵。找不到套件時，可用下方的 `--mcp-cli` 指定已安裝版本。
 
 核對本輪實際目標後，可依 [登入自動化](authentication.md) 選擇已對應的私有狀態檔，再以 `-StorageState <檔案>` 產生設定。回傳的 MCP 參數會帶入 `--storage-state`；每個 session 仍以獨立 context 啟動。未指定時從乾淨狀態開始。
 
 1. 核對 preflight.occupied 的程序歸屬，依下節臨時啟動本輪服務。
-2. 透過客戶端支援的任務範圍 MCP 連線方式，為每個 worktree／同時執行組別啟動獨立 stdio server，使用回傳的 command／args。`--config` 載入 `browser.isolated=true` 與 `browser.launchOptions.args` 的 localhost 對應；stdio 不新增專案服務埠。使用已安裝且確認支援這些欄位的 MCP 版本。格式見 [官方 MCP 文件](https://github.com/microsoft/playwright-mcp#configuration-file)。
-3. 記錄實際 server／工具前綴、configPath 與 isolationId，操作只呼叫所屬連線的 MCP 工具。isolationId 只是協調標記；不同 chat、子代理或分頁也不是隔離證據。客戶端不能建立或識別獨立連線時，相關 UI 列為阻塞。
-4. 以所屬 MCP 的 browser_navigate 開啟`http(s)://localhost:<有效埠>`。使用瀏覽器網路資訊、服務存取紀錄／程序資訊及版本端點等證據，確認前端與 API 的實際請求到達分配 IP、有效埠與該 worktree 版本。不能只看網址或首頁成功。無法確認任一層則阻塞；HTTPS、代理或 Host 檢查問題須排查，不修改專案或全域安全設定繞過。
+2. 在每個 worktree／同時執行組別啟動下方的 [專用 MCP 工作階段](#啟動專用-mcp-工作階段)，傳入本輪準備結果 JSON。入口以回傳的 `--config` 建立獨立 stdio MCP server，並自動用同一條連線完成路由探測。若客戶端已支援任務範圍的獨立 MCP 連線，也可使用回傳的 command／args 建立，並執行下方的手動探測。
+3. 記錄實際終端 session ID 或客戶端工具前綴、`configPath`、`isolationId` 和探測結果。UI 操作只送到本輪已驗證的連線。
+4. 若啟動或探測失敗，排查命令、MCP 版本、終端權限和本機路由，再以本輪設定重新建立連線。未通過探測時將相關 UI 情境列為阻塞。
+5. 探測通過後，以同一 MCP 的 browser_navigate 開啟`http(s)://localhost:<有效埠>`。使用瀏覽器網路資訊、服務存取紀錄／程序資訊及版本端點等證據，確認前端與 API 的實際請求到達分配 IP、有效埠與該 worktree 版本。不能只看網址或首頁成功。無法確認任一層則阻塞；HTTPS、代理或 Host 檢查問題須排查，不修改專案或全域安全設定繞過。
    Chromium 的 resolver 僅影響瀏覽器，不影響 dev-server proxy、SSR 或後端程序自己發出的 localhost 請求。須逐一追查這些程序間連線的實際目標與版本；僅可使用該程序支援的本輪臨時環境變數／啟動參數導向所屬 worktree IP／有效埠。無此能力則相關情境阻塞，不修改原設定檔，也不把瀏覽器前端導轉成功當成 API 隔離成功。
-5. 同時測兩個 worktree 前，確認兩個 MCP 瀏覽器的登入／儲存狀態互不影響，前端與 API 版本皆正確。核對專案相關檔案的前後 diff，確認沒有因導轉改動 localhost／埠號。
-6. 結束時由管理者關閉本輪 MCP 瀏覽器與 server，再停止本輪服務。證據依既有流程保存；臨時設定在使用程序停止後清理，不停止其他 worktree 或使用者原服務，也不刪除共用分配鎖檔。
+6. 同時測兩個 worktree 前，確認兩個 MCP 瀏覽器的登入／儲存狀態互不影響，前端與 API 版本皆正確。核對專案相關檔案的前後 diff，確認沒有因導轉改動 localhost／埠號。
+7. 結束時由管理者向本輪終端入口送出 `{"tool":"close"}`，或關閉本輪客戶端連線。確認 MCP 與瀏覽器關閉後，再停止本輪服務。證據依既有流程保存；臨時設定在使用程序停止後清理，不停止其他 worktree 或使用者原服務，也不刪除共用分配鎖檔。
 
 共用 session 只能序列測試，切換 worktree 前仍須關閉舊瀏覽器並以新設定重新建立及驗證連線；僅換分頁不會更新 localhost 對應。獨立連線不可得時，可繼續獨立的 API／DB 範圍，不宣稱 UI 通過。
+
+### 啟動專用 MCP 工作階段
+
+在支援持久 stdin 的終端以 Node.js 18.2 以上啟動：
+
+```powershell
+node "<skill 目錄>/scripts/worktree-mcp-session.cjs" "<本輪準備結果 JSON>"
+```
+
+在 Codex 使用可寫入 stdin 的終端（`exec_command` 設 `tty: true`，後續用 `write_stdin` 向同一 session ID 送一行 JSON 並按 Enter）。如果終端沙箱拒絕 loopback 或 Chrome 啟動，使用平台提供的本機執行授權後重試。若已安裝的 MCP 位於獨立工具目錄，附加 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`。
+
+看到 `status=ready` 後才開始操作。保留其中 `probe` 的 `status=matched`、`isolationId`、`ip` 與 `port` 作為路由證據。每次送一行，等相同 `id` 的 `result` 或 `error` 後再送下一個操作：
+
+```jsonl
+{"id":1,"tool":"tools/list"}
+{"id":2,"tool":"browser_navigate","args":{"url":"http://localhost:<前端有效埠>/"}}
+{"id":3,"tool":"browser_snapshot"}
+{"tool":"close"}
+```
+
+同一個入口可依序執行多個情境及 MCP 工具呼叫。結束時送出 `close` 並確認程序退出。切換 worktree 或需要重啟瀏覽器時，重新啟動入口，等新一輪探測成功。
+
+### 手動驗證 MCP 的 localhost 路由
+
+用 Node.js 18.2 以上啟動探測器，傳入本輪準備腳本回傳的完整 JSON 檔：
+
+```powershell
+node "<skill 目錄>/scripts/probe-mcp-route.cjs" "<本輪準備結果 JSON>"
+```
+
+探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內用將要執行 UI 測試的 MCP `browser_navigate` 開啟回傳的完整 `url`。保留瀏覽器回應與探測器輸出，兩邊都須有 `status=matched`，且 `isolationId`、`ip`、`port` 與 `ready` 相符。探測器收到符合本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時則以非零狀態退出。
+
+Chrome 的 `chrome://version` 可協助診斷啟動旗標。實際路由以探測器收到的請求為準。MCP 重連、瀏覽器重啟或切換 worktree 後重新探測。
 
 ## 服務與 slot
 

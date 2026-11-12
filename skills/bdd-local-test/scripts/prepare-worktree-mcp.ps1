@@ -38,7 +38,7 @@ $config = @{
     outputDir = (Join-Path $output $isolationId)
 }
 [IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
-$serverArgs = @('--no-install', '@playwright/mcp', '--config', $configPath)
+$serverArgs = @('--offline', '--no-install', '@playwright/mcp@latest', '--config', $configPath)
 if ($statePath) { $serverArgs += @('--storage-state', $statePath) }
 [pscustomobject]@{
     isolationId = $isolationId

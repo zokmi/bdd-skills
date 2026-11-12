@@ -74,6 +74,7 @@ try {
     if ($config.browser.launchOptions.args -notcontains $first.chromiumArg) { throw 'Missing worktree resolver' }
     if (-not $config.browser.isolated) { throw 'Browser must be isolated' }
     if ($result.server.args -notcontains '--config') { throw 'MCP launch must use config' }
+    if ($result.server.args[0..2] -join ' ' -ne '--offline --no-install @playwright/mcp@latest') { throw 'MCP launch must reuse the installed offline package' }
     if ($result.server.args -contains '--storage-state') { throw 'Fresh runs must start without storage state' }
     if (@($result.ports) -join ',' -ne '4200,5000') { throw 'Original ports changed' }
     $owner = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, 0)
