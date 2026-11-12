@@ -63,6 +63,12 @@ jobs:
           pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-ParallelBdd.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Parallel BDD checks failed' }
 
+      - name: Verify issue-scoped BDD selection
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-QualityPlan.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'BDD quality plan checks failed' }
+
       - name: Verify concurrent worktree allocation and MCP configuration
         shell: pwsh
         run: |

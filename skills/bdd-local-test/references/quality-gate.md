@@ -6,9 +6,10 @@
 pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-quality-plan.ps1" -Repo <工作區> -Base <基準> -ReviewRisk MEDIUM -ReviewReason "<依據>" -StaticPassed -ImpactComplete
 ```
 
-- 只有靜態檢查通過才傳入 `-StaticPassed`。PR 候選、Release 或明確完整驗證傳入 `-Full`。
+- 只有靜態檢查通過才傳入 `-StaticPassed`。PR 候選、Release 或明確要求全套／全模組驗證時傳入 `-Full`。
 - LOW 須確認執行行為不變。第一版只有純文件白名單可走 FAST。MEDIUM 為可界定的局部行為異動。認證授權、Schema、交易、資料完整性、核心依賴、安全、付款及不明影響一律 HIGH。
 - 核對模組依賴、共用程式、route、endpoint、資料表讀寫及已知失敗紀錄。只有所有受影響模組都已由路徑匹配涵蓋才傳入 `-ImpactComplete`。如有外溢、映射缺漏或不確定，省略該參數。明確要求範圍以外的必要回歸須列在報告。
+- 小 issue 可加 `-Issue <數字單號>`。TARGETED 在同一受影響模組已有本單 `@#<單號>` 和 `@core` 時選取兩者聯集。缺任一類標籤時保留該模組全部情境。可一併修改已對應模組中仍存在的 Feature；共用 BDD 設定、其他模組的 Feature 或刪除 Feature 仍走 FULL。派工前用 diff 與需求核對清單，補入所有本輪新增或修改的情境，以及未加標籤的必要回歸和依賴情境。情境有刪除時，核對原斷言仍有必要覆蓋。若無法確認清單涵蓋全部影響，改用 FULL。FULL 執行所有模組情境，`-Issue` 不縮減其範圍。
 - 計畫的 Feature 雜湊與 Scenario 行號供追溯。派工前核對候選版本及工作區、展開 Background、Outline 和範例列，固定操作、斷言、清理、證據及隔離條件。一次解析並以同一份計畫執行。索引列舉若無法完整描述 Feature，以原始 Feature 全檔為執行範圍。
 - `PENDING` 是計畫狀態。完成報告使用 PASSED、FAILED、SKIPPED、BLOCKED、TIMEOUT。必要情境缺證據或未完成時閘門不通過。FAST 略過記錄理由。
 - 同輪共用已確認的服務、API 連線及唯讀初始化。UI 採 locator 與條件等待，保持 Context 狀態隔離並依證據要求取圖。批次唯讀驗證仍保留逐項斷言。遵守既有資料庫授權與並行資源契約。

@@ -12,7 +12,11 @@ try {
         @('---', "prefix: $prefix", 'paths:', "  - src/$name/**", '---') |
             Set-Content (Join-Path $module 'MODULE.md')
         @("Feature: $name", "  @$prefix-01 @#1 @API", '  Scenario: Read record',
-            '    When I request the record', '    Then the response is 200') |
+            '    When I request the record', '    Then the response is 200',
+            "  @$prefix-02 @#2 @core @API", '  Scenario: Read core record',
+            '    When I request the core record', '    Then the response is 200',
+            "  @$prefix-03 @#10 @API", '  Scenario: Read unrelated record',
+            '    When I request the unrelated record', '    Then the response is 200') |
             Set-Content (Join-Path $module '01-read.feature')
         $source = Join-Path $repo "src/$name"
         New-Item -ItemType Directory -Path $source -Force | Out-Null
@@ -32,6 +36,24 @@ try {
     Remove-Item -LiteralPath (Join-Path $repo 'README.md')
     'updated' | Set-Content (Join-Path $repo 'src/orders/handler.txt')
     Assert-Plan TARGETED 1 PENDING MEDIUM
+    $review = @{ Repo = $repo; Base = 'HEAD'; ReviewRisk = 'MEDIUM'; ReviewReason = 'Fixture review'
+        StaticPassed = $true; ImpactComplete = $true }
+    $issue = & $planner @review -Issue 1 | ConvertFrom-Json
+    if ($issue.level -ne 'TARGETED' -or ($issue.selected.scenarios.ids -join ',') -ne 'OR-01,OR-02') {
+        throw 'Issue selection must include the exact issue tag and affected core, excluding unrelated scenarios'
+    }
+    $unknownIssue = & $planner @review -Issue 99 | ConvertFrom-Json
+    if ($unknownIssue.selected.scenarios.Count -ne 3) { throw 'Unmapped issue must retain the affected module coverage' }
+    $full = & $planner @review -Issue 1 -Full | ConvertFrom-Json
+    if ($full.level -ne 'FULL' -or @($full.selected | ForEach-Object { $_.scenarios }).Count -ne 6) {
+        throw 'FULL must retain all six scenarios'
+    }
+    Add-Content -LiteralPath (Join-Path $repo '.bdd/modules/api/orders/01-read.feature') -Value '# Reviewed scenario update'
+    $updatedIssue = & $planner @review -Issue 1 | ConvertFrom-Json
+    if ($updatedIssue.level -ne 'TARGETED' -or ($updatedIssue.selected.scenarios.ids -join ',') -ne 'OR-01,OR-02') {
+        throw 'A local feature edit in an affected module must retain issue selection'
+    }
+    "PASS issue selection, missing mapping, explicit FULL, and local feature update"
     Assert-Plan FULL 2 PENDING HIGH
     'changed' | Set-Content (Join-Path $repo '.bdd/config.json')
     Assert-Plan FULL 2 PENDING MEDIUM
