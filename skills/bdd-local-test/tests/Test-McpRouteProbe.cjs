@@ -34,14 +34,20 @@ test('probe requires the current localhost challenge on the isolated listener', 
   const isolationId = 'bdd-mcp-' + 'a'.repeat(32);
   const ip = '127.0.0.4';
   fs.writeFileSync(manifest, JSON.stringify({ isolationId, preflight: { isolated: true, ip } }));
-  const script = path.join(__dirname, '../scripts/probe-mcp-route.cjs');
-  const child = spawn(process.execPath, [script, manifest], { windowsHide: true });
+  const script = path.join(__dirname, '../scripts/bdd.cjs');
+  const child = spawn(process.execPath, [script, 'mcp-probe', manifest], { windowsHide: true });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
   const closed = once(child, 'close');
   const lines = readline.createInterface({ input: child.stdout });
   try {
     const output = lines[Symbol.asyncIterator]();
     const ready = await output.next();
-    assert.equal(ready.done, false, 'probe must publish a ready event');
+    if (ready.done) {
+      await closed;
+      assert.fail('Probe exited without a ready event. ' + stderr.trim());
+    }
     const { url, status } = JSON.parse(ready.value);
     assert.equal(status, 'ready');
     const probeUrl = new URL(url);

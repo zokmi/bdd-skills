@@ -22,11 +22,11 @@ Git 保存持續維護的規格；非圖片執行紀錄由本機報告保存，�
 
 每次開始 BDD、切換 repo/worktree 或整合分支後，建立輸出前執行：
 
-```powershell
-pwsh -NoProfile -File "<skill 目錄>/scripts/ensure-bdd-gitignore.ps1" -Repo "<git 根目錄>"
+```text
+node "<skill 目錄>/scripts/bdd.cjs" gitignore --repo "<git 根目錄>"
 ```
 
-預設用 Git 實際忽略結果驗證預期路徑及現有 `.bdd` 檔案；缺漏時在根目錄 `.gitignore` 附加有標記的規則區塊，保留原始內容，已符合規範則不修改。整個 `.bdd/` 被忽略時會補上父目錄放行規則，讓 Git 能遍歷 modules。重跑不重複新增。`-Check` 僅檢查，適合 CI 或專案明確禁止自動修改時使用。
+預設用 Git 實際忽略結果驗證預期路徑及現有 `.bdd` 檔案；缺漏時在根目錄 `.gitignore` 附加有標記的規則區塊，保留原始內容，已符合規範則不修改。整個 `.bdd/` 被忽略時會補上父目錄放行規則，讓 Git 能遍歷 modules。重跑不重複新增。`--check` 僅檢查，適合專案明確禁止自動修改時使用。
 
 JSON 的 `failures` 提供路徑與匹配規則，`trackedOutputs` 列出已追蹤產物；exit 0 = 通過、1 = 缺漏或已追蹤產物、2 = 執行錯誤或規則衝突。巢狀規則導致補齊後仍不符合時還原本次修改；既有管理區塊失效時停止並回報，先查明衝突。不修改巢狀／全域規則、不自動停止追蹤、不刪除產物。已追蹤資料依下方遷移流程處理。
 

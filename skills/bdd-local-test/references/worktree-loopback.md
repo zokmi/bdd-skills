@@ -50,7 +50,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <
 在支援持久 stdin 的終端以 Node.js 18.2 以上啟動：
 
 ```powershell
-node "<skill 目錄>/scripts/worktree-mcp-session.cjs" "<本輪準備結果 JSON>"
+node "<skill 目錄>/scripts/bdd.cjs" mcp-session "<本輪準備結果 JSON>"
 ```
 
 在 Codex 使用可寫入 stdin 的終端（`exec_command` 設 `tty: true`，後續用 `write_stdin` 向同一 session ID 送一行 JSON 並按 Enter）。如果終端沙箱拒絕 loopback 或 Chrome 啟動，使用平台提供的本機執行授權後重試。若已安裝的 MCP 位於獨立工具目錄，附加 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`。
@@ -71,7 +71,7 @@ node "<skill 目錄>/scripts/worktree-mcp-session.cjs" "<本輪準備結果 JSON
 用 Node.js 18.2 以上啟動探測器，傳入本輪準備腳本回傳的完整 JSON 檔：
 
 ```powershell
-node "<skill 目錄>/scripts/probe-mcp-route.cjs" "<本輪準備結果 JSON>"
+node "<skill 目錄>/scripts/bdd.cjs" mcp-probe "<本輪準備結果 JSON>"
 ```
 
 探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內用將要執行 UI 測試的 MCP `browser_navigate` 開啟回傳的完整 `url`。保留瀏覽器回應與探測器輸出，兩邊都須有 `status=matched`，且 `isolationId`、`ip`、`port` 與 `ready` 相符。探測器收到符合本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時則以非零狀態退出。

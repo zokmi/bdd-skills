@@ -13,6 +13,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-internal-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Configure isolated loopback address on macOS
+        if: runner.os == 'macOS'
+        run: sudo ifconfig lo0 alias 127.0.0.4 netmask 255.255.255.255
+      - name: Verify internal Node.js CLI and loopback routing
+        run: node --test skills/bdd-local-test/tests/internal-cli.test.cjs skills/bdd-local-test/tests/Test-McpRouteProbe.cjs
+
   verify:
     runs-on: windows-latest
     steps:
@@ -94,7 +111,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Test browser cleanup checks failed' }
 
   release:
-    needs: verify
+    needs: [verify, verify-internal-cli]
     permissions:
       contents: write
     runs-on: windows-latest

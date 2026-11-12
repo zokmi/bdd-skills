@@ -52,8 +52,8 @@ async function startProbe(manifest) {
   return { ready: { status: 'ready', isolationId, ip, port, url: 'http://localhost:' + port + route }, matched, close };
 }
 
-async function main() {
-  const probe = await startProbe(readManifest(process.argv[2]));
+async function main([manifestPath]) {
+  const probe = await startProbe(readManifest(manifestPath));
   console.log(JSON.stringify(probe.ready));
   const evidence = await probe.matched;
   if (!evidence) throw new Error('Timed out waiting for the localhost request from Playwright MCP');
@@ -61,10 +61,10 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch(error => {
+  main(process.argv.slice(2)).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
   });
 }
 
-module.exports = { readManifest, startProbe, validateIsolation };
+module.exports = { main, readManifest, startProbe, validateIsolation };

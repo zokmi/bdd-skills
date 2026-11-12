@@ -39,7 +39,7 @@
 3. **報告**：需要報告時讀 [報告與驗證紀錄](reporting.md) 和 [報告範本](../assets/REPORT-template.md)。使用者只要測試報告時不整合或更新 issue；若需封存，再讀下階段的封存步驟。
 4. **整合與收尾**：依 [整合與封存](closeout.md) 確認模式、版本與完整驗證時機。每輪保存證據後立即依服務停止規則釋放資源，回覆前核對程序與埠。遮罩、封存或清理時讀 [封存指引](archive.md)。
 
-建立 `.bdd` 輸出前，依範圍指引執行 `scripts/ensure-bdd-gitignore.ps1`，自動驗證並補齊目標 repo 的忽略規則；切換 repo/worktree 或整合後重新檢查。衝突及已追蹤產物依 [版控分工](version-control.md) 處理。
+建立 `.bdd` 輸出前，依範圍指引呼叫內部 CLI 的 `gitignore` 子命令，自動驗證並補齊目標 repo 的忽略規則；切換 repo/worktree 或整合後重新檢查。衝突及已追蹤產物依 [版控分工](version-control.md) 處理。
 
 各階段只讀當前需要的參考文件，不把整套參考文件一次載入。腳本的參數、輸出與錯誤處理以對應階段文件為準。
 

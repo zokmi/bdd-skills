@@ -36,7 +36,11 @@ async function main([manifestPath, flag, mcpCli, ...extra]) {
   }
 }
 
-main(process.argv.slice(2)).catch(error => {
-  console.error(JSON.stringify({ status: 'blocked', error: error.message }));
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main(process.argv.slice(2)).catch(error => {
+    console.error(JSON.stringify({ status: 'blocked', error: error.message }));
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { main };
