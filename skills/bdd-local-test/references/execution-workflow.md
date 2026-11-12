@@ -37,7 +37,7 @@
 1. **確定範圍、版本與情境**：讀 [範圍、版本比對與情境撰寫](workflow-and-scenarios.md)。寫 `.feature` 前讀 [情境寫法](feature-guide.md)；使用模組時讀 [模組情境集](modules.md)。情境寫完後讀 [情境審核](scenario-review.md)。使用者只要情境時，在審核與未執行報告完成後停止。
 2. **本機實測與修正**：需要執行時讀 [本機執行與複測](local-execution.md) 及 [報告與驗證紀錄](reporting.md)；worktree 另讀 [loopback 隔離](worktree-loopback.md)。逐情境保留證據，每輪先記錄結果與版本；失敗後修正、重啟並重測。
 3. **報告**：需要報告時讀 [報告與驗證紀錄](reporting.md) 和 [報告範本](../assets/REPORT-template.md)。使用者只要測試報告時不整合或更新 issue；若需封存，再讀下階段的封存步驟。
-4. **整合與收尾**：依 [整合與封存](closeout.md) 確認模式、版本與完整驗證時機。每輪保存證據後立即依服務停止規則釋放資源，回覆前核對程序與埠。遮罩、封存或清理時讀 [封存指引](archive.md)。
+4. **整合與收尾**：依 [整合與封存](closeout.md) 確認模式、版本與完整驗證時機。每輪保存證據並完成截圖驗證審核後，依服務停止規則確認條件並釋放資源，回覆前核對程序與埠。遮罩、封存或清理時讀 [封存指引](archive.md)。
 
 建立 `.bdd` 輸出前，依範圍指引呼叫內部 CLI 的 `gitignore` 子命令，自動驗證並補齊目標 repo 的忽略規則；切換 repo/worktree 或整合後重新檢查。衝突及已追蹤產物依 [版控分工](version-control.md) 處理。
 
