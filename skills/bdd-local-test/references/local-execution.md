@@ -25,34 +25,12 @@
 
 ### 5. 準備環境
 
-**固定 API 實際 port 的啟動契約**：先逐一列出前端／API 原 localhost URL、實際監聽 port、設定來源、本輪 IP 與啟動命令，寫入報告。API port 禁止異動，包含臨時參數與工具自動換埠；port 未知先釐清，不套用示例。多專案／worktree 同 port 時先讀 [啟動契約與 Chrome 導轉](worktree-loopback.md)，核對跨 repo IP 衝突；分別啟動服務後，用獨立 MCP Chrome／Chromium 的 localhost 導轉連到本輪 IP、原 port。Chrome 導轉本身不會啟動服務，也不會隔離 SSR／proxy 的請求。
+**啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `-Isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `prepare-worktree-mcp.ps1 -Ports <原埠清單> -OutputDir <本輪輸出目錄>/mcp`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。
 
-**啟動服務前的 worktree preflight（每輪測試都先做）**：先從專案文件找出本輪前後端原埠號，
-在受測 repo 根目錄執行 `pwsh -NoProfile -File "<skill 目錄>/scripts/loopback-slot.ps1" -Ports <原埠號，逗號分隔>`，
-讀取 JSON 的 `isWorktree`、`slot`、`ip`、`chromiumArg`、`occupied`；腳本失敗或無法確認埠號時，
-先釐清環境，不要猜 IP 或直接啟動服務。
-
-- `isWorktree=false`：單專案可照一般 localhost 流程；多專案同 port 則重新加 `-Isolate` 做 preflight 與產生 MCP 設定，依 `isolated=true` 的流程綁定服務並導轉，不直接共用 localhost。
-- `isWorktree=true`：**先讀 [worktree loopback 操作細節](worktree-loopback.md)**，確認 `occupied` 的程序歸屬後，
-  用 `prepare-worktree-mcp.ps1` 產生本輪臨時 MCP 設定，建立可識別的獨立連線並核對前端／API 實際目標與版本；不能只產生設定就視為隔離完成。原始 localhost、埠號與設定檔不可異動。
-  讓本輪前後端只綁分配的 `ip`、沿用原埠號；`@UI` 用可配置 `chromiumArg` 的隔離 Playwright MCP session（無法配置時列為阻塞），
-  `@API` 用該 `ip`。確認 HTTP 回應屬於本輪版本，再執行情境。
-- 占用者若是別的 worktree、使用者服務，或綁 `0.0.0.0`／`::`，不要停掉或借用；
-  無法取得安全的本輪服務時，把相關情境列「阻塞」並回報。報告〈環境〉記錄 `isWorktree`、slot、IP、埠號、占用判定與實際 UI／API 網址；
-  **缺少 worktree preflight 或無法確認受測服務版本時，不可宣稱該輪 all pass。**
-
-- 依 preflight 的 `ip` 與原埠號檢查服務是否已在跑（監聽資訊、`curl` 健康端點或首頁）；
-  worktree 不要把主目錄 `127.0.0.1` 的服務當成本輪服務。
-- **確認跑著的就是要測的版本。** 已在跑的後端可能是幾個 commit 前建置的，測它等於測舊程式。
-  比對建置產物的時間與 HEAD 最後一次後端異動的時間，或比對 Swagger／路由是否已含本次新增或移除的端點。
-  確認不了時，從**包含本輪待測異動的工作區**建置獨立服務，**綁到另一個 loopback IP、沿用原埠號**另起一份
-  （見 [worktree loopback 操作細節](worktree-loopback.md)）。若需複製到暫存目錄，也要包含本輪未提交修正；單用 `git archive HEAD` 會漏掉它們。
-  不要停掉或重啟使用者原本在跑的服務，也不要改 repo 設定。
-- 沒跑就依專案文件啟動；worktree 要明確綁 preflight 的 `ip`，用可用工具在背景執行，等到該 IP 的原埠號可連再繼續。
-- 前後端就緒後，實際對本輪前端網址發出 HTTP 請求，確認回應與受測版本；不要只看到程序在跑就認定頁面可用。
-  worktree 的服務探測使用 `http://<ip>:<前端埠>/...`，Playwright MCP 頁面網址仍用 `http://localhost:<前端埠>/...` 並帶 `chromiumArg`；
-  主目錄照專案原本的 localhost／HTTPS 網址。把確切網址記入報告。
-
+- 依本輪有效埠啟動服務、設定前端 API／proxy／SSR 並導覽 Playwright MCP。直接 API 驗證使用本輪 IP 與有效埠。
+- Node 專案若在 `npm run build` 時報埠號占用，檢查 `package.json` 的 `prebuild`、`build`、`postbuild` 及它們啟動的子程序。純建置可並行。啟動 dev server、preview 或 SSR 的命令須使用本輪有效埠；若流程可拆開，先完成 build，再以有效埠啟動提供建置產物的服務。建置時若會連到 API 或把 API URL 寫入產物，也要在建置程序中套用本輪 API 目標。
+- 核對前端及 API 的實際監聽位址、程序歸屬、版本及 HTTP 回應。UI 也須確認實際 API 請求進入本輪版本。若需要另起服務，從包含本輪待測異動的工作區建置，避免測到舊版本。缺少上述證據時，相關情境列為阻塞。
+- 報告記錄原 URL、原埠與有效埠、占用判定、實際 UI／API 網址及版本證據。清理時使用同一輪記錄的有效埠。
 - 啟動失敗、缺帳號、缺資料庫權限 → 相關情境標「阻塞」並寫明原因，其餘能跑的照跑，不要整批放棄。
 
 ### 6. 逐情境執行

@@ -5,14 +5,15 @@
 param(
     [Parameter(Mandatory)][string[]]$Ports,
     [Parameter(Mandatory)][string]$OutputDir,
-    [switch]$Isolate
+    [switch]$Isolate,
+    [switch]$KeepOriginalPorts
 )
 $ErrorActionPreference = 'Stop'
 $portList = @($Ports | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
 if (-not $portList.Count -or @($portList | Where-Object { $_ -lt 1 -or $_ -gt 65535 }).Count) {
-    throw 'Ports 必須是專案原有埠號（1..65535），不得改埠分流'
+    throw 'Ports 必須是專案原有埠號（1..65535）'
 }
-$preflight = & (Join-Path $PSScriptRoot 'loopback-slot.ps1') -Ports $Ports -Isolate:$Isolate | ConvertFrom-Json
+$preflight = & (Join-Path $PSScriptRoot 'loopback-slot.ps1') -Ports $Ports -Isolate:$Isolate -KeepOriginalPorts:$KeepOriginalPorts | ConvertFrom-Json
 $output = [IO.Path]::GetFullPath($OutputDir)
 $null = New-Item -ItemType Directory -Path $output -Force
 $isolationId = 'bdd-mcp-' + [guid]::NewGuid().ToString('N')
@@ -32,11 +33,13 @@ $config = @{
     isolationId = $isolationId
     configPath = $configPath
     ports = $portList
+    portMappings = $preflight.portMappings
+    effectivePorts = $preflight.effectivePorts
     preflight = $preflight
     server = @{
         command = 'npx'
         args = @('--no-install', '@playwright/mcp', '--config', $configPath)
     }
     status = 'configuration-only'
-    verificationRequired = @('獨立 MCP 連線與瀏覽器', '前端及 API 的實際目標 IP、原埠號與受測版本', '帳號及資料範圍隔離')
+    verificationRequired = @('獨立 MCP 連線與瀏覽器', '前端及 API 的實際目標 IP、本輪有效埠與受測版本', '帳號及資料範圍隔離')
 } | ConvertTo-Json -Depth 8

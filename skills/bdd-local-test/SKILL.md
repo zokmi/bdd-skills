@@ -9,7 +9,7 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 
 ## 共同規則
 
-- **API 實際 port 禁止異動**：啟動前明列每個前端／API 的原始 localhost URL、實際監聽 port、設定來源、本輪綁定 IP 與啟動命令；不得猜測慣用 port，也不得因占用而改 port 或接受自動遞增。多專案／worktree 使用服務的臨時綁定參數與獨立 Playwright MCP Chrome／Chromium 的 localhost 導轉分流；Chrome 導轉不會啟動服務。禁止修改專案 API URL、設定、CORS、系統 hosts 或全域代理。依 [worktree 隔離](references/worktree-loopback.md) 核對跨專案占用、產生臨時 MCP 設定並確認前端與 API 的實際版本；設定產生不等於隔離驗證完成。
+- **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠在本輪隔離 IP 被占用時，自動分配臨時有效埠。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫，核對 UI、API、proxy／SSR 的實際目標與版本，再開始測試。維持專案設定檔、系統 hosts 與全域代理原狀。
 
 - 先讀目標專案的 `AGENTS.md`／`CLAUDE.md`／README、環境設定及 `.bdd/config.json`。本 skill 不預設埠號、帳號、基準分支或資料庫。下文的 `<skill 目錄>` 是此檔所在資料夾。
 - 依 [版控分工](references/version-control.md)，Git 只保存模組情境、`MODULE.md` 與共用設定；每輪報告、驗證與遮罩紀錄及證據保存在本機輸出與完整封存，不新增到 Git、不另建純報告提交。既有追蹤輸出先驗證封存，再依明確授權遷移。

@@ -10,7 +10,13 @@ function git {
     if ($args -contains '--git-common-dir') { return "$fixture/common" }
     throw 'Unexpected git invocation'
 }
-function Get-NetTCPConnection { param($State, $LocalAddress, $ErrorAction) @() }
+$useRealListeners = $false
+function Get-NetTCPConnection {
+    param($State, $LocalAddress, $ErrorAction)
+    if ($useRealListeners) {
+        NetTCPIP\Get-NetTCPConnection -State $State -ErrorAction $ErrorAction
+    }
+}
 try {
     $jobs = @()
     foreach ($index in 1..4) {
@@ -53,6 +59,33 @@ try {
     if (-not $config.browser.isolated) { throw 'Browser must be isolated' }
     if ($result.server.args -notcontains '--config') { throw 'MCP launch must use config' }
     if (@($result.ports) -join ',' -ne '4200,5000') { throw 'Original ports changed' }
+    $owner = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, 0)
+    $owner.ExclusiveAddressUse = $true
+    $owner.Start()
+    try {
+        $original = $owner.LocalEndpoint.Port
+        $useRealListeners = $true
+        $fallback = & "$scripts/prepare-worktree-mcp.ps1" -Ports $original -OutputDir "$fixture/fallback" | ConvertFrom-Json
+        $mapping = $fallback.portMappings[0]
+        if ($mapping.originalPort -ne $original -or $mapping.effectivePort -eq $original -or
+            $mapping.effectivePort -lt 1 -or $fallback.effectivePorts[0] -ne $mapping.effectivePort) {
+            throw 'Wildcard collision must return an effective port distinct from the original'
+        }
+        $candidate = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse($fallback.preflight.ip), $mapping.effectivePort)
+        $candidate.ExclusiveAddressUse = $true
+        try {
+            $candidate.Start()
+            if ($owner.LocalEndpoint.Port -ne $original) { throw 'Original listener was stopped' }
+        } finally { $candidate.Stop() }
+        $fixed = & "$scripts/loopback-slot.ps1" -Ports $original -KeepOriginalPorts | ConvertFrom-Json
+        if ($fixed.portMappings[0].effectivePort -ne $original) {
+            throw 'Explicit fixed-port runs must retain the original port'
+        }
+    } finally {
+        $owner.Stop()
+        $useRealListeners = $false
+    }
+    'PASS wildcard conflict yields a bindable temporary port and preserves the original listener'
     $next = & "$scripts/prepare-worktree-mcp.ps1" -Ports 4200,5000 -OutputDir "$fixture/output2" | ConvertFrom-Json
     if ($next.isolationId -eq $result.isolationId) { throw 'Each MCP instance needs unique identity' }
     $rejected = $false

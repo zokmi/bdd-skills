@@ -12,7 +12,7 @@
 - `assets/`、`references/`、`scripts/`：報告範本、寫作參考與本機驗證輔助腳本。
 - `evals/`：skill 的評估案例定義。
 - `tests/`：封存、遮罩與清理腳本的 Pester 測試（`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`）。
-- worktree／MCP 設定回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-WorktreeMcp.ps1`，涵蓋四程序同時分配、slot 重用及錯誤拒絕、獨立 MCP 設定與原埠保留；這些腳本測試不代替產品 UI BDD。
+- worktree／MCP 設定回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-WorktreeMcp.ps1`，涵蓋四程序同時分配、slot 重用、獨立 MCP 設定、原埠保留與占用時分配臨時埠。產品 UI BDD 另行驗證。
 - 跨專案分配回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1`，使用真實暫存 Git repo／worktree 驗證首次並行分配、IP 重用與舊 slot 衝突拒絕。
 - Chrome 真實導轉實測：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <已安裝的 @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <證據目錄> -UseDefaultRegistry`。建立兩個暫存專案、四個 worktree 及兩個隔離主 checkout，以六組獨立無頭 Chrome／stdio MCP 同時驗證固定 UI 4200、API 9453 的真實 HTTP 身分、目的 IP、Origin 與儲存隔離，保存 `result.json` 後停止程序；不連資料庫、不下載套件。需可建立測試 Git 目錄及啟動本機服務的權限，並預先安裝 Chrome／Playwright MCP。省略 `-UseDefaultRegistry` 僅使用 fixture 專屬登記。
 
@@ -28,7 +28,7 @@
 
 每次 BDD 開始前自動執行 `ensure-bdd-gitignore.ps1`，驗證並補齊目標專案忽略規則，保留模組情境及共用設定；重跑不重複新增，衝突回報，既有追蹤產物只列出待處理項目。`-Check` 僅檢查。回歸測試：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-BddGitignore.ps1`。
 
-同專案多 worktree 保留原 localhost 網址與埠號，禁止修改原始專案設定、系統 hosts 或全域代理。以臨時服務啟動參數綁定各自 loopback IP，並用 `prepare-worktree-mcp.ps1` 產生獨立 MCP 的暫時 localhost 對應；slot 分配加鎖避免同時啟動撞 IP。產生設定後仍須建立獨立 MCP 連線並確認前端與 API 版本，才可並行 UI；無法建立則阻塞。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。
+多專案或 worktree 使用各自的 loopback IP，原埠可用時沿用，占用時由 `prepare-worktree-mcp.ps1` 自動分配本輪有效埠。啟動、測試及清理使用同一份埠號對應，維持原始專案設定、系統 hosts 與全域代理原狀。並行 UI 測試前須建立獨立 MCP 連線，核對前端與 API 的實際目標及版本。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。
 
 每輪實測自動評估子代理分組：兩組以上可安全獨立執行且有可用子代理時，主代理直接派工，不必明說「並行」。先分配情境、檔案與測試資料範圍，每組使用獨立瀏覽器及輸出目錄；需要修改程式時隔離 worktree，共用服務與資料無法隔離的組別序列執行，其他獨立組繼續派工。報告記錄執行模式、實際代理與未派工原因；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
 

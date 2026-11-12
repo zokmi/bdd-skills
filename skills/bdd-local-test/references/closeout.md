@@ -69,9 +69,9 @@
 釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；一般主目錄（`isWorktree=false` 且未指定 `-Isolate`）一律不停。明確以 `-Isolate` 啟動的多專案主 checkout 屬於本輪隔離服務，清理時對同一工作區使用 `stop-slot-services.ps1 -Isolate`，仍須核對路徑歸屬，不能套用到使用者一般 localhost 服務。
 
 1. 先核對背景工作確實屬於本輪 worktree 啟動的服務，再用可用的背景工作停止工具結束（例如 `run_in_background`／`TaskStop`）；不停止其他工作區或無法確認歸屬的背景工作。
-2. 在每個本輪 worktree 的目錄內分別跑停止腳本，帶上該 worktree 使用 `loopback-slot.ps1` 時的埠號，收掉殘留的子程序與先前 session 留下的服務：
+2. 在每個本輪 worktree 的目錄內分別跑停止腳本，帶上該輪保存的 `effectivePorts`，收掉本輪殘留的子程序：
    ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/stop-slot-services.ps1" -Ports <同上的埠>
+   pwsh -NoProfile -File "<skill 目錄>/scripts/stop-slot-services.ps1" -Ports <本輪有效埠，逗號分隔>
    ```
    腳本只停「監聽在本 worktree 專屬 IP 上、且執行檔或命令列位於本 worktree 路徑下」的程序（連同 `dotnet run`／`npx` 等啟動器）；
    主目錄的 `127.0.0.1`、綁 `0.0.0.0`／`::` 的程序、路徑不在本 worktree 的程序都只列在 `skipped`，不會動。

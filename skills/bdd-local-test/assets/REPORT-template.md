@@ -11,7 +11,7 @@
 | 多專案同 port 檢查 | <各工作區 isolated、registryPath（須相同）、IP/port、程序歸屬及衝突檢查；主 checkout 是否 -Isolate；無安全分配時阻塞；或不適用> |
 | 資料庫環境確認 | <待確認／使用者已明確確認；全部主機／執行個體、埠、庫名、租戶、環境、設定來源、讀寫範圍、回覆摘要及對話位置／時間、適用輪次；未確認不得實測，不填帳密> |
 | UI 測試工具 | <Playwright MCP；無法執行時記錄阻塞原因、排查結果與解除條件；純 API／DB 填不適用> |
-| MCP 隔離與導轉 | <worktree IP、原埠、isolationId、實際 MCP 連線識別、臨時設定路徑、前端／API 目標與版本證據> |
+| MCP 隔離與導轉 | <worktree IP、原埠與有效埠對應、isolationId、實際 MCP 連線識別、臨時設定路徑、前端／API 目標與版本證據> |
 | 原始設定保留 | <localhost／埠號未異動的 diff；本輪 MCP 與服務程序停止結果> |
 | 執行時間 | <YYYY-MM-DD HH:mm> |
 | 測試帳號 | 具備「<權限名稱>」的本機測試帳號（不寫帳密） |
