@@ -91,6 +91,22 @@ Describe 'Convert-ToLosslessWebp（假編碼器）' {
 }
 
 Describe 'Convert-ToLosslessWebp（Pillow）' {
+    It '拒絕偽裝格式、超出像素上限及動畫 PNG' -ForEach @(
+        @{ fixture = 'gif'; generator = 'Image.new("P", (8, 8)).save(p, format="GIF")'; message = '*cannot identify image file*' }
+        @{ fixture = 'large'; generator = 'Image.new("1", (10000, 4000)).save(p)'; message = '*pixel limit*' }
+        @{ fixture = 'animated'; generator = 'Image.new("RGB", (8, 8)).save(p, save_all=True, append_images=[Image.new("RGB", (8, 8), "white")], duration=100)'; message = '*single-frame*' }
+    ) {
+        if ($script:Pillow.kind -ne 'pillow') { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $src = Join-Path $TestDrive "$fixture.png"
+        $dst = Join-Path $TestDrive "$fixture.webp"
+        & $script:Pillow.command @($script:Pillow.prefixArgs) -c "from PIL import Image; import sys; p = sys.argv[1]; $generator" $src
+        $LASTEXITCODE | Should -Be 0
+        $response = & $script:Pillow.command @($script:Pillow.prefixArgs) $script:Pillow.helper convert $src $dst
+        $LASTEXITCODE | Should -Be 1
+        ($response | ConvertFrom-Json).error | Should -BeLike $message
+        Test-Path -LiteralPath $dst | Should -BeFalse
+    }
+
     It '16 位元 PNG 保留原圖，不接受降為 8 位元的 WebP' {
         if ($script:Pillow.kind -ne 'pillow') { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
         $src = Join-Path $TestDrive '16bit.png'

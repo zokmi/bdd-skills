@@ -24,14 +24,19 @@ $script:ManifestName = 'bdd-manifest.json'
   建立一個封存項目：relative（封存內相對路徑，以 / 分隔）、path（實體檔）、sha256、size、lastWrite、extra（寫進 manifest 的附加欄位）。
 #>
 function New-PackEntry {
-    param([Parameter(Mandatory)][string]$Relative, [Parameter(Mandatory)][string]$Path, $Extra = $null)
+    param(
+        [Parameter(Mandatory)][string]$Relative,
+        [Parameter(Mandatory)][string]$Path,
+        $Extra = $null,
+        [string]$Sha256
+    )
     $item = Get-Item -LiteralPath $Path
     $copy = [ordered]@{}
     if ($Extra) { foreach ($k in $Extra.Keys) { $copy[$k] = $Extra[$k] } }
     [pscustomobject]@{
         relative = $Relative.Replace('\', '/')
         path = $item.FullName
-        sha256 = Get-Sha256Hex -Path $item.FullName
+        sha256 = if ($Sha256) { $Sha256 } else { Get-Sha256Hex -Path $item.FullName }
         size = $item.Length
         lastWrite = $item.LastWriteTime
         extra = $copy

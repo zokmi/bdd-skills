@@ -11,40 +11,64 @@
 """
 import json
 import os
+import re
 import sys
 
 
-def _rgba(path):
+INPUT_FORMATS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".bmp": "BMP"}
+MAX_PIXELS = 32_000_000
+MIN_PILLOW_VERSION = (13, 0, 0)
+
+
+def _supported_pillow(version):
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    return match is not None and tuple(map(int, match.groups())) >= MIN_PILLOW_VERSION
+
+
+def _rgba(path, image_format):
     """讀取圖片並轉成 RGBA，回傳已載入的 Image。"""
     from PIL import Image
-    with Image.open(path) as im:
-        im.load()
-        if im.mode not in ("1", "L", "LA", "P", "RGB", "RGBA"):
-            raise ValueError("unsupported image mode for lossless WebP: " + im.mode)
+    with open(path, "rb") as source:
         # Pillow 可能先把 16 位元 RGB PNG 降位再呈現為 RGB，必須檢查原始 IHDR。
-        if im.format == "PNG":
-            with open(path, "rb") as source:
-                header = source.read(25)
-            if len(header) >= 25 and header[24] > 8:
+        if image_format == "PNG":
+            header = source.read(25)
+            if header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) == 25 and header[24] > 8:
                 raise ValueError("unsupported PNG bit depth for lossless WebP")
-        return im.convert("RGBA")
+            source.seek(0)
+        with Image.open(source, formats=[image_format]) as im:
+            if im.width * im.height > MAX_PIXELS:
+                raise ValueError("image exceeds the pixel limit for lossless WebP")
+            if getattr(im, "n_frames", 1) != 1:
+                raise ValueError("only single-frame images can be converted to lossless WebP")
+            if im.mode not in ("1", "L", "LA", "P", "RGB", "RGBA"):
+                raise ValueError("unsupported image mode for lossless WebP: " + im.mode)
+            return im.convert("RGBA")
 
 
 def check():
     """回報 Pillow 是否可用且支援 WebP。"""
     try:
-        from PIL import features
-        print(json.dumps({"ok": bool(features.check("webp"))}))
+        from PIL import __version__, features
+        print(json.dumps({
+            "ok": _supported_pillow(__version__) and bool(features.check("webp")),
+            "version": __version__,
+        }))
     except Exception:  # Pillow 未安裝或載入失敗
         print(json.dumps({"ok": False}))
 
 
 def convert(src, dst):
     """把 src 無損轉成 dst（WebP），回報是否逐像素一致與前後大小。"""
-    original = _rgba(src)
+    from PIL import __version__
+    if not _supported_pillow(__version__):
+        raise ValueError("lossless WebP requires Pillow 13.0.0 or later")
+    image_format = INPUT_FORMATS.get(os.path.splitext(src)[1].lower())
+    if image_format is None:
+        raise ValueError("unsupported image file extension for lossless WebP")
+    original = _rgba(src, image_format)
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     original.save(dst, "WEBP", lossless=True, quality=100, method=6, exact=True)
-    restored = _rgba(dst)
+    restored = _rgba(dst, "WEBP")
     identical = original.size == restored.size and original.tobytes() == restored.tobytes()
     print(json.dumps({
         "identical": identical,

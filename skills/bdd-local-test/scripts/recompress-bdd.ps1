@@ -28,8 +28,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib/BddArchive.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/BddImage.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/BddPack.psm1') -Force
-Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
+Import-Module (Join-Path $PSScriptRoot 'lib/BddExtract.psm1') -Force
 
 $archivePath = Get-NormalizedPath $Archive
 if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) { throw "封存檔不存在：$archivePath" }
@@ -52,48 +51,33 @@ $sourceDir = Join-Path $staging 'src'
 [IO.Directory]::CreateDirectory($sourceDir) | Out-Null
 
 try {
-    # 1. 解到暫存目錄（去掉第一層資料夾），並依 manifest 還原 aliases
-    $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
-    try {
-        $entries = @($zip.Entries | Where-Object { -not $_.FullName.EndsWith('/') })
-        $manifestEntry = $entries | Where-Object { $_.FullName -match '^[^/]+/bdd-manifest\.json$' } | Select-Object -First 1
-        $manifest = $null
-        if ($manifestEntry) {
-            $reader = [IO.StreamReader]::new($manifestEntry.Open(), [Text.Encoding]::UTF8)
-            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+    # 1. 使用共用還原流程驗證路徑及 SHA-256，並從 ZIP 內還原 aliases。
+    $extracted = Expand-BddArchive -Archive $archivePath -To $sourceDir
+    $manifest = $extracted.manifest
+    $topic = $state.topic
+    $rootItems = @(Get-ChildItem -LiteralPath $sourceDir -Force)
+    if ($manifest) {
+        if ($rootItems.Count -gt 1 -or ($rootItems.Count -eq 1 -and $rootItems[0].FullName -ne $extracted.folder)) {
+            throw '封存含有 manifest topic 以外的檔案'
         }
-        $firstSegments = @($entries | ForEach-Object { ($_.FullName -split '/', 2)[0] } | Sort-Object -Unique)
-        $hasFolder = $firstSegments.Count -eq 1 -and $firstSegments[0] -notin @('evidence', 'features') -and @($entries | Where-Object { $_.FullName -notlike '*/*' }).Count -eq 0
-        $prefix = if ($hasFolder) { "$($firstSegments[0])/" } else { '' }
-        foreach ($entry in $entries) {
-            if ($manifestEntry -and $entry.FullName -eq $manifestEntry.FullName) { continue }
-            $relative = $entry.FullName.Substring($prefix.Length)
-            if ($relative -match '(^|/)\.\.(/|$)' -or $relative -match '^[A-Za-z]:' -or $relative.StartsWith('/')) { throw "封存含不安全的路徑：$($entry.FullName)" }
-            $target = Get-NormalizedPath (Join-Path $sourceDir $relative)
-            if (-not (Test-PathUnder $target $sourceDir)) { throw "封存項目解壓後會跑出暫存目錄：$($entry.FullName)" }
-            [IO.Directory]::CreateDirectory((Split-Path $target -Parent)) | Out-Null
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target)
-        }
-    } finally { $zip.Dispose() }
-    if ($manifest -and $manifest.PSObject.Properties['aliases'] -and $manifest.aliases) {
-        foreach ($p in $manifest.aliases.PSObject.Properties) {
-            $aliasPath = Get-NormalizedPath (Join-Path $sourceDir $p.Name)
-            if (-not (Test-PathUnder $aliasPath $sourceDir)) { throw "manifest 的 alias 路徑不安全：$($p.Name)" }
-            [IO.Directory]::CreateDirectory((Split-Path $aliasPath -Parent)) | Out-Null
-            Copy-Item -LiteralPath (Join-Path $sourceDir $p.Value) -Destination $aliasPath
-        }
+        $sourceDir = $extracted.folder
+        $topic = [IO.Path]::GetFileName($sourceDir)
+    } elseif ($rootItems.Count -eq 1 -and $rootItems[0].PSIsContainer -and $rootItems[0].Name -notin @('evidence', 'features')) {
+        # 舊 ZIP 可能有一層資料夾，也可能直接從 evidence/、features/ 或報告開始。
+        $topic = $rootItems[0].Name
+        $sourceDir = $rootItems[0].FullName
     }
 
-    # 2. 建立封存項目，保留舊 manifest 每個檔案的附加欄位（例如 scenarioPath、originalName）
-    $packEntries = @(Get-ChildItem -LiteralPath $sourceDir -Recurse -File | ForEach-Object {
-        $relative = [IO.Path]::GetRelativePath($sourceDir, $_.FullName).Replace('\', '/')
+    # 2. 沿用解壓時算出的 SHA-256 和舊 manifest 的附加欄位。
+    $packEntries = @(foreach ($path in $extracted.hashes.Keys) {
+        $relative = [IO.Path]::GetRelativePath($sourceDir, $path).Replace('\', '/')
         $extra = [ordered]@{}
-        if ($manifest -and $manifest.PSObject.Properties['files'] -and $manifest.files.PSObject.Properties[$relative]) {
-            foreach ($prop in $manifest.files.$relative.PSObject.Properties) {
-                if ($prop.Name -notin 'sha256', 'size') { $extra[$prop.Name] = $prop.Value }
+        if ($manifest.files -and $manifest.files[$relative]) {
+            foreach ($key in $manifest.files[$relative].get_Keys()) {
+                if ($key -notin 'sha256', 'size') { $extra[$key] = $manifest.files[$relative][$key] }
             }
         }
-        New-PackEntry -Relative $relative -Path $_.FullName -Extra $extra
+        New-PackEntry -Relative $relative -Path $path -Extra $extra -Sha256 $extracted.hashes[$path]
     })
 
     # 3. 轉檔；沒有任何截圖轉成功就不改動
@@ -110,16 +94,16 @@ try {
 
     # 4. 新 manifest：沿用舊欄位，覆寫檔案清單與轉檔資訊；舊版封存補上基本欄位
     $newManifest = [ordered]@{}
-    if ($manifest) { foreach ($prop in $manifest.PSObject.Properties) { $newManifest[$prop.Name] = $prop.Value } }
+    if ($manifest) { foreach ($key in $manifest.get_Keys()) { $newManifest[$key] = $manifest[$key] } }
     else {
         $newManifest.tool = 'bdd-local-test/recompress-bdd.ps1'
         $newManifest.legacy = $true
         $newManifest.issue = $state.issue
-        $newManifest.topic = $state.topic
         $newManifest.commit = $state.commit
         $newManifest.masked = $false
         $newManifest.unmaskedReason = '舊版封存，未經遮罩登記檢查'
     }
+    $newManifest.topic = $topic
     $newManifest.schema = 2
     $newManifest.storedFileCount = $plan.stored.Count
     $newManifest.files = $plan.files
@@ -127,7 +111,7 @@ try {
     $newManifest.webp = [ordered]@{ encoder = $encoder.kind; converted = @($webp.converted).Count; skipped = @($webp.skipped); savedBytes = $saved }
     $newManifest.rewrittenLinks = $links.rewritten
     $newManifest.recompressedFrom = [ordered]@{ sha256 = $actual; bytes = $state.bytes; at = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz') }
-    $outPrefix = if ($prefix) { $prefix } else { "$($state.topic)/" }
+    $outPrefix = "$topic/"
 
     # 5. 寫新檔、驗證，再取代舊檔；取代或寫索引任一步失敗都把舊檔搬回原路徑
     Write-BddZip -Stored $plan.stored -Prefix $outPrefix -ManifestJson ($newManifest | ConvertTo-Json -Depth 8) -Target $newZip

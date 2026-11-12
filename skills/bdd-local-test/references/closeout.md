@@ -1,4 +1,4 @@
-# 整合、完整驗證與封存
+# 整合、完整驗證與交付
 
 ### 7-0. 確認收尾模式
 
@@ -18,7 +18,7 @@
 
 | 模式 | 後續流程 |
 |------|----------|
-| 合併回 develop | 執行〈7-1〉至〈7-3〉，包含整合後推送前完整驗證、遠端核對、issue 更新及封存清理。 |
+| 合併回 develop | 執行〈7-1〉至〈7-3〉，包含整合後推送前完整驗證、遠端核對、issue 更新及本機證據清理。 |
 | 轉為正式 feature 分支 | 在功能 worktree 完整 BDD 通過後才執行下列分支轉換；保留工作區與證據供後續開發。 |
 
 **feature 驗證閘門**：選擇 feature 後，先在功能 worktree 最終版本完整執行本次 BDD 全部情境與必要回歸；失敗、阻塞、未執行皆為 0 才能建立或更名為正式分支。未通過時保留原分支與證據，修正並重測，不宣稱正式 feature 已交付。已有同一版本、情境與環境的完整驗證可沿用；只有分支名稱改變、HEAD 與未提交內容均未變時不重跑。後續同步 develop、解衝突或受測條件改變時，須在新版本重新完整驗證。此階段只記「feature 功能驗收通過」，不記「develop 整合驗收通過」。worktree 是工作目錄，轉換的是承載成果的分支。
@@ -28,7 +28,7 @@
 - 目前是本輪專用分支時，使用 `git branch -m <名稱>` 改名；若為 detached HEAD 或目前在 `develop`、主分支或共用分支，使用 `git switch -c <名稱>` 從目前 HEAD 建立分支，保留原分支。已在使用者指定的 feature 分支時沿用。
 - 轉換後核對分支名稱、HEAD 與工作區異動；HEAD 和未提交內容須保持一致。不將未提交異動自動提交，不刪除舊遠端分支。改名後若仍追蹤舊名稱的 upstream，解除該追蹤，避免後續誤推。
 - 遠端推送僅在使用者已要求時，以非強制方式推送並設定同名 upstream；否則記「僅本機轉換」。推送失敗保留本機分支並記錄原因。
-- 將原分支、正式名稱、受測 SHA、推送狀態與 worktree 保留原因寫入〈收尾紀錄〉。此模式不執行〈7-1〉的 develop 合併或 issue 結案，不自動清理 worktree；最終完整驗證全通過後，仍須依下節〈共用 issue 交付〉自動追加修正說明與驗證證據。本機結果與證據已保存後，依〈服務停止〉立即停止本輪服務與測試瀏覽器，不等待 issue 更新。需要本機封存時依使用者要求處理。
+- 將原分支、正式名稱、受測 SHA、推送狀態與 worktree 保留原因寫入〈收尾紀錄〉。此模式不執行〈7-1〉的 develop 合併或 issue 結案，不自動清理 worktree；最終完整驗證全通過後，仍須依下節〈共用 issue 交付〉自動追加修正說明與驗證證據。本機結果與證據已保存後，依〈服務停止〉立即停止本輪服務與測試瀏覽器，不等待 issue 更新。完成附件核對後，依〈7-3〉清理已核對的本機截圖，保留工作區與報告。
 
 以下〈7-1〉的合併流程及 worktree 清理規則只適用於使用者選擇「合併回 develop」；〈服務停止〉依本機 BDD、證據保存與資源釋放狀態判定，不受分支模式限制。
 
@@ -53,7 +53,7 @@
 3. **一致性審核閘門**：更新 issue 前，依當下 issue 系統與單號、完整需求來源、repo／分支／commit 範圍、BDD 報告與可用 skill 清單，動態選擇最合適的唯讀一致性審核 skill。Redmine issue 且需要需求／程式雙向比對時優先選 `issue-code-consistency-check`；找不到適用 skill 時結果為 `UNAVAILABLE`，不得繞過審核。派子代理只讀原始需求、git 事實與證據，不修改程式、測試、BDD 輸出或 issue；只有 `PASS` 可進入下一步，`FAIL`、`UNVERIFIED`、`UNAVAILABLE` 都停止 issue 寫入並回報原因。
    審核通過後才用可用的 issue 工具追加給 PM 看的簡短結果，並**實際上傳最後一輪的修正後截圖**。回覆優先遵循〈共用 issue 交付〉讀取的 issue-writing skill 與驗證完成模板，不在此另訂標題、欄位或順序；根因、Scenario、commit、檔案行號與一致性審核細節留在 BDD 報告及查核報告。純 API／DB 情境依模板註明截圖不適用並附真實替代驗證結果。優先先上傳附件、取得可用附件識別或連結，再一次儲存註記；若是 Redmine，先讀 `~/.redmine-issue-guides/SKILL.md`（存在時）與專案指引，保留原概述與驗收標準，在適當欄位追加註記；未另有明確授權時保留狀態；已授權的狀態更新才依專案流程執行。
    上傳前檢查截圖不含帳密或不應外傳的資料，並以 `mask-evidence.ps1 -Status` 確認要上傳的圖片全部是 `masked`；有 `unmasked`／`stale` 就先遮罩、登記再上傳。確認 issue 註記與每張截圖附件真的儲存成功，記下 issue 連結及附件清單。若註記已儲存但附件失敗，分別記錄「註記已更新／附件未完成」，重試前先讀現有註記，避免重複留言。沒有可用工具、附件上傳失敗或權限不足時，保留截圖與可貼上的說明，回報使用者；不要假稱已更新或只貼尚未上傳的圖片連結。
-4. **準備完成紀錄**：在報告〈收尾紀錄〉先列出合併前後 SHA、`develop` 遠端核對、整合後推送前完整驗證結果、issue 連結、修正後截圖與上傳狀態。服務依下節在本機驗證完成後立即清理，不等待 issue 更新；依〈7-2〉完成最終報告，再依〈7-3〉封存與清理 worktree；避免遠端或 issue 附件停在舊狀態。當收尾任何一項未完成時，明確區分「本機 all pass」與「develop 已合併／issue 已更新」。
+4. **準備完成紀錄**：在報告〈收尾紀錄〉先列出合併前後 SHA、`develop` 遠端核對、整合後推送前完整驗證結果、issue 連結、修正後截圖與上傳狀態。服務依下節在本機驗證完成後立即清理，不等待 issue 更新；依〈7-2〉完成最終報告，再依〈7-3〉清理本機截圖與 worktree；避免遠端或 issue 附件停在舊狀態。當收尾任何一項未完成時，明確區分「本機 all pass」與「develop 已合併／issue 已更新」。
 
 ### 服務停止
 
@@ -63,7 +63,7 @@
 
 **執行觸發點**：每輪記錄驗證結果後、任何交付詢問或外部上傳之前，立即判定上述條件並執行停止；最終回覆前再核對埠與瀏覽器程序。無法取得主機程序資訊時回報阻塞，不把空白沙箱程序清單當作已停止。
 
-**證據先維持 `evidence/` 原狀**，供 issue 上傳、報告連結與最後檢查使用。不要提前刪除原圖或只壓 `evidence/`；最終依〈7-3〉把 `.feature`、`REPORT.md`、`verification.json` 與全部證據一次封成完整 BDD 包。若舊輪次已有 `evidence.zip`，保留它及本輪新證據，不能覆蓋舊檔；封存腳本會把它攤平併入，不必事先手動處理。
+截圖暫存於本輪 `evidence/`，供遮罩、上傳及附件核對。既有 `evidence.zip` 依[舊封存清理](archive.md)處理。
 
 **達成上述條件且在 worktree 裡測時，逐一停止本輪功能與整合 worktree 綁在各自 `127.0.0.N` 上的前後端服務**，
 釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；一般主目錄（`isWorktree=false` 且未指定 `-Isolate`）一律不停。明確以 `-Isolate` 啟動的多專案主 checkout 屬於本輪隔離服務，清理時對同一工作區使用 `stop-slot-services.ps1 -Isolate`，仍須核對路徑歸屬，不能套用到使用者一般 localhost 服務。
@@ -82,34 +82,21 @@
 
 ### 7-2. 完成最終報告
 
-服務清理後，才把實際結果填進 `REPORT.md` 與〈收尾紀錄〉，連同最後一輪 `verification.json` 核對。報告記錄受測程式 SHA、情境版本及已核對的遠端 HEAD；不建立或推送純報告 commit。報告的「證據封存」欄先寫「待依〈7-3〉產生完整 BDD 封存；實際檔案與 SHA-256 見 issue 後續註記或最終回覆」，避免預先宣稱已完成。最終報告、驗證與遮罩紀錄及全部證據留在本機輸出，下一步完整封存。已有 Git 追蹤的輸出依 [版控分工](version-control.md) 遷移，不自動提交更新或丟棄異動。限定報告任務保存本機檔案，不自行推送 develop 或更新 issue。
+服務清理後，才把實際結果填進 `REPORT.md` 與〈收尾紀錄〉，連同最後一輪 `verification.json` 核對。報告記錄受測程式 SHA、情境版本及已核對的遠端 HEAD；不建立或推送純報告 commit。報告記錄 Redmine 連結、附件 ID、受測 SHA 及情境。未驗證的附件列為待處理。已有 Git 追蹤的輸出依 [版控分工](version-control.md) 遷移，不自動提交更新或丟棄異動。限定報告任務保存本機檔案，不自行推送 develop 或更新 issue。
 
-### 7-3. 最終 BDD 封存與 worktree 清理
+### 7-3. 保留報告並清理本機截圖
 
-**進入關卡**：先重新讀取 issue，核對〈7-1〉的修正註記已儲存、最後一輪每項 UI 截圖已附在對應修正項目且附件可讀；純 API／DB 核對替代證據。將 issue 連結、註記識別、附件清單、本輪 SHA／輪次與核對結果填入〈issue 交付核對〉。尚有缺項、失敗或無法查證時，停在交付步驟並保留原始輸出與 worktree，不先產生最終 ZIP 或刪除。已授權的交付繼續執行，不因服務已停止就結束任務。只有 ZIP 可下載或索引為 `uploaded-verified` 不算通過；腳本不會查詢 issue，主代理須自行核對。明確限定的報告／本機封存或舊資料遷移記錄不適用原因，依該範圍處理。
-
-預設流程在 `develop` 的程式推送及最終報告完成、遠端 SHA 核對、issue 的說明與修正後截圖附件皆成功後，**自動封存完整 BDD 輸出並清理本輪 worktree**。若使用者本次明確只要測試報告、不執行〈7-1〉，可依步驟 1 封存，但不執行 issue 上傳或自動刪除既有 worktree。預設流程任一步未完成就保留原始資料與 worktree，回報卡住的步驟。
-
-1. 封存到**本機封存庫**（不要自己挑「worktree 上層」之類的位置；worktree 開在 repo 底下時，那會落進主 checkout）：
-   ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/archive-bdd.ps1" -Dir <最終 .bdd/單號-主題>
-   ```
-   封存位置依 `-ArchiveRoot` → 環境變數 `BDD_ARCHIVE_ROOT` → `.bdd/config.json` 的 `archiveRoot` → `<使用者目錄>/bdd-archives/<主 checkout 資料夾名>/` 決定，落在受測 repo 任何 worktree（含主 checkout）內就拒絕。腳本會攤平舊 `evidence.zip`、檢查每張圖片都有遮罩登記、**放入受測 commit 當時的模組情境（`features/`）、截圖轉成無損 WebP（有支援 WebP 的 Python Pillow 時；沒有就保留原格式並在 `warnings` 提醒）**、依內容去重、寫入 `bdd-manifest.json`、逐檔比對 SHA-256，並在封存庫的 `index.jsonl` 登記；同主題的舊封存標為 `superseded`。回傳封存檔絕對路徑、SHA-256、大小、檔案數與去重數、`warnings`。缺必要檔案、有未遮罩圖片或驗證失敗時不產生封存檔，照錯誤訊息處理後重跑，不要繞過檢查。細節見 [BDD 封存、遮罩與清理](archive.md)。
-2. 將 ZIP **實際上傳到對應 issue**，確認附件可下載；在 issue 後續註記補充檔名、SHA-256、檔案數、受測程式 SHA 及情境版本。輸出 `exceedsAttachmentLimit` 為 true 時，先依 references 的做法拆分或改附最後一輪截圖，並註明完整封存位置。確認可下載後登記狀態：
-   ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -Mark -Archive <封存檔> -Status uploaded-verified -Attachment <附件 ID 或網址>
-   ```
-   上傳失敗時保留 worktree 與封存檔，狀態維持 `local-only`，回報「封存已建立／issue 附件未完成」，不要假稱已封存到 issue。
-3. 清理工作區證據：對每個待處理的 worktree（與本輪輸出所在的主 checkout）先跑 `prune-bdd.ps1 -Repo <路徑>` 看計畫，確認本輪輸出目錄為 `prune` 後加 `-Apply`。腳本只在證據內容全部收在 `uploaded-verified` 的封存裡時，刪除 `evidence/` 與 `evidence.zip`；`keep` 的項目照原因處理，不手動刪除。
-4. 僅清理本輪使用、能從 `git worktree list --porcelain` 對上絕對路徑的功能與整合 worktree；主 checkout、其他人的 worktree 一律保留。先確認 `develop` 遠端核對成功、ZIP 已在所有待刪 worktree 外且附件可讀、服務已依停止腳本清理。逐一檢查 `git status --porcelain --untracked-files=all` 與被忽略的 BDD 輸出；本輪 `.bdd/<單號-主題>` 的證據應已在步驟 3 清掉；`prune-bdd.ps1` 判為 `keep` 的（例如封存後又新增證據），先重新封存、上傳並登記，再進行清理。被忽略的 `.bdd/` 剩下的 `.feature`、`REPORT.md`、`verification.json`、`masking.json` 已收在封存裡，只對屬於本輪的 BDD 輸出目錄，在核對解析後絕對路徑仍位於目標 worktree 內後移除。其他未提交、未追蹤或忽略檔案一律保留並回報，不使用 `--force`。
-5. 從目標 worktree **外**執行 `git worktree remove <核對過的 worktree 絕對路徑>`，再以 `git worktree list --porcelain` 確認目標已不在清單；刪除失敗就保留現場、回報原因，不自行遞迴刪除整個 worktree。將每個實際清理結果補到 issue 後續註記或最終回覆；已封存的 `REPORT.md` 只記預定清理狀態，避免修改 ZIP 造成 SHA-256 失效。
+1. 依〈7-1〉回讀 Redmine，確認修正註記與對應本輪每張附件可讀。記錄附件 ID 或網址、受測 SHA、情境及本機遮罩截圖的 SHA-256。純 API／DB 項目記錄已交付的替代證據。
+2. 將報告中的本機圖片連結換成已核對的 Redmine 附件連結。保留 `REPORT.md`、`verification.json`、`masking.json` 和本輪受測情境。合併模式在移除 worktree 前，先把這些非圖片檔保存到 worktree 外的本機報告目錄，核對副本可讀且 SHA-256 一致，再記錄保存位置。
+3. 只逐檔清理核對通過的本輪截圖。先確認解析後的路徑仍位於本輪 `evidence/`、未穿越符號連結或 junction，且檔案 SHA-256 與核對紀錄一致。附件缺少、不可讀或本機檔案已變動時，保留該檔與所在 worktree。正式交付使用 Redmine 逐張附件，收尾不建立或上傳圖片 ZIP。
+4. 合併模式確認遠端 SHA、非圖片報告副本及服務停止結果後，以 `git worktree list --porcelain` 核對本輪工作區。只移除本輪使用且已無待保留檔案的 worktree。先檢查未提交、未追蹤與忽略檔案，再從目標外執行 `git worktree remove <絕對路徑>` 並回讀清單。feature 與報告模式保留 worktree。
 
 最後列出本次建立的 `BDD-` 測試資料，**問使用者要不要清除**，不要自己刪。
 回覆依模式提供實際結果，未執行的流程不列成待完成：
 
 - **共同欄位**：收尾模式（未選擇時寫待選擇）、受測版本、通過／失敗／阻塞／未執行數字、報告位置、服務停止結果與 worktree 保存狀態。
-- **合併模式**：補功能分支與 develop 受測 SHA、合併與遠端核對、issue 及證據連結、封存絕對路徑與 SHA-256／大小／檔案數／去重數／實際索引狀態，以及證據和 worktree 清理結果。
-- **feature 模式**：補原分支 → 正式分支、HEAD 與未提交內容核對、upstream／推送狀態、worktree 保留位置；依〈共用 issue 交付〉附 issue 連結、逐項修正與驗證附件、回讀結果，未完成列阻礙，明確限定不回寫時列不適用原因。有要求封存才附封存結果。
-- **報告模式**：補本機保存位置；有要求本機封存才附封存結果。
+- **合併模式**：補功能分支與 develop 受測 SHA、合併與遠端核對、issue 及證據連結、本機非圖片報告位置，以及證據和 worktree 清理結果。
+- **feature 模式**：補原分支 → 正式分支、HEAD 與未提交內容核對、upstream／推送狀態、worktree 保留位置；依〈共用 issue 交付〉附 issue 連結、逐項修正與驗證附件、回讀結果，未完成列阻礙，明確限定不回寫時列不適用原因。附實際清理結果。
+- **報告模式**：補本機保存位置；列出仍待核對的截圖。
 
 任何已選流程的步驟失敗，列出卡住的步驟、錯誤與下一步；同步後複測另說明與上一輪的差異。

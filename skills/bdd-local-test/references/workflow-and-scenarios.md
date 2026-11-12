@@ -70,7 +70,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Check -Dir 
   差異處優先檢查。
 - 跨 repo 時，步驟 4 的環境安全確認要重新做一次——另一個 repo 的連線字串、資料庫、帳號都可能不同。
 - 輪次遞增：新一輪的證據檔名加 `R<輪次>_` 前綴（如 `R2_IC-05_列表單價顯示.png`），不覆蓋前一輪的證據。
-  舊輪次的 `evidence.zip` 不必手動解開，封存時 `archive-bdd.ps1` 會自動攤平；工作區證據已被清理、要從本機封存庫接續時，
+  舊輪次若有 `evidence.zip`，依舊封存指引保留及核對；要從本機舊封存接續時，
   用 `extract-bdd.ps1 -Archive <封存檔> -To <repo>/.bdd` 還原（見 [BDD 封存、遮罩與清理](archive.md)）。
 
 ### 2. 蒐集事實：需求與實作都要看

@@ -50,7 +50,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib/BddArchive.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/BddPack.psm1') -Force
-Add-Type -AssemblyName System.IO.Compression
+Import-Module (Join-Path $PSScriptRoot 'lib/BddExtract.psm1') -Force
 
 $source = Get-NormalizedPath $Dir
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "BDD 輸出目錄不存在：$source" }
@@ -79,26 +79,10 @@ $flattened = @()
 $legacyZip = Join-Path $source 'evidence.zip'
 $hasLegacyZip = Test-Path -LiteralPath $legacyZip -PathType Leaf
 if ($hasLegacyZip) {
-    $zip = [IO.Compression.ZipFile]::OpenRead($legacyZip)
-    try {
-        foreach ($entry in $zip.Entries) {
-            if ($entry.FullName.EndsWith('/')) { continue }
-            $relative = ConvertTo-EvidenceEntryPath $entry.FullName
-            $target = Get-NormalizedPath (Join-Path $source $relative)
-            if (-not (Test-PathUnder $target $source)) { throw "evidence.zip 項目解壓後會跑出輸出目錄：$($entry.FullName)" }
-            $stream = $entry.Open()
-            try { $entryHash = Get-Sha256Hex -Stream $stream } finally { $stream.Dispose() }
-            if (Test-Path -LiteralPath $target) {
-                if ((Get-Sha256Hex -Path $target) -ne $entryHash) {
-                    throw "evidence.zip 與 evidence/ 有同名但內容不同的檔案，請人工確認後再封存：$relative"
-                }
-                continue
-            }
-            [IO.Directory]::CreateDirectory((Split-Path $target -Parent)) | Out-Null
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target)
-            $flattened += $relative
-        }
-    } finally { $zip.Dispose() }
+    $expanded = Expand-BddArchive -Archive $legacyZip -To $source -EvidenceZip
+    $flattened = @($expanded.writtenPaths | ForEach-Object {
+        [IO.Path]::GetRelativePath($source, $_).Replace('\', '/')
+    })
 }
 
 $evidence = @(Get-EvidenceFiles $source)

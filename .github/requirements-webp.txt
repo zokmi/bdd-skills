@@ -1,0 +1,2 @@
+# CPython 3.13, Windows x64 (release verification runner)
+Pillow==13.0.0 --hash=sha256:9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42

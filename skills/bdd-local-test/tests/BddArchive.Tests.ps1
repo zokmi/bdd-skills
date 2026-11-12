@@ -706,6 +706,51 @@ Describe 'recompress-bdd.ps1' {
         { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*SHA-256*'
     }
 
+    It '拒絕無效的 <kind>，並保留封存檔與索引' -ForEach @(
+        @{ kind = 'alias 來源越界'; source = 'outside-sentinel'; expectedHash = $null; errorPattern = '*不安全的路徑*' }
+        @{ kind = 'alias 來源不在 ZIP 內'; source = 'missing.txt'; expectedHash = $null; errorPattern = '*alias 無效*' }
+        @{ kind = 'manifest SHA-256 不符'; source = 'data.txt'; expectedHash = ('0' * 64); errorPattern = '*內容不符*' }
+    ) {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $zip = Join-Path $archiveRoot 'invalid.zip'
+        if ($source -eq 'outside-sentinel') {
+            $sentinel = Join-Path $base 'sentinel.txt'
+            [IO.File]::WriteAllText($sentinel, 'outside ZIP')
+            $simulatedSource = Join-Path ([IO.Path]::GetTempPath()) 'simulated-recompress/src'
+            $source = [IO.Path]::GetRelativePath($simulatedSource, $sentinel)
+        }
+        $manifest = @{
+            topic = 'test-topic'
+            aliases = @{ 'copy.txt' = $source }
+            files = @{}
+        }
+        if ($expectedHash) { $manifest.files['data.txt'] = @{ sha256 = $expectedHash } }
+        $za = [IO.Compression.ZipFile]::Open($zip, 'Create')
+        try {
+            $contents = @{
+                'test-topic/data.txt' = 'original'
+                'test-topic/bdd-manifest.json' = (ConvertTo-Json -InputObject $manifest -Depth 5)
+            }
+            foreach ($item in $contents.GetEnumerator()) {
+                $writer = [IO.StreamWriter]::new($za.CreateEntry($item.Key).Open())
+                try { $writer.Write($item.Value) } finally { $writer.Dispose() }
+            }
+        } finally { $za.Dispose() }
+        $sha256 = (Get-FileHash -LiteralPath $zip).Hash
+        Add-ArchiveIndexEvent $archiveRoot ([ordered]@{
+            event = 'created'; archive = $zip; name = 'invalid.zip'; issue = '1234'; topic = 'test-topic'; commit = 'abc1234'; repo = $null; at = (Get-Date).ToString('o')
+            sha256 = $sha256; bytes = (Get-Item -LiteralPath $zip).Length
+        })
+        $index = Join-Path $archiveRoot 'index.jsonl'
+        $indexHash = (Get-FileHash -LiteralPath $index).Hash
+
+        { & "$script:Scripts/recompress-bdd.ps1" -Archive $zip } | Should -Throw $errorPattern
+        (Get-FileHash -LiteralPath $zip).Hash | Should -Be $sha256
+        (Get-FileHash -LiteralPath $index).Hash | Should -Be $indexHash
+        Test-Path -LiteralPath "$zip.bak" | Should -BeFalse
+        Test-Path -LiteralPath "$zip.recompress.zip" | Should -BeFalse
+    }
+
     It '沒有編碼器時拒絕' {
         $env:BDD_WEBP_ENCODER = 'none'
         try { { & "$script:Scripts/recompress-bdd.ps1" -Archive $old.archive } | Should -Throw '*Pillow*' }
