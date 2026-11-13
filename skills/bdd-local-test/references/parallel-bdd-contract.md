@@ -85,7 +85,7 @@ dirtyPaths 非空時，在派工附文列出異動快照／雜湊及取得位置
 
 verification.path、report、masking 及 evidence 路徑相對於派工 outputDir，不得指向其他組或逃出輸出目錄。`verification.roundIndex` 是既有 verification.json 的 rounds 陣列索引，從 0 起；實際 repo／HEAD／dirtyPaths 以該輪紀錄為準，execution 補上實際工具、網址及服務版本。尚未取得有效版本紀錄時 verification 為 null，blockers 說明原因，不計為可採納的通過。
 
-每個派工情境恰好回傳一筆；尚未執行的也列 not-run。failed 填 expected／actual，blocked 與 not-run 必填 reason；passed 必須附真實路徑證據，UI／API／DB 均可引用 REPORT.md 的對應段落，例如 `REPORT.md#ss-13`，文字須包含實際操作及觀察結果。只有 issue 交付明確需要保留的圖片才列入 evidence 並以 masking.json 核對；供代理即時目視判讀的暫存截圖讀取後立即刪除，不列為派工結果附件。沒有持久圖片時 masking 可為 null。
+每個派工情境恰好回傳一筆；尚未執行的也列 not-run。failed 填 expected／actual，blocked 與 not-run 必填 reason；passed 必須附真實路徑證據，UI／API／DB 均可引用 REPORT.md 的對應段落，例如 `REPORT.md#ss-13`，文字須包含實際操作及觀察結果。依已核准驗證清單保留的圖片列入 evidence 並以 masking.json 核對；供代理即時目視判讀的暫存截圖讀取後立即刪除，不列為派工結果附件。沒有持久圖片時 masking 可為 null。
 
 blockers 每項使用 `{ "reason": "缺少指定角色帳號", "scenarioIds": ["SS-13"], "resolution": "提供合法測試帳號" }`；rerunScenarios 每項使用 `{ "feature": "...", "id": "SS-13", "reason": "共用登入修正後需複測" }`。modifiedPaths 使用 repo 相對路徑，主代理核對是否超出 editablePaths。resourceStates 須涵蓋派工資源；released 指本組已停止使用，不代表服務已停止或資料已刪除。
 
