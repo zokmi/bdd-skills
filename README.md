@@ -69,3 +69,7 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 安裝後可在 Codex 使用 `bdd-local-test` skill。
 
 實際執行測試前，請先閱讀目標專案的指引與環境設定，並依 `SKILL.md` 的安全確認流程操作。
+
+## 授權
+
+本專案採用 [Apache License 2.0](LICENSE)（`Apache-2.0`）。
