@@ -28,7 +28,7 @@ jobs:
         if: runner.os == 'macOS'
         run: sudo ifconfig lo0 alias 127.0.0.4 netmask 255.255.255.255
       - name: Verify internal Node.js CLI and loopback routing
-        run: node --test skills/bdd-local-test/tests/internal-cli.test.cjs skills/bdd-local-test/tests/Test-McpRouteProbe.cjs
+        run: node --test skills/bdd-local-test/tests/internal-cli.test.cjs skills/bdd-local-test/tests/Test-McpRouteProbe.cjs skills/bdd-local-test/tests/bdd-kit.test.cjs
 
   verify:
     runs-on: windows-latest

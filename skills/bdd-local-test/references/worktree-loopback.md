@@ -43,6 +43,8 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <
 6. 同時測兩個 worktree 前，確認兩個 MCP 瀏覽器的登入／儲存狀態互不影響，前端與 API 版本皆正確。核對專案相關檔案的前後 diff，確認沒有因導轉改動 localhost／埠號。
 7. 符合[服務停止](closeout.md#服務停止)的全部收尾條件後，由管理者向本輪終端入口送出 `{"tool":"close"}`，或關閉本輪客戶端連線。確認 MCP 與瀏覽器關閉後，再停止本輪服務。臨時設定在使用程序停止後清理，不停止其他 worktree 或使用者原服務，也不刪除共用分配鎖檔。
 
+完成本輪獨立 MCP 探測後，若需要把瀏覽器的 localhost HTTP(S) 請求改送到 slot（如硬編碼原埠或 slot HTTPS 憑證），使用內建 `route-snippet.cjs --prepared <本輪準備結果 JSON>`。這個入口從 `.bdd/config.json` 讀取前端／API 埠，套用本輪有效埠。把輸出的片段貼到同一個已驗證 session 的 browser_run_code，然後導覽並核對各服務的實際目標。它只處理瀏覽器 HTTP(S)，WebSocket（HMR）仍由 Chromium resolver 處理，程序間連線仍依上述啟動契約設定。參閱[內建實測工具](test-kit.md)。
+
 共用 session 只能序列測試，切換 worktree 前仍須關閉舊瀏覽器並以新設定重新建立及驗證連線；僅換分頁不會更新 localhost 對應。獨立連線不可得時，可繼續獨立的 API／DB 範圍，不宣稱 UI 通過。
 
 ### 啟動專用 MCP 工作階段

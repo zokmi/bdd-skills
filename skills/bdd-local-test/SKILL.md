@@ -7,6 +7,8 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 
 將需求寫成可判定的情境，實際執行並保存可追溯的驗證紀錄。產品缺陷要修正、重啟受影響服務並複測；無法解除的阻塞如實回報。情境存於 `.bdd/modules/<portal>/<主路由>/`；每輪的 `REPORT.md`、`verification.json` 與必要交付證據存於 `.bdd/<單號>-<主題>/`。使用者指定其他範圍或只要情境／報告時，依其要求縮小流程。
 
+實測優先使用內建 localhost 轉送、API 與選配 SQL Server 工具。從受測 worktree 的 `.bdd/config.json` 取得設定，僅在工具缺少情境能力時新增本輪腳本。參閱[內建實測工具](references/test-kit.md)。
+
 ## 共同規則
 
 - **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠在本輪隔離 IP 被占用時，自動分配臨時有效埠。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。用本輪 Playwright MCP 連線通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。

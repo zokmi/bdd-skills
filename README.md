@@ -73,3 +73,11 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 ## 授權
 
 本專案採用 [Apache License 2.0](LICENSE)（`Apache-2.0`）。
+
+## 從自製 BDD kit 遷移
+
+1. 把原本寫死的前端／API 埠、API 前綴、登入欄位與 token 路徑移到各專案的 .bdd/config.json。參考 [設定 schema 與範例](skills/bdd-local-test/schemas/config.schema.json)。
+2. 以內建 route-snippet.cjs 或 routeLocalhostToSlot 取代 localhost router／relay。worktree 換埠時，把本輪 prepare-worktree-mcp.ps1 的結果交給 --prepared。
+3. 將自製 API 呼叫改為 createApi().call，登入改為設定 profile 的 login。把帳密改由參數或環境變數供應，使用本輪系統暫存目錄保存 token。移除全域 NODE_TLS_REJECT_UNAUTHORIZED 覆寫。
+4. 使用 SQL Server 時啟用 kit.database，將連線字串來源移至設定並從受測專案提供 mssql。將既有呼叫改為 createDb().run、query 或 holdAppLock。專案特有的 SQL 與其他擴充留在專案測試來源目錄。
+5. 跑一輪隔離實測，確認請求到達本輪服務、查詢結果正確且證據無憑證，再移除已替換的自製腳本。 [使用方式](skills/bdd-local-test/references/test-kit.md)
