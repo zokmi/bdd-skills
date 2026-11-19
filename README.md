@@ -74,6 +74,10 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 
 本專案採用 [Apache License 2.0](LICENSE)（`Apache-2.0`）。
 
+## 插件開發驗證
+
+PR 與版本標籤共用 `.github/workflows/release.yml` 的 Node 跨平台、Windows Pester、派工契約與 worktree 回歸；只有版本標籤執行發布。開發者以 `npm ci --ignore-scripts` 安裝鎖定的開發依賴，再執行 `npm test` 與 `npm run check:config-validator`。修改設定 Schema 後，執行 `npm run generate:config-validator` 並一併提交產生的驗證器；CI 會拒絕過期輸出。Ajv 僅供產生驗證器，插件執行時不需 npm 安裝；產生碼所含 MIT 元件授權見 `skills/bdd-local-test/scripts/lib/config-validator.LICENSE.txt`。
+
 ## 從自製 BDD kit 遷移
 
 1. 把原本寫死的前端／API 埠、API 前綴、登入欄位與 token 路徑移到各專案的 .bdd/config.json。參考 [設定 schema 與範例](skills/bdd-local-test/schemas/config.schema.json)。

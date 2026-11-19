@@ -1,0 +1,12 @@
+{
+  "name": "bdd-skills-maintenance",
+  "private": true,
+  "scripts": {
+    "generate:config-validator": "node tools/generate-config-validator.cjs",
+    "check:config-validator": "node tools/generate-config-validator.cjs --check",
+    "test": "node --test skills/bdd-local-test/tests/internal-cli.test.cjs skills/bdd-local-test/tests/Test-McpRouteProbe.cjs skills/bdd-local-test/tests/bdd-kit.test.cjs skills/bdd-local-test/tests/config-load.test.cjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
+  }
+}

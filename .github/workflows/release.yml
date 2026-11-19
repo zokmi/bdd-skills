@@ -1,6 +1,7 @@
-name: Release
+name: Verify and Release
 
 on:
+  pull_request:
   push:
     tags:
       - 'v*'
@@ -27,13 +28,17 @@ jobs:
       - name: Configure isolated loopback address on macOS
         if: runner.os == 'macOS'
         run: sudo ifconfig lo0 alias 127.0.0.4 netmask 255.255.255.255
+      - name: Install pinned validator development dependencies
+        run: npm ci --ignore-scripts
+      - name: Check generated configuration validator
+        run: npm run check:config-validator
       - name: Verify internal Node.js CLI and loopback routing
-        run: node --test skills/bdd-local-test/tests/internal-cli.test.cjs skills/bdd-local-test/tests/Test-McpRouteProbe.cjs skills/bdd-local-test/tests/bdd-kit.test.cjs
+        run: npm test
 
   verify:
     runs-on: windows-latest
     steps:
-      - name: Check out tagged commit
+      - name: Check out revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
@@ -44,7 +49,20 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Check tag, main ancestry, and plugin versions
+      - name: Check plugin versions
+        shell: pwsh
+        run: |
+          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).version
+          if ($version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Invalid plugin version: $version"
+          }
+          foreach ($path in @('.claude-plugin/plugin.json', '.codex-plugin/plugin.json')) {
+            $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ($manifest.version -cne $version) { throw "$path version must match plugin.json" }
+          }
+
+      - name: Check tag and main ancestry
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
@@ -111,6 +129,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Test browser cleanup checks failed' }
 
   release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [verify, verify-internal-cli]
     permissions:
       contents: write

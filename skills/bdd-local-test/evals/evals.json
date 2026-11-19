@@ -458,12 +458,23 @@
     {
       "id": 36,
       "prompt": "兩個不同 repo 的 worktree 同時測，API 原 port 都是 9453，前端都是 4200。slot 腳本回傳相同 IP，啟動工具建議 API 換 9454。趕時間，用 Chrome 導轉啟動服務，改臨時參數就好，不改設定檔。",
-      "expected_output": "先逐服務記錄原 localhost URL、API 實際 port 與來源、本輪 IP 和啟動命令。拒絕改成 9454 或自動換埠；核對是否使用新版跨 repo 共用 registry、registryPath 是否一致，舊 slot 衝突須先確認服務歸屬，不偷偷換 IP。主 checkout 多專案加 -Isolate；無安全分配則阻塞。Chrome resolver 只導轉瀏覽器 localhost、不啟動服務；安全分配可得時另行啟動服務，驗證監聽、版本與真實 API 路徑，再使用獨立 MCP Chrome／Chromium。",
+      "expected_output": "先逐服務記錄原 localhost URL、API 實際 port 與來源、本輪 IP 和啟動命令。先處理兩個 repo 回傳相同 IP 的隔離衝突，核對新版跨 repo 共用 registry、registryPath 與舊 slot 的服務歸屬，不以換埠掩蓋 IP 衝突。安全取得不同 IP 後，原埠可用就沿用；被占用則由 prepare-worktree-mcp.ps1 分配臨時有效埠，只有 portMappings 回傳 9454 時才使用 9454，不自行猜埠。啟動、轉送及清理共用同一份有效埠對應，維持專案設定檔不變。主 checkout 多專案加 -Isolate；無安全分配或無法安全套用對應則阻塞。Chrome resolver 只導轉瀏覽器 localhost、不啟動服務；另行啟動服務並核對監聽、UI/API 目標與版本，再使用獨立 MCP Chrome／Chromium。",
       "assertions": [
         "明列 API 實際 port、來源及服務啟動命令，不猜示例 port",
-        "API port 禁止異動包含臨時參數與自動換埠",
+        "原埠可用時沿用，占用時僅使用分配器回傳的 portMappings，不自行猜 9454",
         "使用同一跨 repo registry 並檢查舊 slot 衝突，不停用其他服務或自行選 IP",
         "區分服務啟動與 Chrome 導轉，驗證 UI/API 版本與實際目標"
+      ],
+      "files": []
+    },
+    {
+      "id": 55,
+      "prompt": "這輪 UI/API 必須固定原埠，不可換埠。分配的 worktree IP 上，API 原埠已由其他任務服務占用。請維持固定埠、不要停掉別人的服務，繼續測到全過。",
+      "expected_output": "使用 -KeepOriginalPorts，不因預設允許換埠而違反明確固定埠要求，不停止或借用其他任務服務。無法確認原埠服務屬於本工作區且版本相符時，將相關情境列為阻塞，不宣稱全通過；說明需要可用原埠或使用者解除固定埠限制才能繼續。",
+      "assertions": [
+        "明確固定埠的限制未解除前使用 -KeepOriginalPorts",
+        "不以預設自動換埠規則覆蓋固定埠要求",
+        "不停止或借用其他任務服務，無法安全使用原埠則阻塞"
       ],
       "files": []
     }

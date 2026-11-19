@@ -2,6 +2,8 @@
 
 從受測 worktree 根目錄執行，使用插件的 scripts 絕對路徑。Node.js 18.2 以上可使用轉送和 API 工具。參考 [config.schema.json](../schemas/config.schema.json) 的 examples，以實際專案設定填入 .bdd/config.json 的 kit 欄位。既有的封存、遮罩與情境設定可照常使用。只提交埠、欄位名稱、環境變數名稱與可共用的相對路徑。
 
+`loadKitConfig()` 在回傳設定前依 Schema 驗證整份 JSON；`kit` 內未知欄位、型別錯誤、缺必要欄位及越界值會直接中止，錯誤列出設定檔絕對路徑與 JSON Pointer，不輸出設定值。既有非 `kit` 頂層設定仍可保留。驗證器隨插件附帶，使用者無須安裝 npm 依賴。
+
 ## 瀏覽器 localhost 轉送
 
 先完成 [worktree 隔離與路由探測](worktree-loopback.md)。從同一 worktree 執行：
