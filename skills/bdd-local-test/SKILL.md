@@ -11,6 +11,8 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 
 ## 共同規則
 
+- **情境範圍**：BDD 文件只描述模組使用者操作的成功與異常情境，以角色、操作及可觀察的業務結果為主。純重構、部署設定、SQL migration、工具與文件調整等工程項目，依風險列入驗證清單與報告，不逐項轉成 `.feature`。`@UI`／`@API`／`@DB` 是驗證手段，不是擴張情境範圍的理由；詳細界線見 [情境寫法](references/feature-guide.md)。
+
 - **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠可用時沿用；原埠在本輪隔離 IP 被占用時，由 `prepare-worktree-mcp.ps1` 自動分配臨時有效埠，不自行猜埠。啟動、轉送、測試及清理使用同一份 `portMappings`。使用者要求固定原埠時使用 `-KeepOriginalPorts`，無法安全使用原埠則列阻塞，不以換埠掩蓋跨 repo 的 IP／registry 衝突。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。用本輪 Playwright MCP 連線通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。
 
 - 先讀目標專案的 `AGENTS.md`／`CLAUDE.md`／README、環境設定及 `.bdd/config.json`。本 skill 不預設埠號、帳號、基準分支或資料庫。下文的 `<skill 目錄>` 是此檔所在資料夾。
