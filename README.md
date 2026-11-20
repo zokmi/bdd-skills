@@ -4,11 +4,13 @@
 
 ## 插件介紹
 
-`bdd-skills` 目前提供 `bdd-local-test` skill，適合需要將功能異動轉成驗收情境、執行本機測試、處理失敗後修正並重新驗證的專案。它整合繁體中文情境撰寫、Playwright MCP 本機執行、測試證據保存、模組化情境維護，以及 BDD 結果整理與封存流程。
+`bdd-skills` 提供 `bdd-local-test` 與 `bdd-scenario-audit`：前者維護模組業務情境、執行本機測試與複測並保存證據；後者唯讀檢查既有情境的範圍、可判定性、需求覆蓋及格式。新增或異動情境文件後，自動由未參與撰寫的子代理做合規檢查；可與原有情境審核合併派工。這是代理工作流程中的關卡，不是外部編輯的檔案監聽器。
 
 ## 內容
 
+- 情境範圍：模組對使用者或外部角色承諾的可觀察業務行為，涵蓋畫面操作、外部系統 API、事件與排程的成功及異常流程。純重構、部署設定、SQL migration 等工程調整另列技術驗證與證據，不逐項轉成情境；完整驗證仍涵蓋必要的工程風險。
 - `skills/bdd-local-test/SKILL.md`：將功能異動整理為繁體中文 Gherkin 情境，並在本機執行驗證與產出報告。
+- `skills/bdd-scenario-audit/SKILL.md`：透過獨立唯讀子代理檢查既有情境，列出問題位置、規範依據與修正建議；不代表產品實測通過。Claude Code 可用 `/bdd-skills:bdd-scenario-audit`，Codex 可要求使用 `bdd-scenario-audit`。
 - `assets/`、`references/`、`scripts/`：報告範本、寫作參考與本機驗證輔助腳本。
 - `evals/`：skill 的評估案例定義。
 - `tests/`：封存、遮罩與清理腳本的 Pester 測試（`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`）。

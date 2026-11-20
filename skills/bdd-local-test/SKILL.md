@@ -1,17 +1,17 @@
 ---
 name: bdd-local-test
-description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、Playwright MCP 測 localhost、失敗就修或測到全部通過；每輪實測自動評估子代理分組驗證，以真實 UI／API／資料庫路徑驗證，也處理 cherry-pick、merge 或跨 repo 同步後的複測。
+description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護模組業務行為規格、本機 UI／API／DB 驗證、Playwright MCP 測 localhost、失敗修正與複測，以及 cherry-pick／merge／跨 repo 同步後的結果有效性確認。適用互動畫面、外部系統 API 與事件／排程觸發的業務流程。
 ---
 
 # BDD 情境與本機驗證
 
-將需求寫成可判定的情境，實際執行並保存可追溯的驗證紀錄。產品缺陷要修正、重啟受影響服務並複測；無法解除的阻塞如實回報。情境存於 `.bdd/modules/<portal>/<主路由>/`；每輪的 `REPORT.md`、`verification.json` 與必要交付證據存於 `.bdd/<單號>-<主題>/`。使用者指定其他範圍或只要情境／報告時，依其要求縮小流程。
+本 skill 維護模組對使用者或外部角色承諾的可觀察業務行為，並協調本機驗證。將業務需求寫成可判定的成功與異常情境，工程調整依風險另列技術驗證；兩者都保存可追溯的結果與證據。產品缺陷要修正、重啟受影響服務並複測；無法解除的阻塞如實回報。情境存於 `.bdd/modules/<portal>/<主路由>/`；每輪的 `REPORT.md`、`verification.json` 與必要交付證據存於 `.bdd/<單號>-<主題>/`。使用者指定其他範圍或只要情境／報告時，依其要求縮小流程。
 
 實測優先使用內建 localhost 轉送、API 與選配 SQL Server 工具。從受測 worktree 的 `.bdd/config.json` 取得設定，僅在工具缺少情境能力時新增本輪腳本。參閱[內建實測工具](references/test-kit.md)。
 
 ## 共同規則
 
-- **情境範圍**：BDD 文件只描述模組使用者操作的成功與異常情境，以角色、操作及可觀察的業務結果為主。純重構、部署設定、SQL migration、工具與文件調整等工程項目，依風險列入驗證清單與報告，不逐項轉成 `.feature`。`@UI`／`@API`／`@DB` 是驗證手段，不是擴張情境範圍的理由；詳細界線見 [情境寫法](references/feature-guide.md)。
+- **情境範圍**：BDD 文件描述模組對使用者或外部角色承諾的可觀察業務行為，以角色、前置條件、操作或觸發事件、成功與異常結果為主。外部系統 API、事件與排程的業務流程同樣適用，不限畫面操作。純重構、部署設定、SQL migration、工具與文件調整等工程項目，依風險列入驗證清單與報告，不逐項轉成 `.feature`。`@UI`／`@API`／`@DB` 是驗證手段，情境範圍依業務承諾判定；詳細界線見 [情境寫法](references/feature-guide.md)。
 
 - **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠可用時沿用；原埠在本輪隔離 IP 被占用時，由 `prepare-worktree-mcp.ps1` 自動分配臨時有效埠，不自行猜埠。啟動、轉送、測試及清理使用同一份 `portMappings`。使用者要求固定原埠時使用 `-KeepOriginalPorts`，無法安全使用原埠則列阻塞，不以換埠掩蓋跨 repo 的 IP／registry 衝突。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。用本輪 Playwright MCP 連線通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。
 
@@ -21,7 +21,8 @@ description: 用於 BDD、Gherkin、驗收情境、feature 檔、本機測試、
 - BDD 的 `@UI` 情境必須使用 Playwright MCP 操作與取證，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。MCP 無法連線或無法滿足隔離時先排查；仍無法執行則列「阻塞」。共用 MCP session 的 UI 情境序列執行；純 `@API`／`@DB` 情境維持各自的真實驗證工具。
 - 報告只對記錄的 repo、commit 與工作區狀態有效。同步或受測檔案變更時先用 `bdd-verification.ps1 -Check` 判定；`rerun` 代表舊結果失效，完整重跑的時機依下節驗證階段決定，不在合併前後各跑一輪。
 - **資料庫環境確認是實測前的必要關卡**：依 [執行前的安全確認](references/local-execution.md) 展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，收到使用者針對該目標的明確確認後，才可開始 UI／API／DB 實測、啟動可能連庫寫入的服務或派實測子代理。本機與唯讀情境同樣須確認；只告知、已提問、沉默或「測到全過」不算確認。同任務目標與授權範圍未變的複測沿用既有明確確認；目標或範圍改變時重新確認。缺帳密不得繞過驗證，相關情境列「阻塞」。
-- 依 [情境審核](references/scenario-review.md) 先派子代理選取 issue BDD 情境範圍，再派子代理產出預計驗證項目清單。新增或修改情境先跑 `bdd-modules.ps1 -Lint`。把清單與情境一併交獨立唯讀子代理審核，通過後才派工或開始實測。
+- **情境文件異動自動檢查**：新增、修改、刪除、改名或整併 `.feature`，以及修改影響情境歸屬／規則的 `MODULE.md` 後，自動依 [bdd-scenario-audit](../bdd-scenario-audit/SKILL.md) 派未參與撰寫的唯讀子代理檢查，不另問是否執行。先跑 `bdd-modules.ps1 -Lint`；與下述獨立審核可合併派工並分別記錄結論。必修修正後複審，無子代理時記阻塞，不以自行檢查代替獨立通過。
+- 依 [情境審核](references/scenario-review.md) 先派子代理選取 issue BDD 情境範圍，再派子代理產出預計驗證項目清單。把清單與情境一併交獨立唯讀子代理審核，文件合規與情境審核通過後才派工或開始實測。
 - 每輪實際 BDD 測試都必須由實測子代理執行，主代理負責範圍審核、分組、派工、監督與彙整；至少一組也派一名子代理，兩組以上依資源可用情況分批派工。不可用主代理親自執行實測作為一般 fallback。開始實測與派工前，先依 [實測範圍審核](references/execution-workflow.md#實測範圍審核) 取得未參與執行的獨立唯讀子代理 PASS。情境只撰寫或整理既有報告而不實測時不派實測子代理。若平台確實沒有子代理派工能力，停止實測並記錄阻塞，不可改由主代理測試或假稱已派工。
 - 依審核通過的清單擷取並遮罩登記情境截圖，保存在本輪 `evidence/` 並於報告連結。issue 交付只取最終驗證輪所需的圖，回讀確認附件可讀後清除該交付副本。代理驗證時為查看畫面而暫存的其他截圖，讀取結果並記下必要的文字斷言後立即刪除，不放入持久 evidence、報告圖片連結或封存。全通過表示失敗、阻塞、未執行皆為 0，且每個情境都經真實路徑驗證。
 - issue 必要截圖與 worktree 清理依 [整合與交付](references/closeout.md) 執行；其他代理即時驗證截圖判讀後立即刪除，不因 issue 交付未完成而保留。
