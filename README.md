@@ -24,7 +24,7 @@
 
 處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理先讀適用的 issue-writing skill 與驗證完成模板，優先依其回覆格式、標題、欄位順序與落點追加修正項目與驗證說明（不固定另一套格式或「IT 修正驗證完成」標題），只上傳 issue 明確需要的最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留必要交付證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
 
-指定 issue 時先由子代理驗證本單需求與驗收項目。已有回寫授權且其他相關測案待驗時，本單結果審核通過後，由專責子代理更新 issue 並回讀確認，再派工執行其他相關測案。正式交付同樣由專責子代理執行。詳見 [Issue 優先驗證與回寫](skills/bdd-local-test/references/execution-workflow.md#issue-優先驗證與回寫)。
+每輪先驗證核心異動及其必要前置。指定 issue 時，核心異動驗完才派子代理驗同單其餘驗收項目。已有回寫授權且其他相關測案待驗時，本單結果審核通過後，由專責子代理更新 issue 並回讀確認，再派工執行其他相關測案。正式交付同樣由專責子代理執行。詳見 [Issue 優先驗證與回寫](skills/bdd-local-test/references/execution-workflow.md#issue-優先驗證與回寫)。
 
 核准的驗證截圖保存於本輪 `evidence/`。代理臨時截圖判讀後立即刪除。issue 必要截圖待回讀 Redmine 確認附件可讀後清理本機副本；附件未完成時只保留需要重試交付的圖片。
 
