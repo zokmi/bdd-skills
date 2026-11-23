@@ -1,91 +1,103 @@
 # BDD Skills
 
-提供 Claude Code 與 Codex 使用的繁體中文 BDD 測試插件，協助團隊把需求整理成可判定的 Gherkin 驗收情境，透過真實的 UI、API 與資料庫路徑在本機驗證，並保留可追溯的測試報告與證據。
+[English](README.md) · [繁體中文](README.zh-TW.md)
 
-## 插件介紹
+A Traditional Chinese BDD testing plugin for Claude Code and Codex. It helps teams turn requirements into verifiable Gherkin acceptance scenarios, run them locally through real UI, API, and database paths, and retain traceable reports and evidence.
 
-`bdd-skills` 提供 `bdd-local-test` 與 `bdd-scenario-audit`：前者維護模組業務情境、執行本機測試與複測並保存證據；後者唯讀檢查既有情境的範圍、可判定性、需求覆蓋及格式。新增或異動情境文件後，自動由未參與撰寫的子代理做合規檢查；可與原有情境審核合併派工。這是代理工作流程中的關卡，不是外部編輯的檔案監聽器。
+## About the plugin
 
-## 內容
+`bdd-skills` bundles `bdd-local-test` for maintaining business scenarios by module, running and rerunning local tests, and saving evidence. It also includes `bdd-scenario-audit` for read-only checks of scenario scope, verifiability, requirements coverage, and format. When the agent workflow adds or changes scenario files, an independent subagent checks compliance. This check can share an assignment with an existing scenario audit. The check runs within the agent workflow.
 
-- 情境範圍：模組對使用者或外部角色承諾的可觀察業務行為，涵蓋畫面操作、外部系統 API、事件與排程的成功及異常流程。純重構、部署設定、SQL migration 等工程調整另列技術驗證與證據，不逐項轉成情境；完整驗證仍涵蓋必要的工程風險。
-- `skills/bdd-local-test/SKILL.md`：將功能異動整理為繁體中文 Gherkin 情境，並在本機執行驗證與產出報告。
-- `skills/bdd-scenario-audit/SKILL.md`：透過獨立唯讀子代理檢查既有情境，列出問題位置、規範依據與修正建議；不代表產品實測通過。Claude Code 可用 `/bdd-skills:bdd-scenario-audit`，Codex 可要求使用 `bdd-scenario-audit`。
-- `assets/`、`references/`、`scripts/`：報告範本、寫作參考與本機驗證輔助腳本。
-- `evals/`：skill 的評估案例定義。
-- `tests/`：封存、遮罩與清理腳本的 Pester 測試（`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`）。
-- worktree／MCP 設定回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-WorktreeMcp.ps1`，涵蓋四程序同時分配、slot 重用、獨立 MCP 設定、原埠保留與占用時分配臨時埠。產品 UI BDD 另行驗證。
-- 跨專案分配回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1`，使用真實暫存 Git repo／worktree 驗證首次並行分配、IP 重用與舊 slot 衝突拒絕。
-- Chrome 真實導轉實測：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <已安裝的 @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <證據目錄> -UseDefaultRegistry`。建立兩個暫存專案、四個 worktree 及兩個隔離主 checkout。六組獨立無頭 Chrome／stdio MCP 各自先通過 localhost 路由探測，再同時驗證 UI、API 的 HTTP 身分、目的 IP、Origin 與儲存隔離。預設共用 UI 4200、API 9453，埠被占用時可用 `-UiPort` 與 `-ApiPort` 指定測試埠。證據保存於 `result.json` 與各組的 `probe-evidence.json`。需可建立測試 Git 目錄及啟動本機服務的權限，並預先安裝 Chrome／Playwright MCP。省略 `-UseDefaultRegistry` 時使用 fixture 專屬登記。
+## What's included
 
-執行本機 UI 情境時，skill 必須用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或無法滿足 worktree 隔離時，先排查並修復；仍無法執行的 UI 情境列為阻塞，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。共用 MCP session 的 UI 情境序列執行。情境照功能模組持續維護在 `.bdd/modules/`，每張單只留本輪結果與必要交付證據（見 `skills/bdd-local-test/references/modules.md`）。先派子代理選取 issue 的 BDD 情境範圍，再派子代理產出預計驗證項目清單。情境與清單一併交獨立子代理審核，通過才派工實測，審核方式見 `skills/bdd-local-test/references/scenario-review.md`。實測後，獨立子代理依核准清單審核結果報告與證據。結果報告與一致性審核均通過後才更新 issue。依核准清單遮罩、登記並保存截圖。issue 交付取最終驗證輪所需的截圖；代理驗證用途的臨時截圖判讀後立即刪除。worktree 開發與相關回歸通過後，自動詢問兩種交付方式：轉為正式 feature 分支或合併回 develop；本任務已指定時沿用，不重問。未回答前保留工作區，不轉換分支、合併或推送；明確只要情境或報告的任務不觸發交付詢問，也不列為第三選項。服務停止獨立依收尾指引判定，BDD 全通過、本機結果與必要證據已保存、截圖驗證審核已通過（或已記錄不適用），且所有實測代理已釋放資源後，自動停止本輪 worktree 服務與測試瀏覽器，不等待 issue 更新或附件上傳，不等待模式選擇或封存。feature 模式先在功能 worktree 完整 BDD 通過，再確認分支名稱並轉換，保留工作區與必要交付證據；僅改名且版本與環境未變不重跑。選擇合併模式時，開發中只測修正與相關回歸，完整驗證集中在最新 `develop` 整合後、推送前一次；同版本推送後只核對 SHA、更新對應 issue 並附必要的最後輪修正證據；回讀 Redmine 附件後清理本機截圖，保留非圖片報告，合併模式再清理本輪 worktree。舊封存的核對與保留方式見 `skills/bdd-local-test/references/archive.md`。
+- Scenario scope covers observable business behavior a module promises to users or external actors, including success and failure paths for UI interactions, external APIs, events, and scheduled jobs. Record technical checks and evidence separately for engineering changes such as refactors, deployment configuration, and SQL migrations. Full verification still covers the relevant engineering risks.
+- `skills/bdd-local-test/SKILL.md` turns feature changes into Traditional Chinese Gherkin scenarios, runs local verification, and produces reports.
+- `skills/bdd-scenario-audit/SKILL.md` uses an independent read-only subagent to identify issues in existing scenarios and report their locations, the applicable rules, and suggested fixes. Product test results require a separate test run. In Claude Code, use `/bdd-skills:bdd-scenario-audit`. In Codex, ask for the `bdd-scenario-audit` skill.
+- `assets/`, `references/`, and `scripts/` contain report templates, writing guides, and local verification utilities.
+- `evals/` defines skill evaluation cases.
+- `tests/` contains Pester tests for archiving, redaction, and cleanup scripts (`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`).
+- The worktree and MCP configuration regression check (`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-WorktreeMcp.ps1`) covers concurrent allocation across four processes, slot reuse, independent MCP configuration, reuse of original ports, and temporary port assignment when a port is busy. Run product UI BDD separately.
+- The cross-project allocation regression check (`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1`) uses real temporary Git repositories and worktrees to test concurrent first-time allocation, IP reuse, and rejection of conflicting legacy slots.
+- The live Chrome network routing check uses `pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <installed @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <evidence directory> -UseDefaultRegistry`. It creates two temporary projects, four worktrees, and two isolated main checkouts. Six independent headless Chrome and stdio MCP sessions each pass the localhost routing probe, then verify UI and API HTTP identity, destination IP, Origin, and storage isolation concurrently. The shared defaults are UI port 4200 and API port 9453. If either is busy, specify test ports with `-UiPort` and `-ApiPort`. The test saves evidence in `result.json` and each group's `probe-evidence.json`. Install Chrome and Playwright MCP beforehand, and ensure you can create temporary Git directories and start local services. Omit `-UseDefaultRegistry` to use the fixture's dedicated registry.
 
-## BDD 版控分工
+Run local UI scenarios against localhost through a connected Playwright MCP session. Fix any product defects, restart the service, and rerun the tests. Troubleshoot the connection or worktree isolation first if Playwright MCP is unavailable. If it still cannot run, mark the affected UI scenarios as blocked. Playwright MCP is required for these scenarios. Run scenarios sequentially when they share an MCP session.
 
-處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理先讀適用的 issue-writing skill 與驗證完成模板，優先依其回覆格式、標題、欄位順序與落點追加修正項目與驗證說明（不固定另一套格式或「IT 修正驗證完成」標題），只上傳 issue 明確需要的最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留必要交付證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
+Maintain scenarios by feature module in `.bdd/modules/` and keep each issue's results and required delivery evidence scoped to the current run. Assign subagents first to select the issue's BDD scope, then to prepare the verification checklist. An independent subagent reviews the scenarios and checklist before test assignments begin. After execution, an independent subagent reviews the report and evidence against the approved checklist. Update the issue after the report and consistency review pass. Redact, register, and retain screenshots according to the checklist. Use screenshots from the final verification round for issue delivery and remove temporary agent screenshots after inspection. [Module maintenance](skills/bdd-local-test/references/modules.md) · [Scenario review](skills/bdd-local-test/references/scenario-review.md)
 
-每輪先驗證核心異動及其必要前置。指定 issue 時，核心異動驗完才派子代理驗同單其餘驗收項目。已有回寫授權且其他相關測案待驗時，本單結果審核通過後，由專責子代理更新 issue 並回讀確認，再派工執行其他相關測案。正式交付同樣由專責子代理執行。詳見 [Issue 優先驗證與回寫](skills/bdd-local-test/references/execution-workflow.md#issue-優先驗證與回寫)。
+After worktree development and related regression checks pass, ask the user whether to convert the worktree to a feature branch or merge the changes back into `develop`, unless they already chose. Keep the workspace as it is until they choose. A scenarios-only or report-only task skips the delivery choice. Stop the current worktree services and test browsers as soon as all BDD tests pass, local results and required evidence are saved, screenshot review passes or is marked inapplicable, and all test agents release their resources. This cleanup can proceed while issue updates, uploads, delivery choices, or archiving are pending.
 
-核准的驗證截圖保存於本輪 `evidence/`。代理臨時截圖判讀後立即刪除。issue 必要截圖待回讀 Redmine 確認附件可讀後清理本機副本；附件未完成時只保留需要重試交付的圖片。
+For feature-branch delivery, run the full BDD suite in the feature worktree before confirming the branch name and converting it. Keep the worktree and required delivery evidence. A rename with the same revision and environment uses the existing test results. For delivery into `develop`, run tests for the fix and relevant regressions during development, then run full verification once on the latest integrated `develop` before pushing. After pushing that revision, check the remote SHA, update the issue, and attach the required evidence from the final verification round. Read back the Redmine attachments before removing local screenshots. Keep non-image reports and clean up the current worktree after merge delivery. [Archive verification and retention](skills/bdd-local-test/references/archive.md)
 
-開始任何 UI／API／DB 實測前，插件必須展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，並等待使用者明確確認。本機與唯讀情境也適用；只告知或使用者只說「測到全過」不算確認。未確認時不實測、不派實測子代理；同任務目標與範圍未變的複測沿用確認，變更或跨 repo 則重新確認，並在報告保留依據。
+## BDD version control and delivery
 
-每次 BDD 開始前由 skill 呼叫內部 CLI，驗證並補齊目標專案忽略規則，保留模組情境及共用設定。重跑不重複新增，衝突會回報，既有追蹤產物只列出待處理項目。
+For a specified issue, the lead agent reads the applicable issue-writing skill and verification-completion template after the final full BDD run passes and the consistency review returns `PASS`. Use the template's reply format, title, field order, and placement for the fix and verification notes. Upload the final round's redacted screenshots or API or database evidence required by the issue, then read the issue back to verify the note and attachments. Both feature-branch and merge-to-`develop` delivery include the issue update. For the merge workflow, push and verify the remote SHA first. Follow any explicit scope restriction on scenarios, reports, or issue updates. Changing issue status or closing an issue requires separate authorization. If there is no unique issue, permission is insufficient, review fails, or an upload fails, retain the required evidence and report BDD and issue delivery status separately. The feature worktree stays in place after the issue update. [Shared issue delivery](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)
 
-多專案或 worktree 使用各自的 loopback IP，原埠可用時沿用，占用時由 `prepare-worktree-mcp.ps1` 自動分配本輪有效埠。啟動、測試及清理使用同一份埠號對應，維持原始專案設定、系統 hosts 與全域代理原狀。並行 UI 測試前須建立獨立 MCP 連線，核對前端與 API 的實際目標及版本。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。
+Verify the core change and its prerequisites first in each round. For a specified issue, finish the core checks before assigning the rest of that issue's acceptance tests. If issue updates are authorized and related tests are still pending, a dedicated subagent updates the issue and reads it back once its results pass review. Assign the remaining related tests afterward. A dedicated subagent also handles final delivery. [Issue verification and updates](skills/bdd-local-test/references/execution-workflow.md#issue-優先驗證與回寫)
 
-需要登入的情境會優先沿用同環境、同帳號與角色的登入狀態，失效時改走專案配置的測試登入流程。若專案需要人工完成 MFA 等步驟，驗證成功後可保存狀態供下次重用。設定及使用方式見 [BDD 測試登入](skills/bdd-local-test/references/authentication.md)。
+Save approved screenshots under the run's `evidence/` directory. Delete temporary agent screenshots after inspection. Remove local copies of required issue screenshots once Redmine confirms they are readable. If an upload fails, keep the images needed for the retry.
 
-隔離 UI 使用 [專用 MCP 工作階段](skills/bdd-local-test/references/worktree-loopback.md#啟動專用-mcp-工作階段) 自動載入本輪設定、驗證 localhost 路由，並在同一條連線依序呼叫 Playwright MCP 工具。Chrome 回歸測試可省略 `-McpCli` 以驗證插件預設的離線 npm 啟動路徑。
+Before running any UI, API, or database test, show the actual database host or instance, database name, environment, configuration source, and read/write scope, then wait for the user's explicit confirmation. This applies to local and read-only scenarios. A notice or a request to keep testing until everything passes does not count as confirmation. Hold testing and test-agent assignments pending confirmation. Reuse confirmation for reruns with the same target and scope. Confirm again when either changes or testing moves to another repository, and record the basis in the report.
 
-以 `@P0`／`@P1`／`@P2` 標示情境的業務影響，並按新功能、臭蟲修正、資安、資料遷移或工程調整核對必測項。影響可界定的小 issue 可用 TARGETED，涵蓋受影響的 P0、`@core`、本單情境及必要回歸。實測前由獨立子代理對照驗收條件與 diff 審核清單。詳見 [情境等級與必測範圍](skills/bdd-local-test/references/scenario-priority.md)及 [品質閘門](skills/bdd-local-test/references/quality-gate.md)。
+At the start of each BDD run, the skill calls its internal CLI to verify and complete the target project's ignore rules while retaining module scenarios and shared configuration. Repeated runs avoid duplicate rules, report conflicts, and list existing tracked artifacts for follow-up.
 
-每輪實際 BDD 測試都由實測子代理執行；主代理審核範圍、分組、派工、監督及彙整。單組也派一名子代理，多組按環境隔離與可用名額分批或並行派工；共用服務與資料無法隔離的組別由子代理序列執行。沒有子代理工具或使用者明確禁用時停止實測並回報阻塞。報告記錄執行模式、實際代理與派工契約；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
+Each project or worktree uses its own loopback IP. Reuse the original ports where available. If a port is busy, `prepare-worktree-mcp.ps1` assigns a port for the current run. Startup, testing, and cleanup share the same port mapping, preserving the original project configuration, system hosts file, and global proxy settings. Set up independent MCP connections before running UI tests in parallel, then verify the frontend and API destinations and versions. [Worktree isolation](skills/bdd-local-test/references/worktree-loopback.md)
 
-Git 僅保存 `.bdd/modules/` 的情境與 `MODULE.md`、不含敏感或個人設定的 `.bdd/config.json`。每輪 `.bdd/<單號>-<主題>/` 的報告、驗證與遮罩紀錄、必要交付截圖、log 和瀏覽器 profile 均不新增到 Git；非圖片紀錄由本機輸出保存，issue 交付截圖核對後留在 Redmine，其他核准的驗證截圖留在本機，代理驗證暫存圖判讀後立即刪除。收尾不另建純報告提交。維持既有輸出路徑，忽略規則、既有追蹤資料遷移與跨工作區還原見 [版控分工](skills/bdd-local-test/references/version-control.md)。
+For scenarios that require authentication, reuse the login state for the same environment, account, and role while it is valid. If it expires, use the project's configured test login. For manual steps such as MFA, save the state for reuse after verifying the login. [BDD test login](skills/bdd-local-test/references/authentication.md)
 
-## 安裝到 Claude Code
+The [dedicated MCP session](skills/bdd-local-test/references/worktree-loopback.md#啟動專用-mcp-工作階段) for isolated UI testing automatically loads the current run's configuration, verifies localhost routing, and invokes Playwright MCP tools sequentially over one connection. Omit `-McpCli` from the Chrome regression check to test the plugin's default offline npm launch path.
 
-Claude Code 2.1.275 以上可在互動工作階段輸入一條指令，加入此 marketplace 並安裝 plugin：
+Tag business impact with `@P0`, `@P1`, or `@P2`. Determine required checks based on whether the change is a feature, bug fix, security change, data migration, or engineering change. For a small issue with a well-defined impact, use TARGETED to cover affected P0 and `@core` cases, issue scenarios, and required regressions. Before execution, an independent subagent checks the list against the acceptance criteria and diff. [Scenario priorities and required coverage](skills/bdd-local-test/references/scenario-priority.md) · [Quality gate](skills/bdd-local-test/references/quality-gate.md)
+
+Test subagents execute every BDD run. The lead agent reviews the scope, groups tests, assigns and monitors work, and compiles results. Assign a subagent even for a single group. With multiple groups, schedule batches or parallel runs based on environment isolation and available agent slots. Run groups sequentially when their services or data cannot be isolated. Mark execution as blocked if subagents are unavailable or the user explicitly disables them. Record the execution mode, agents, and assignment contracts in the report. Scenario review and test execution use separate assignments. The lead agent checks each group's evidence, revision, and scenario coverage. Run full verification on the final integrated revision. The structured contract provides three JSON Schemas and a read-only summarizer that produces `summary.json` and `SUMMARY.md`. [Parallel BDD with subagents](skills/bdd-local-test/references/parallel-bdd.md) · [Structured contract](skills/bdd-local-test/references/parallel-bdd-contract.md)
+
+Track scenarios and `MODULE.md` under `.bdd/modules/`, along with `.bdd/config.json` when it contains no sensitive or personal settings. Keep each run's reports, verification and redaction records, delivery screenshots, logs, and browser profile under `.bdd/<issue>-<topic>/` outside Git. Keep non-image records locally and required issue screenshots in Redmine after confirming delivery. Other approved screenshots stay local. Remove temporary agent screenshots after inspection. Close out the run without a separate report-only commit and keep the existing output paths. [Ignore rules, tracked data migration, and worktree recovery](skills/bdd-local-test/references/version-control.md)
+
+## Install in Claude Code
+
+In an interactive session on Claude Code 2.1.275 or later, add the marketplace and install the plugin with one command.
 
 ```text
 /plugin install bdd-skills --marketplace zokmi/bdd-skills
 ```
 
-首次加入 marketplace 時依提示確認，並選擇安裝範圍。安裝後的技能指令是 `/bdd-skills:bdd-local-test`。
+When adding the marketplace for the first time, confirm the prompt and choose the installation scope. After installation, use `/bdd-skills:bdd-local-test`.
 
-已安裝者可在終端機更新 marketplace 與 plugin；更新後重啟 Claude Code 以載入新版本：
+If the plugin is already installed, update the marketplace and plugin from a terminal, then restart Claude Code to load the new version.
 
 ```text
 claude plugin marketplace update zokmi-bdd-skills
 claude plugin update bdd-skills@zokmi-bdd-skills
 ```
 
-## 安裝到 Codex
+## Install in Codex
 
-在終端機執行：
+Run these commands in a terminal.
 
 ```text
 codex plugin marketplace add zokmi/bdd-skills
 codex plugin add bdd-skills@zokmi-bdd-skills
 ```
 
-安裝後可在 Codex 使用 `bdd-local-test` skill。
+After installation, use the `bdd-local-test` skill in Codex.
 
-實際執行測試前，請先閱讀目標專案的指引與環境設定，並依 `SKILL.md` 的安全確認流程操作。
+Before running tests, review the target project's instructions and environment configuration, and follow the confirmation workflow in `SKILL.md`.
 
-## 授權
+## License
 
-本專案採用 [Apache License 2.0](LICENSE)（`Apache-2.0`）。
+This project is licensed under the [Apache License 2.0](LICENSE) (`Apache-2.0`).
 
-## 插件開發驗證
+## Plugin development checks
 
-PR 與版本標籤共用 `.github/workflows/release.yml` 的 Node 跨平台、Windows Pester、派工契約與 worktree 回歸；只有版本標籤執行發布。開發者以 `npm ci --ignore-scripts` 安裝鎖定的開發依賴，再執行 `npm test` 與 `npm run check:config-validator`。修改設定 Schema 後，執行 `npm run generate:config-validator` 並一併提交產生的驗證器；CI 會拒絕過期輸出。Ajv 僅供產生驗證器，插件執行時不需 npm 安裝；產生碼所含 MIT 元件授權見 `skills/bdd-local-test/scripts/lib/config-validator.LICENSE.txt`。
+Pull requests and version tags share the Node.js checks across platforms, Windows Pester tests, assignment contract checks, and worktree regression tests in `.github/workflows/release.yml`. Version tags also publish a release. Install locked development dependencies with `npm ci --ignore-scripts`, then run `npm test` and `npm run check:config-validator`. When changing the configuration schema, run `npm run generate:config-validator` and commit the generated validator with the change. CI rejects stale output. Ajv generates the validator, and the plugin runs without an npm installation. See `skills/bdd-local-test/scripts/lib/config-validator.LICENSE.txt` for the MIT license of the components included in the generated code.
 
-## 從自製 BDD kit 遷移
+## Migrate from a custom BDD kit
 
-1. 把原本寫死的前端／API 埠、API 前綴、登入欄位與 token 路徑移到各專案的 .bdd/config.json。參考 [設定 schema 與範例](skills/bdd-local-test/schemas/config.schema.json)。
-2. 以內建 route-snippet.cjs 或 routeLocalhostToSlot 取代 localhost router／relay。worktree 換埠時，把本輪 prepare-worktree-mcp.ps1 的結果交給 --prepared。
-3. 將自製 API 呼叫改為 createApi().call，登入改為設定 profile 的 login。把帳密改由參數或環境變數供應，使用本輪系統暫存目錄保存 token。移除全域 NODE_TLS_REJECT_UNAUTHORIZED 覆寫。
-4. 使用 SQL Server 時啟用 kit.database，將連線字串來源移至設定並從受測專案提供 mssql。將既有呼叫改為 createDb().run、query 或 holdAppLock。專案特有的 SQL 與其他擴充留在專案測試來源目錄。
-5. 跑一輪隔離實測，確認請求到達本輪服務、查詢結果正確且證據無憑證，再移除已替換的自製腳本。 [使用方式](skills/bdd-local-test/references/test-kit.md)
+1. Move hard-coded frontend and API ports, the API prefix, login fields, and token paths into each project's `.bdd/config.json`. [Configuration schema and examples](skills/bdd-local-test/schemas/config.schema.json)
+2. Replace the localhost router or relay with the bundled `route-snippet.cjs` or `routeLocalhostToSlot`. If the worktree uses different ports, pass the current `prepare-worktree-mcp.ps1` result to `--prepared`.
+3. Replace custom API calls with `createApi().call` and use the configured profile's `login`. Supply credentials via parameters or environment variables and store the token in the run's system temporary directory. Remove any global `NODE_TLS_REJECT_UNAUTHORIZED` override.
+4. For SQL Server, enable `kit.database`, configure the connection string source, and supply `mssql` from the project under test. Replace calls with `createDb().run`, `query`, or `holdAppLock`. Keep project-specific SQL and other extensions in the project's test source directory.
+5. Run an isolated verification round. Check that requests reach the current run's services, query results are correct, and evidence contains no credentials. Then remove the replaced custom scripts. [Test kit guide](skills/bdd-local-test/references/test-kit.md)
+
+## README translations
+
+Update this English README on `main`. The Translate README workflow generates and commits `README.zh-TW.md` when this file changes. You can also regenerate the translation from the repository's Actions tab.

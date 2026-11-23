@@ -1,0 +1,98 @@
+<!-- markdown-translator:5fc8a9447bdb1a24ae5be929faa9192106da65606ed5e59af9dea40c3f01edbd -->
+# BDD Skills
+
+[English](README.md) · [繁體中文](README.zh-TW.md)
+
+提供 Claude Code 與 Codex 使用的繁體中文 BDD 測試插件，協助團隊把需求整理成可判定的 Gherkin 驗收情境，透過真實的 UI、API 與資料庫路徑在本機驗證，並保留可追溯的測試報告與證據。
+
+## 插件介紹
+
+`bdd-skills` 提供 `bdd-local-test` 與 `bdd-scenario-audit`：前者維護模組業務情境、執行本機測試與複測並保存證據；後者唯讀檢查既有情境的範圍、可判定性、需求覆蓋及格式。新增或異動情境文件後，自動由未參與撰寫的子代理做合規檢查；可與原有情境審核合併派工。這是代理工作流程中的關卡，不是外部編輯的檔案監聽器。
+
+## 內容
+
+- 情境範圍：模組對使用者或外部角色承諾的可觀察業務行為，涵蓋畫面操作、外部系統 API、事件與排程的成功及異常流程。純重構、部署設定、SQL migration 等工程調整另列技術驗證與證據，不逐項轉成情境；完整驗證仍涵蓋必要的工程風險。
+- `skills/bdd-local-test/SKILL.md`：將功能異動整理為繁體中文 Gherkin 情境，並在本機執行驗證與產出報告。
+- `skills/bdd-scenario-audit/SKILL.md`：透過獨立唯讀子代理檢查既有情境，列出問題位置、規範依據與修正建議；不代表產品實測通過。Claude Code 可用 `/bdd-skills:bdd-scenario-audit`，Codex 可要求使用 `bdd-scenario-audit`。
+- `assets/`、`references/`、`scripts/`：報告範本、寫作參考與本機驗證輔助腳本。
+- `evals/`：skill 的評估案例定義。
+- `tests/`：封存、遮罩與清理腳本的 Pester 測試（`pwsh -NoProfile -Command "Invoke-Pester -Path skills/bdd-local-test/tests"`）。
+- worktree／MCP 設定回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-WorktreeMcp.ps1`，涵蓋四程序同時分配、slot 重用、獨立 MCP 設定、原埠保留與占用時分配臨時埠。產品 UI BDD 另行驗證。
+- 跨專案分配回歸：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1`，使用真實暫存 Git repo／worktree 驗證首次並行分配、IP 重用與舊 slot 衝突拒絕。
+- Chrome 真實導轉實測：`pwsh -NoProfile -File skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -McpCli <已安裝的 @playwright/mcp/cli.js> -ChromePath <chrome.exe> -OutputDir <證據目錄> -UseDefaultRegistry`。建立兩個暫存專案、四個 worktree 及兩個隔離主 checkout。六組獨立無頭 Chrome／stdio MCP 各自先通過 localhost 路由探測，再同時驗證 UI、API 的 HTTP 身分、目的 IP、Origin 與儲存隔離。預設共用 UI 4200、API 9453，埠被占用時可用 `-UiPort` 與 `-ApiPort` 指定測試埠。證據保存於 `result.json` 與各組的 `probe-evidence.json`。需可建立測試 Git 目錄及啟動本機服務的權限，並預先安裝 Chrome／Playwright MCP。省略 `-UseDefaultRegistry` 時使用 fixture 專屬登記。
+
+執行本機 UI 情境時，skill 必須用已連線的 Playwright MCP 開啟 localhost；發現產品缺陷會修正、重啟並複測。Playwright MCP 未連線或無法滿足 worktree 隔離時，先排查並修復；仍無法執行的 UI 情境列為阻塞，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。共用 MCP session 的 UI 情境序列執行。情境照功能模組持續維護在 `.bdd/modules/`，每張單只留本輪結果與必要交付證據（見 `skills/bdd-local-test/references/modules.md`）。先派子代理選取 issue 的 BDD 情境範圍，再派子代理產出預計驗證項目清單。情境與清單一併交獨立子代理審核，通過才派工實測，審核方式見 `skills/bdd-local-test/references/scenario-review.md`。實測後，獨立子代理依核准清單審核結果報告與證據。結果報告與一致性審核均通過後才更新 issue。依核准清單遮罩、登記並保存截圖。issue 交付取最終驗證輪所需的截圖；代理驗證用途的臨時截圖判讀後立即刪除。worktree 開發與相關回歸通過後，自動詢問兩種交付方式：轉為正式 feature 分支或合併回 develop；本任務已指定時沿用，不重問。未回答前保留工作區，不轉換分支、合併或推送；明確只要情境或報告的任務不觸發交付詢問，也不列為第三選項。服務停止獨立依收尾指引判定，BDD 全通過、本機結果與必要證據已保存、截圖驗證審核已通過（或已記錄不適用），且所有實測代理已釋放資源後，自動停止本輪 worktree 服務與測試瀏覽器，不等待 issue 更新或附件上傳，不等待模式選擇或封存。feature 模式先在功能 worktree 完整 BDD 通過，再確認分支名稱並轉換，保留工作區與必要交付證據；僅改名且版本與環境未變不重跑。選擇合併模式時，開發中只測修正與相關回歸，完整驗證集中在最新 `develop` 整合後、推送前一次；同版本推送後只核對 SHA、更新對應 issue 並附必要的最後輪修正證據；回讀 Redmine 附件後清理本機截圖，保留非圖片報告，合併模式再清理本輪 worktree。舊封存的核對與保留方式見 `skills/bdd-local-test/references/archive.md`。
+
+## BDD 版控分工
+
+處理指定 issue 時，最終完整 BDD 全通過且一致性審核 `PASS` 後，主代理先讀適用的 issue-writing skill 與驗證完成模板，優先依其回覆格式、標題、欄位順序與落點追加修正項目與驗證說明（不固定另一套格式或「IT 修正驗證完成」標題），只上傳 issue 明確需要的最後一輪已遮罩截圖或 API／DB 替代證據，再重新讀取 issue 核對註記與附件。feature 與合併 develop 模式皆適用，不需另問是否回寫；合併模式仍先完成推送與遠端 SHA 核對。明確只要情境／報告或禁止更新 issue 時遵守限定範圍；未另授權不改狀態或關單。無唯一 issue、權限不足、審核未通過或附件失敗時保留必要交付證據並分別回報 BDD 與 issue 交付狀態。feature 模式回寫後仍保留 worktree。詳見 [共用 issue 交付](skills/bdd-local-test/references/closeout.md#共用-issue-交付最終完整驗證後自動執行)。
+
+每輪先驗證核心異動及其必要前置。指定 issue 時，核心異動驗完才派子代理驗同單其餘驗收項目。已有回寫授權且其他相關測案待驗時，本單結果審核通過後，由專責子代理更新 issue 並回讀確認，再派工執行其他相關測案。正式交付同樣由專責子代理執行。詳見 [Issue 優先驗證與回寫](skills/bdd-local-test/references/execution-workflow.md#issue-優先驗證與回寫)。
+
+核准的驗證截圖保存於本輪 `evidence/`。代理臨時截圖判讀後立即刪除。issue 必要截圖待回讀 Redmine 確認附件可讀後清理本機副本；附件未完成時只保留需要重試交付的圖片。
+
+開始任何 UI／API／DB 實測前，插件必須展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，並等待使用者明確確認。本機與唯讀情境也適用；只告知或使用者只說「測到全過」不算確認。未確認時不實測、不派實測子代理；同任務目標與範圍未變的複測沿用確認，變更或跨 repo 則重新確認，並在報告保留依據。
+
+每次 BDD 開始前由 skill 呼叫內部 CLI，驗證並補齊目標專案忽略規則，保留模組情境及共用設定。重跑不重複新增，衝突會回報，既有追蹤產物只列出待處理項目。
+
+多專案或 worktree 使用各自的 loopback IP，原埠可用時沿用，占用時由 `prepare-worktree-mcp.ps1` 自動分配本輪有效埠。啟動、測試及清理使用同一份埠號對應，維持原始專案設定、系統 hosts 與全域代理原狀。並行 UI 測試前須建立獨立 MCP 連線，核對前端與 API 的實際目標及版本。操作見 [worktree 隔離](skills/bdd-local-test/references/worktree-loopback.md)。
+
+需要登入的情境會優先沿用同環境、同帳號與角色的登入狀態，失效時改走專案配置的測試登入流程。若專案需要人工完成 MFA 等步驟，驗證成功後可保存狀態供下次重用。設定及使用方式見 [BDD 測試登入](skills/bdd-local-test/references/authentication.md)。
+
+隔離 UI 使用 [專用 MCP 工作階段](skills/bdd-local-test/references/worktree-loopback.md#啟動專用-mcp-工作階段) 自動載入本輪設定、驗證 localhost 路由，並在同一條連線依序呼叫 Playwright MCP 工具。Chrome 回歸測試可省略 `-McpCli` 以驗證插件預設的離線 npm 啟動路徑。
+
+以 `@P0`／`@P1`／`@P2` 標示情境的業務影響，並按新功能、臭蟲修正、資安、資料遷移或工程調整核對必測項。影響可界定的小 issue 可用 TARGETED，涵蓋受影響的 P0、`@core`、本單情境及必要回歸。實測前由獨立子代理對照驗收條件與 diff 審核清單。詳見 [情境等級與必測範圍](skills/bdd-local-test/references/scenario-priority.md)及 [品質閘門](skills/bdd-local-test/references/quality-gate.md)。
+
+每輪實際 BDD 測試都由實測子代理執行；主代理審核範圍、分組、派工、監督及彙整。單組也派一名子代理，多組按環境隔離與可用名額分批或並行派工；共用服務與資料無法隔離的組別由子代理序列執行。沒有子代理工具或使用者明確禁用時停止實測並回報阻塞。報告記錄執行模式、實際代理與派工契約；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
+
+Git 僅保存 `.bdd/modules/` 的情境與 `MODULE.md`、不含敏感或個人設定的 `.bdd/config.json`。每輪 `.bdd/<單號>-<主題>/` 的報告、驗證與遮罩紀錄、必要交付截圖、log 和瀏覽器 profile 均不新增到 Git；非圖片紀錄由本機輸出保存，issue 交付截圖核對後留在 Redmine，其他核准的驗證截圖留在本機，代理驗證暫存圖判讀後立即刪除。收尾不另建純報告提交。維持既有輸出路徑，忽略規則、既有追蹤資料遷移與跨工作區還原見 [版控分工](skills/bdd-local-test/references/version-control.md)。
+
+## 安裝到 Claude Code
+
+Claude Code 2.1.275 以上可在互動工作階段輸入一條指令，加入此 marketplace 並安裝 plugin：
+
+```text
+/plugin install bdd-skills --marketplace zokmi/bdd-skills
+```
+
+首次加入 marketplace 時依提示確認，並選擇安裝範圍。安裝後的技能指令是 `/bdd-skills:bdd-local-test`。
+
+已安裝者可在終端機更新 marketplace 與 plugin；更新後重啟 Claude Code 以載入新版本：
+
+```text
+claude plugin marketplace update zokmi-bdd-skills
+claude plugin update bdd-skills@zokmi-bdd-skills
+```
+
+## 安裝到 Codex
+
+在終端機執行：
+
+```text
+codex plugin marketplace add zokmi/bdd-skills
+codex plugin add bdd-skills@zokmi-bdd-skills
+```
+
+安裝後可在 Codex 使用 `bdd-local-test` skill。
+
+實際執行測試前，請先閱讀目標專案的指引與環境設定，並依 `SKILL.md` 的安全確認流程操作。
+
+## 授權
+
+本專案採用 [Apache License 2.0](LICENSE)（`Apache-2.0`）。
+
+## 插件開發驗證
+
+PR 與版本標籤共用 `.github/workflows/release.yml` 的 Node 跨平台、Windows Pester、派工契約與 worktree 回歸；只有版本標籤執行發布。開發者以 `npm ci --ignore-scripts` 安裝鎖定的開發依賴，再執行 `npm test` 與 `npm run check:config-validator`。修改設定 Schema 後，執行 `npm run generate:config-validator` 並一併提交產生的驗證器；CI 會拒絕過期輸出。Ajv 僅供產生驗證器，插件執行時不需 npm 安裝；產生碼所含 MIT 元件授權見 `skills/bdd-local-test/scripts/lib/config-validator.LICENSE.txt`。
+
+## 從自製 BDD kit 遷移
+
+1. 把原本寫死的前端／API 埠、API 前綴、登入欄位與 token 路徑移到各專案的 .bdd/config.json。參考 [設定 schema 與範例](skills/bdd-local-test/schemas/config.schema.json)。
+2. 以內建 route-snippet.cjs 或 routeLocalhostToSlot 取代 localhost router／relay。worktree 換埠時，把本輪 prepare-worktree-mcp.ps1 的結果交給 --prepared。
+3. 將自製 API 呼叫改為 createApi().call，登入改為設定 profile 的 login。把帳密改由參數或環境變數供應，使用本輪系統暫存目錄保存 token。移除全域 NODE_TLS_REJECT_UNAUTHORIZED 覆寫。
+4. 使用 SQL Server 時啟用 kit.database，將連線字串來源移至設定並從受測專案提供 mssql。將既有呼叫改為 createDb().run、query 或 holdAppLock。專案特有的 SQL 與其他擴充留在專案測試來源目錄。
+5. 跑一輪隔離實測，確認請求到達本輪服務、查詢結果正確且證據無憑證，再移除已替換的自製腳本。 [使用方式](skills/bdd-local-test/references/test-kit.md)
+
+## README 翻譯
+
+請更新 `main` 分支上的英文 README。這個檔案有變更時，Translate README 工作流程會產生並提交 `README.zh-TW.md`。也可在儲存庫的 Actions 頁籤手動重新產生翻譯。

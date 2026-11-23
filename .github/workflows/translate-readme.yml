@@ -1,0 +1,56 @@
+name: Translate README
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - .github/workflows/translate-readme.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: translate-readme-main
+  cancel-in-progress: false
+
+jobs:
+  translate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Translate README into Traditional Chinese
+        uses: ikhsan3adi/markdown-translator@629de65807486cf6ad68605cd03728da7cc90fbd # v3.0.0
+        with:
+          FILES: README.md
+          LANG: zh-TW
+          IGNORE_PATTERN: '^(BDD Skills|English|繁體中文)$'
+          COMMIT: 'false'
+          PUSH: 'false'
+          INCREMENTAL: ${{ github.event_name != 'workflow_dispatch' }}
+      - name: Commit the Traditional Chinese README
+        shell: bash
+        run: |
+          git add -- README.zh-TW.md
+          if git diff --cached --quiet -- README.zh-TW.md; then
+            exit 0
+          fi
+
+          git fetch origin main
+          if ! git diff --quiet HEAD FETCH_HEAD -- README.md; then
+            echo 'A newer README is on main. Its workflow run will translate it.'
+            exit 0
+          fi
+
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'docs: update Traditional Chinese README' -- README.zh-TW.md
+          git rebase FETCH_HEAD
+          git push origin HEAD:refs/heads/main
