@@ -49,11 +49,11 @@ pwsh -NoProfile -File "<插件目錄>/skills/bdd-local-test/scripts/bdd-modules.
 派工提供原始材料與下列產出要求，不先告知預期判決：
 
 ```text
-請依 <本 SKILL.md 絕對路徑> 唯讀審查 <repo 與指定檔案／模組>。
-需求來源：<路徑或取得方式；不可得時明寫>
-候選版本與差異：<commit／未提交 diff；既有盤點則記工作區狀態>
-只回報，不修改檔案、不實測、不派其他代理。
-回覆範圍與來源、lint 結果、問題表、需求覆蓋限制及合規結論。
+Follow <absolute path to this SKILL.md> to audit <repository and specified files or modules> in read-only mode.
+Requirements source: <path or retrieval method, or explicitly state that it is unavailable>.
+Candidate revision and changes: <commit or uncommitted diff, or record the working tree state for an audit of existing files>.
+Complete the audit yourself. Leave files untouched and skip product test execution.
+Report the scope and sources, lint results, findings table, requirements coverage limitations, and compliance verdict.
 ```
 
 回報包含：
