@@ -33,7 +33,7 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 以一組相關修改為單位固定基準與候選版本，執行靜態檢查並 Review Diff，再按 [品質閘門](references/quality-gate.md) 選擇 FAST、TARGETED 或 FULL。只有確認不影響行為的純文件改動可走 FAST。局部行為改動選 TARGETED。高風險、PR、Release 或影響不明選 FULL。
 
-小 issue 在影響已界定時，以受影響模組的 `@core`、本單 `@#<單號>` 和必要回歸為本輪範圍。最終候選版本也按同一規則核對並執行該範圍。報告列出實測情境與略過理由。
+依 [情境等級與必測範圍](references/scenario-priority.md) 為新增與實質修改的情境標 `@P0`／`@P1`／`@P2`，並依變更類型核對驗收條件、必測情境與技術驗證。小 issue 走 TARGETED 時，以受影響模組的 `@core`、本單 `@#<單號>` 為候選，補入受影響的 P0、變更類型必測項及必要回歸。最終候選版本也按同一規則核對。報告列出實測情境與略過理由。
 
 同一 UI 情境中，將相容的導航與 locator 檢查批次交給 Playwright MCP，逐項保留斷言與失敗位置。跨情境維持狀態隔離。
 

@@ -36,7 +36,7 @@
 
 隔離 UI 使用 [專用 MCP 工作階段](skills/bdd-local-test/references/worktree-loopback.md#啟動專用-mcp-工作階段) 自動載入本輪設定、驗證 localhost 路由，並在同一條連線依序呼叫 Playwright MCP 工具。Chrome 回歸測試可省略 `-McpCli` 以驗證插件預設的離線 npm 啟動路徑。
 
-影響可界定的小 issue 可用 TARGETED 驗證受影響模組的 `@core`、本單情境及必要回歸。實測前由獨立子代理對照 issue 驗收條件與 diff 審核本輪清單，取得 PASS 才執行。詳見 [品質閘門](skills/bdd-local-test/references/quality-gate.md)與 [實測範圍審核](skills/bdd-local-test/references/execution-workflow.md#實測範圍審核)。
+以 `@P0`／`@P1`／`@P2` 標示情境的業務影響，並按新功能、臭蟲修正、資安、資料遷移或工程調整核對必測項。影響可界定的小 issue 可用 TARGETED，涵蓋受影響的 P0、`@core`、本單情境及必要回歸。實測前由獨立子代理對照驗收條件與 diff 審核清單。詳見 [情境等級與必測範圍](skills/bdd-local-test/references/scenario-priority.md)及 [品質閘門](skills/bdd-local-test/references/quality-gate.md)。
 
 每輪實際 BDD 測試都由實測子代理執行；主代理審核範圍、分組、派工、監督及彙整。單組也派一名子代理，多組按環境隔離與可用名額分批或並行派工；共用服務與資料無法隔離的組別由子代理序列執行。沒有子代理工具或使用者明確禁用時停止實測並回報阻塞。報告記錄執行模式、實際代理與派工契約；情境審核不代替實測派工。主代理核對各組證據、版本與情境覆蓋後彙整，整合修正後仍須在最終版本完整驗證。詳見 [子代理並行 BDD](skills/bdd-local-test/references/parallel-bdd.md)；[結構化契約](skills/bdd-local-test/references/parallel-bdd-contract.md) 提供三份 JSON Schema 與唯讀摘要工具，產出 summary.json／SUMMARY.md 供主代理審閱。
 
