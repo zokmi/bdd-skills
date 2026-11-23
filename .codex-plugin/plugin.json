@@ -1,6 +1,6 @@
 {
   "name": "bdd-skills",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "description": "繁體中文 BDD 情境撰寫與本機實測技能",
   "author": {
     "name": "zokmi"
@@ -13,6 +13,6 @@
     "developerName": "zokmi",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
-    "defaultPrompt": "使用 bdd-local-test 撰寫 BDD 情境並在本機驗證。先派子代理驗證核心異動及其必要前置。指定 issue 時接著驗同單其餘驗收項目。已授權回寫且還有其他相關測案待驗時，先審核本單結果，再派專責子代理回寫 issue 並回讀核對，接著驗證其他相關測案。最終完整驗證通過後依交付流程由子代理回寫、上傳必要證據並回讀。遵守只要報告或不要更新 issue 等明確限制，未另授權保留 issue 狀態。"
+    "defaultPrompt": "使用 bdd-local-test 撰寫 BDD 情境並在本機驗證。實測前審查最終候選 diff，再派子代理先驗核心異動及必要前置。指定 issue 時接著驗同單其餘驗收項目。已授權回寫且其他相關測案待驗時，先審核本單結果，再派專責子代理回寫 issue 並回讀核對，接著驗證其他相關測案。BDD 全過後核對受測版本、交付版本及 Code Review 覆蓋範圍。同一 diff 已審查時沿用結果。有新差異或未涵蓋範圍時先補審，再依影響複測。依專案規則取得 PR 或 Release 核准。完成結果報告審核與適用的一致性審核後，由子代理依授權回寫 issue、上傳必要證據並回讀。遵守只要報告或不要更新 issue 等明確限制，未另授權保留 issue 狀態。"
   }
 }
