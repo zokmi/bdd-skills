@@ -39,3 +39,4 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 
 - [`bdd-local-test`](skills/bdd-local-test/SKILL.md) — 撰寫驗收情境、協調本機實測及複測，並產出附證據的報告。
 - [`bdd-scenario-audit`](skills/bdd-scenario-audit/SKILL.md) — 唯讀稽核情境文件，回報問題位置與修正建議。
+- [`bdd-issue-reply-audit`](skills/bdd-issue-reply-audit/SKILL.md) — 停止服務或詢問分支處理方式前，核對 issue 上實際刊登的回覆與附件是否符合本次調整與 BDD 實測結果。
