@@ -38,3 +38,4 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 
 - [`bdd-local-test`](skills/bdd-local-test/SKILL.md) — Write acceptance scenarios, coordinate local verification and retests, and produce an evidence-backed report.
 - [`bdd-scenario-audit`](skills/bdd-scenario-audit/SKILL.md) — Review scenario documents in read-only mode and report findings with their locations and suggested fixes.
+- [`bdd-issue-reply-audit`](skills/bdd-issue-reply-audit/SKILL.md) — Verify the published issue reply and its attachments against the changes and BDD results before stopping services or asking how to handle the branch.
