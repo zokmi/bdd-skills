@@ -113,22 +113,19 @@ blockers 每項使用 `{ "reason": "缺少指定角色帳號", "scenarioIds": ["
 
 ## 主代理採納條件
 
-先核對契約版本與派工身分，再核對情境集合、證據、修改權、verification 實際版本與服務版本。不同 repo／版本分開保留，不合併成共同 SHA；最終整合版依原流程完整驗證。資源釋放狀態另行核對，不因測試通過就認定可重啟或清理。
+先核對契約版本與派工身分，再核對情境集合、證據、修改權、verification 實際版本與服務版本。共用 Git 儲存庫的 linked worktree 依受測 SHA 與服務版本核對，同一份 feature 的同一情境編號只計一次。不同 repo／版本分開保留；最終整合版依原流程完整驗證。資源釋放狀態另行核對，不因測試通過就認定可重啟或清理。
 
 ## Schema 與唯讀彙整
 
 三份自包含 draft 2020-12 Schema： [assignment](../schemas/assignment.schema.json)、[result](../schemas/result.schema.json)、[resource-release](../schemas/resource-release.schema.json)。PowerShell 7.4 以上可用 `Test-Json -Json (Get-Content <檔案> -Raw) -SchemaFile <對應 Schema>` 驗證。
 
-彙整使用 PowerShell 7.4+ 與 Git，不需要安裝 JSON 套件：
+彙整需要 Node.js 與 Git。派工與結果的 Schema 驗證器已隨插件提供。
 
-```powershell
-& "<skill 目錄>/scripts/summarize-parallel-bdd.ps1" -AssignmentFiles @(
-  "<A組輸出>/coordination/attempt-1/assignment.json",
-  "<B組輸出>/coordination/attempt-1/assignment.json"
-) -OutputDir "<本輪輸出>/summary-R1"
+```sh
+node "<skill 目錄>/scripts/bdd.mjs" parallel-summary --assignment "<A組輸出>/coordination/attempt-1/assignment.json" --assignment "<B組輸出>/coordination/attempt-1/assignment.json" --output-dir "<本輪輸出>/summary-R1"
 ```
 
-主代理明確列出本輪每組、要採用的 attempt；工具只讀派工與同目錄的 result.json，不自動猜最新輪次。OutputDir 必須是尚不存在且與各組輸出互不包含的目錄，避免覆寫。產生 summary.json 與 SUMMARY.md，不修改既有 verification、issue 或資源。錯誤 exit 2；不可採納 exit 1；結構與採納檢查通過 exit 0（測試失敗或阻塞的有效報告仍可能為 0）。
+主代理明確列出本輪每組、要採用的 attempt；工具只讀派工與同目錄的 result.json，不自動猜最新輪次。`--output-dir` 必須是尚不存在且與各組輸出互不包含的目錄，避免覆寫。產生 summary.json 與 SUMMARY.md，不修改既有 verification、issue 或資源。錯誤 exit 2；不可採納 exit 1；結構與採納檢查通過 exit 0（測試失敗或阻塞的有效報告仍可能為 0）。
 
 檢查包含 Schema、派工身分、情境缺漏／重複／多出、kind、證據檔存在與路徑隔離、圖片遮罩雜湊紀錄、修改權、驗證輪次的 repo／HEAD／情境／統計、派工與實際服務版本和網址。缺少或不可採納的結果保守列未執行。多版本、重複跨組情境或 dirty 工作區需人工處理，工具不自動採納；重複情境統計去重且留下問題。
 

@@ -42,6 +42,40 @@ Describe 'BddPack.psm1' {
         $plan.files.Count | Should -Be 3
     }
 
+    It '封存共用一個編碼器行程，單張失敗後繼續且相同內容只轉一次' {
+        $helper = New-TextFile $dir 'encoder.ps1' @'
+$log = Join-Path $PSScriptRoot 'encoder.log'
+Add-Content -LiteralPath $log -Value "start:$($args[0])"
+function Convert-Fixture($source, $destination) {
+    Add-Content -LiteralPath $log -Value ([IO.Path]::GetFileName($source))
+    if ([IO.Path]::GetFileName($source) -eq 'b.png') {
+        '{"error":"invalid image"}'
+        return
+    }
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)) | Out-Null
+    [IO.File]::WriteAllBytes($destination, [byte[]](1, 2, 3))
+    '{"identical":true}'
+}
+if ($args[0] -eq 'convert') { Convert-Fixture $args[1] $args[2]; exit }
+while ($null -ne ($line = [Console]::ReadLine())) {
+    $request = ConvertFrom-Json -InputObject $line
+    Convert-Fixture $request.source $request.destination
+}
+'@
+        $encoder = @{ kind = 'pillow'; command = (Get-Process -Id $PID).Path; prefixArgs = @('-NoProfile', '-File'); helper = $helper }
+        $a = New-PackEntry -Relative 'evidence/a.png' -Path (New-TextFile $dir 'a.png' 'first image payload')
+        $b = New-PackEntry -Relative 'evidence/b.png' -Path (New-TextFile $dir 'b.png' 'invalid image payload')
+        $c = New-PackEntry -Relative 'evidence/c 中文.png' -Path (New-TextFile $dir 'c 中文.png' 'second image payload')
+        $alias = New-PackEntry -Relative 'evidence/d.png' -Path (New-TextFile $dir 'd.png' 'first image payload')
+
+        $pack = Convert-PackEntriesToWebp -Entries @($a, $b, $c, $alias) -Encoder $encoder -Staging (Join-Path $dir 'staging')
+
+        $pack.entries.relative | Should -Be @('evidence/a.webp', 'evidence/b.png', 'evidence/c 中文.webp', 'evidence/d.webp')
+        $pack.skipped.reason | Should -Be 'encoder-failed'
+        $pack.entries[0].path | Should -BeExactly $pack.entries[3].path
+        @(Get-Content -LiteralPath (Join-Path $dir 'encoder.log')) | Should -Be @('start:batch', 'a.png', 'b.png', 'c 中文.png')
+    }
+
     It 'Write-BddZip 寫入前綴與 manifest，並拒絕覆蓋既有檔' {
         $e = New-PackEntry -Relative 'REPORT.md' -Path (New-TextFile $dir 'r.md' 'report')
         $target = Join-Path $dir 'out/x.zip'

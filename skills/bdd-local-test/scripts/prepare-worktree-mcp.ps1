@@ -7,50 +7,19 @@ param(
     [Parameter(Mandatory)][string]$OutputDir,
     [switch]$Isolate,
     [switch]$KeepOriginalPorts,
-    [ValidateNotNullOrEmpty()][string]$StorageState
+    [ValidateNotNullOrEmpty()][string]$StorageState,
+    [ValidateNotNullOrEmpty()][string]$McpCli
 )
+
 $ErrorActionPreference = 'Stop'
-$portList = @($Ports | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
-if (-not $portList.Count -or @($portList | Where-Object { $_ -lt 1 -or $_ -gt 65535 }).Count) {
-    throw 'Ports 必須是專案原有埠號（1..65535）'
-}
-$statePath = $null
-if ($PSBoundParameters.ContainsKey('StorageState')) {
-    $stateFile = Get-Item -LiteralPath $StorageState
-    if ($stateFile -isnot [IO.FileInfo] -or $stateFile.Length -eq 0) {
-        throw 'StorageState must be an existing, nonempty file.'
-    }
-    $statePath = $stateFile.FullName
-}
-$preflight = & (Join-Path $PSScriptRoot 'loopback-slot.ps1') -Ports $Ports -Isolate:$Isolate -KeepOriginalPorts:$KeepOriginalPorts | ConvertFrom-Json
-$output = [IO.Path]::GetFullPath($OutputDir)
-$null = New-Item -ItemType Directory -Path $output -Force
-$isolationId = 'bdd-mcp-' + [guid]::NewGuid().ToString('N')
-$configPath = Join-Path $output "$isolationId.json"
-$browserArgs = @()
-if ($preflight.isolated) { $browserArgs += $preflight.chromiumArg }
-$config = @{
-    browser = @{
-        browserName = 'chromium'
-        isolated = $true
-        launchOptions = @{ args = $browserArgs }
-    }
-    outputDir = (Join-Path $output $isolationId)
-}
-[IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
-$serverArgs = @('--offline', '--no-install', '@playwright/mcp@latest', '--config', $configPath)
-if ($statePath) { $serverArgs += @('--storage-state', $statePath) }
-[pscustomobject]@{
-    isolationId = $isolationId
-    configPath = $configPath
-    ports = $portList
-    portMappings = $preflight.portMappings
-    effectivePorts = $preflight.effectivePorts
-    preflight = $preflight
-    server = @{
-        command = 'npx'
-        args = $serverArgs
-    }
-    status = 'configuration-only'
-    verificationRequired = @('獨立 MCP 連線與瀏覽器', '前端及 API 的實際目標 IP、本輪有效埠與受測版本', '帳號及資料範圍隔離')
-} | ConvertTo-Json -Depth 8
+$PSNativeCommandUseErrorActionPreference = $false
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$cliArgs = @('prepare-worktree-mcp', "--output-dir=$OutputDir")
+foreach ($port in $Ports) { $cliArgs += "--ports=$port" }
+if ($Isolate) { $cliArgs += '--isolate' }
+if ($KeepOriginalPorts) { $cliArgs += '--keep-original-ports' }
+if ($PSBoundParameters.ContainsKey('StorageState')) { $cliArgs += "--storage-state=$StorageState" }
+if ($PSBoundParameters.ContainsKey('McpCli')) { $cliArgs += "--mcp-cli=$McpCli" }
+$output = & node (Join-Path $PSScriptRoot 'bdd.mjs') @cliArgs 2>&1
+if ($LASTEXITCODE -ne 0) { throw ($output -join [Environment]::NewLine) }
+$output

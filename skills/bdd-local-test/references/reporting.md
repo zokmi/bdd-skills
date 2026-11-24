@@ -17,11 +17,13 @@
 報告寫完後，**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）：
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir <輸出資料夾>   -Base <基準分支> -Passed N -Failed N -Blocked N -NotRun N   -ChangedScenarios "<本單新增或修改的 .feature，多個以 ; 分隔>"   -RegressionScenarios "<回歸的 .feature>::<編號>,<編號>"   -Note "<一句話，例如：自 yuanlih 同步後複測>"
+node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料夾>" --base "<基準分支>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本單新增或修改的 .feature，多個以 ; 分隔>" --regression-scenarios "<回歸的 .feature>::<編號>,<編號>" --note "<一句話，例如：自 yuanlih 同步後複測>"
 ```
 
-`-ChangedScenarios`／`-RegressionScenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。
+`--changed-scenarios`／`--regression-scenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。
 情境檔要先 commit。保留本輪非圖片紀錄時，從受測 commit 取出對應版本的情境。
+
+同一輸出資料夾有多個寫入者時，`verification --record` 會依序追加輪次。若程序中斷後回報 `verification.json.lock` 逾時，先確認所有寫入程序均已結束，將殘留鎖檔移到另一位置保留，再核對 `verification.json` 最後一輪，只重記尚未保存的結果。
 
 記錄結果後立即執行 [服務停止判定](closeout.md#服務停止)：指定範圍全通過、本機證據已保存、截圖驗證審核已通過（或已記錄不適用）且使用組已釋放資源時，停止本輪 worktree 服務與登入／測試瀏覽器，再進行交付詢問或 issue 上傳。驗證紀錄腳本只記錄結果，沒有背景程序會代為偵測或清理；主代理須實際執行並核對停止結果。
 
@@ -30,6 +32,6 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Record -Dir
 報告逐項記錄實際操作、斷言與觀察結果，並連結預計驗證清單指定的本輪截圖。代理驗證期間用來目視確認的暫存截圖，判讀後立即刪除且不得列入報告、summary 或封存。issue 必要截圖只取最終驗證輪並記錄附件與本機清理狀態。
 
 範圍不是 `<基準>..HEAD`（例如使用者指定了 commit、或在別的分支上 cherry-pick 過來的一串）時，
-改用 `-Commits <sha1>,<sha2>` 明列。`verification.json`、`REPORT.md`、`masking.json` 與本輪證據均為執行產物，不新增到 Git；非圖片紀錄保存於本機輸出，只有 issue 交付需要的圖片在附件核對後清理本機副本，代理即時驗證截圖判讀後立即刪除。Git 僅保存 `.bdd/modules/` 的 `.feature`、`MODULE.md` 與不含敏感或個人設定的共用 `.bdd/config.json`。版控與既有追蹤檔的遷移方式見 [版控分工](version-control.md)。
+改用 `--commits <sha1>,<sha2>` 明列。`verification.json`、`REPORT.md`、`masking.json` 與本輪證據均為執行產物，不新增到 Git；非圖片紀錄保存於本機輸出，只有 issue 交付需要的圖片在附件核對後清理本機副本，代理即時驗證截圖判讀後立即刪除。Git 僅保存 `.bdd/modules/` 的 `.feature`、`MODULE.md` 與不含敏感或個人設定的共用 `.bdd/config.json`。版控與既有追蹤檔的遷移方式見 [版控分工](version-control.md)。
 程式同步到其他 repo 或 worktree 時，另行複製本輪輸出或從封存包還原，再執行版本比對；不能因 Git 沒帶入報告就視為沒有驗證紀錄。已授權更新 issue 時，依交付模板上傳必要的逐項證據；只要報告或未授權更新 issue 時，保存在本機並回報位置，不自行上傳。記錄前工作區若有受測檔案的未提交異動，腳本會記在 `dirtyPaths`，
 之後的比對一律判 `rerun`——所以正式結案的那一輪，應在受測異動都 commit 之後再跑。

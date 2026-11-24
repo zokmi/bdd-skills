@@ -8,10 +8,19 @@
 
 ## 歷史封存流程
 
-還原及重新壓縮會限制 ZIP 項目與還原檔案各 20,000 個、還原總大小 4 GiB（含 aliases），以及 manifest 8 MiB。舊 `evidence.zip` 也適用項目數與還原大小上限。
+建立、還原及重新壓縮封存時，ZIP 項目與還原檔案各以 20,000 個為限，還原總大小上限為 4 GiB（含 aliases），manifest 上限為 8 MiB。舊 `evidence.zip` 也適用項目數與還原大小上限。
 歷史封存轉 WebP 需要 Pillow 13.0.0 以上的穩定版本，只接受副檔名與實際格式一致的單幀 PNG、JPEG 或 BMP，最多 3,200 萬像素。發版測試使用鎖定版本與雜湊的 Pillow wheel。
 
 這一節保留舊版的封存、索引及還原規格，供辨識歷史資料。截圖遮罩仍適用於目前的 Redmine 交付流程。腳本位於 `<skill 目錄>/scripts/`，輸出為 JSON。
+
+| 用途 | Node.js 入口 | 相容的 PowerShell 入口 |
+|---|---|---|
+| 登記、檢查及補套截圖遮罩 | `bdd.mjs mask-evidence` | `mask-evidence.ps1` |
+| 建立封存並登記索引 | `bdd.mjs archive` | `archive-bdd.ps1` |
+| 還原封存及別名 | `bdd.mjs extract` | `extract-bdd.ps1` |
+| 查詢、匯入及標記封存 | `bdd.mjs archive-index` | `bdd-archive-index.ps1` |
+| 重新壓縮既有封存 | `bdd.mjs recompress` | `recompress-bdd.ps1` |
+| 預覽或執行證據清理 | `bdd.mjs prune` | `prune-bdd.ps1` |
 
 ## 三層儲存
 
@@ -19,7 +28,7 @@
 
 | 層 | 位置 | 存什麼 | 生命週期 |
 |----|------|--------|----------|
-| 工作區 | `<worktree>/.bdd/<單號-主題>/` | `REPORT.md`、`verification.json`、`masking.json`、`evidence/`（模組情境在 `.bdd/modules/`，不在這裡） | 證據在封存並確認上傳後由 `prune-bdd.ps1` 清掉；報告保留 |
+| 工作區 | `<worktree>/.bdd/<單號-主題>/` | `REPORT.md`、`verification.json`、`masking.json`、`evidence/`（模組情境在 `.bdd/modules/`，不在這裡） | 證據在封存並確認上傳後由 `bdd.mjs prune` 清掉；報告保留 |
 | 本機封存庫 | 預設 `<使用者目錄>/bdd-archives/<主 checkout 資料夾名>/` | `<單號>/<輸出資料夾名>-<短 SHA>-<時間戳>.zip` 與 `index.jsonl` | 長期保存，只增不改 |
 | issue 附件 | 對應 issue | 與本機封存庫同一個 ZIP | 正式紀錄 |
 
@@ -44,7 +53,7 @@
 
 | 欄位 | 說明 | 未設定時 |
 |------|------|----------|
-| `archiveRoot` | 本機封存庫根目錄，必須是絕對路徑，可用 `~` 開頭 | 依序看 `-ArchiveRoot` 參數、環境變數 `BDD_ARCHIVE_ROOT`，最後用預設位置 |
+| `archiveRoot` | 本機封存庫根目錄，必須是絕對路徑，可用 `~` 開頭 | 依序看 `--archive-root` 參數、環境變數 `BDD_ARCHIVE_ROOT`，最後用預設位置 |
 | `maxAttachmentBytes` | issue 附件大小上限（Redmine 預設 5 MB，以站台設定為準） | 不檢查 |
 | `webp` | `auto`：有支援 WebP 的 Python Pillow 就把截圖轉成無損 WebP；`off`：不轉 | `auto` |
 | `mask.required` | 圖片沒有有效遮罩登記就拒絕封存 | `true` |
@@ -57,23 +66,25 @@
 
 目的是讓未遮罩的原圖**從來不落地**，整個流程只產生一份可外傳的證據，不再有「原檔＋遮罩版」兩個封存。
 
-1. **截圖前注入遮罩樣式**（首選）。Playwright MCP 用 `browser_evaluate`：
-   ```js
-   () => { const s = document.createElement('style'); s.id = 'bdd-mask';
-     s.textContent = `.header-avatar, .user-name, [data-pii] { filter: blur(8px) !important; }`;
-     document.head.appendChild(s); }
+1. **截圖時套用遮罩**。在[已通過路由探測的 MCP 工作階段](worktree-loopback.md#啟動專用-mcp-工作階段)送出下列 JSONL。先建立本輪的 `evidence/`，並在受測 worktree 的 `.bdd/config.json` 設定 `mask.selectors`。選擇器至少要匹配一個可見元素才會寫檔。
+
+   ```jsonl
+   {"id":4,"tool":"bdd/screenshot","args":{"filename":".bdd/123-結帳/evidence/R2_IC-05_結帳結果.webp","target":"#checkout-result"}}
    ```
-   以 Playwright MCP 的 `browser_take_screenshot` 保存遮罩後畫面。選擇器以 `mask.selectors` 為準；沒有設定時，依畫面判斷帳號名稱、頭像、Email、電話、身分證號等欄位。截完圖照常操作，頁面重新導覽後要再注入一次。
+
+   `target` 是選用的 CSS 選擇器。省略時截取 viewport，或以 `fullPage: true` 截取整頁。預設使用 CSS 像素，需保存裝置解析度時指定 `scale: "device"`。支援 WebP 的 Playwright 可直接輸出無損 `.webp`。需座標補遮罩、交付端要求 PNG，或目前的 Playwright 只支援 PNG 時，改指定 `.png`。工具拒絕覆蓋既有證據。
+
+   專案尚未設定 selector 時，仍可在已連線的 Playwright MCP 依畫面注入實色遮罩，再用 `browser_take_screenshot` 輸出。個別頁面需要不同遮罩時，依當輪已核准的畫面範圍確認覆蓋，並檢查檔案中沒有個資。
 2. **登記**：截圖確認已遮罩後，登記到 `masking.json`（記錄當下的 SHA-256，之後檔案被改動就會失效）：
    ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/mask-evidence.ps1" -Dir <輸出資料夾> -Mark -Pattern 'R2_*' -Method css
+   node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --mark --pattern 'R2_*' --method css
    ```
-   畫面本來就沒有個資（例如登入前頁面、純 API 回應截圖）時用 `-Method exempt -Note '<理由>'`，理由必填。
-3. **補救**：已經存在的未遮罩截圖，用 `mask.rects` 規則塗色並自動登記：
+   畫面本來就沒有個資（例如登入前頁面、純 API 回應截圖）時用 `--method exempt --note '<理由>'`，理由必填。
+3. **補救**：在 Windows 上，已經存在的未遮罩截圖可用 `mask.rects` 規則塗色並自動登記：
    ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/mask-evidence.ps1" -Dir <輸出資料夾> -Apply
+   node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --apply
    ```
-4. **檢查**：`-Status` 列出每張圖是 `masked`、`unmasked` 或 `stale`（登記後又被改）。上傳 issue 與封存前都要是全部 `masked`。
+4. **檢查**：`node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --status` 列出每張圖是 `masked`、`unmasked` 或 `stale`（登記後又被改）。上傳 issue 與封存前都要是全部 `masked`。
 
 不要用 exempt 規避遮罩；看不出畫面有沒有個資時，當作有。
 
@@ -83,14 +94,14 @@
 
 合併收尾在執行下列封存命令前，必須先完成 [整合與封存](closeout.md)〈7-1〉的 issue 更新。主代理重新讀取對應 issue，逐項核對修正註記、最後一輪截圖的附件識別／連結與可讀性，並確認對應本輪受測 SHA、情境與結果；純 API／DB 項目以已交付的替代證據核對。將核對結果與來源寫入報告〈issue 交付核對〉。本機檔案路徑、可貼上的草稿、上傳成功回應或只有 ZIP 附件，都不能代替此核對。
 
-任何註記、必要截圖或核對尚未完成時，不執行最終封存、`prune-bdd.ps1 -Apply` 或 worktree 移除；繼續完成已授權的交付。權限、工具或上傳阻塞時保留 `evidence/`、報告、驗證紀錄與 worktree，回報已完成部分及待處理項目，不宣稱收尾完成。服務可依〈服務停止〉先釋放，交付工作仍須繼續。
+任何註記、必要截圖或核對尚未完成時，不執行最終封存、`bdd.mjs prune --apply` 或 worktree 移除；繼續完成已授權的交付。權限、工具或上傳阻塞時保留 `evidence/`、報告、驗證紀錄與 worktree，回報已完成部分及待處理項目，不宣稱收尾完成。服務可依〈服務停止〉先釋放，交付工作仍須繼續。
 
-使用者明確只要報告／本機封存，或要求遷移舊資料時，依該限定範圍處理並記錄不適用原因；不擴張成 issue 更新或自動移除 worktree 的授權。進行中的交付不得套用舊資料遷移的 `-AllowLocalOnly` 例外。
+使用者明確只要報告／本機封存，或要求遷移舊資料時，依該限定範圍處理並記錄不適用原因；不擴張成 issue 更新或自動移除 worktree 的授權。進行中的交付不得套用舊資料遷移的 `--allow-local-only` 例外。
 
-`archive-bdd.ps1` 檢查本機內容，`prune-bdd.ps1` 檢查封存涵蓋；兩者均不查詢 issue，無法強制上述交付關卡，須由主代理執行。`uploaded-verified` 只證明 ZIP 附件已確認可下載，不證明修正註記與逐項截圖已交付。
+`bdd.mjs archive` 檢查本機內容，`bdd.mjs prune` 檢查封存涵蓋；兩者均不查詢 issue，無法強制上述交付關卡，須由主代理執行。`uploaded-verified` 只證明 ZIP 附件已確認可下載，不證明修正註記與逐項截圖已交付。
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/archive-bdd.ps1" -Dir <最終 .bdd/單號-主題>
+node "<skill 目錄>/scripts/bdd.mjs" archive --dir <最終 .bdd/單號-主題>
 ```
 
 腳本依序：
@@ -99,30 +110,32 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/archive-bdd.ps1" -Dir <最終 .bdd
 2. **攤平**：舊輪次的 `evidence.zip` 解回 `evidence/`；同名同內容略過，同名不同內容就停止。`evidence.zip` 本身不收入封存。
 3. **遮罩檢查**：每張圖片都要有有效的遮罩登記，否則列出缺漏的檔案並停止。
 4. **情境快照**：依 `scenarios` 從受測 commit 取出當時的 `.feature`，放在 ZIP 的 `features/<模組路徑>/`。紀錄的 blob 與受測 commit 不符，或受測時情境未提交，就停止。
-5. **轉無損 WebP**：`evidence/` 底下的 PNG／JPG／BMP 轉成無損 WebP，解碼回來逐像素比對一致、而且檔案變小才採用，否則保留原檔並記在 manifest 的 `webp.skipped`。ZIP 內的 `masking.json` 改以 `.webp` 登記（保留 `derivedFrom`），`.md` 檔裡的截圖連結改成 `.webp`；工作區的原檔都不動。沒有 Pillow 時保留原格式，`warnings` 出現 `webpUnavailable`。
+5. **轉無損 WebP**：只有 `evidence/` 內有 PNG／JPG／BMP 時才偵測 Pillow。轉成無損 WebP 後，解碼回來逐像素比對一致且檔案變小才採用，其餘保留原檔並記在 manifest 的 `webp.skipped`。ZIP 內的 `masking.json` 改以 `.webp` 登記（保留 `derivedFrom`），`.md` 檔裡的截圖連結改成 `.webp`；工作區的原檔都不動。有待轉圖片但找不到 Pillow 時，保留原格式並記錄 `webpUnavailable`。
 6. **去重**：內容相同的檔案只存一份，其餘記在 `bdd-manifest.json` 的 `aliases`。
 7. 打包成暫存檔，逐檔核對 SHA-256 後才搬到封存庫；任何失敗都不留半成品。
 8. 在 `index.jsonl` 追加 `created`，並把同 repo 同主題、尚未被取代的舊封存標為 `superseded`。
 
-受測 SHA 預設取 `verification.json` 最後一輪的 `head`，單號取資料夾名稱開頭的數字；必要時以 `-Commit`、`-Issue` 指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
+受測 SHA 預設取 `verification.json` 最後一輪的 `head`，單號取資料夾名稱開頭的數字；必要時以 `--commit`、`--issue` 指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
 
 ZIP 內第一層是輸出資料夾名稱，`bdd-manifest.json` 記錄每個檔案的 SHA-256、大小、aliases、受測 commit、是否已遮罩。只用系統內建解壓縮也能看到報告與所有不重複的截圖；要完整還原（含 aliases）用：
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/extract-bdd.ps1" -Archive <zip> -To <repo>/.bdd
+node "<skill 目錄>/scripts/bdd.mjs" extract --archive <zip> --to <repo>/.bdd
 ```
 
 還原時不覆蓋既有檔案（同內容略過、不同內容停止），也不解出 manifest，所以還原後的資料夾可以直接接續下一輪並再次封存。
+
+若遮罩或封存程序意外中止，後續寫入可能提示 `masking.json.lock` 或 `index.jsonl.lock` 仍被占用。先確認同一輸出資料夾或封存庫的寫入程序已結束，再將殘留鎖檔移到封存來源以外留存。遮罩可用 `--status` 核對圖片，封存則比對目標 ZIP 的 SHA-256 與索引的 `created` 紀錄後再重試。
 
 ## 重新壓縮既有封存
 
 1.3.0 以前的封存（或封存時沒有 Pillow）截圖仍是 PNG，可以事後轉成無損 WebP：
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/recompress-bdd.ps1" -Archive <zip>
+node "<skill 目錄>/scripts/bdd.mjs" recompress --archive <zip>
 ```
 
-路徑與檔名不變，索引追加 `recompressed` 事件，狀態（例如 `uploaded-verified`）不變。issue 上的附件仍是原本的 PNG 版，那是正式紀錄，不重新上傳；索引以 `issueCopySha256` 記錄那一版的 SHA-256。`prune-bdd.ps1` 以 manifest 的 `originalSha256` 比對工作區原圖，所以重新壓縮後仍可據以清理。
+路徑與檔名不變，索引追加 `recompressed` 事件，狀態（例如 `uploaded-verified`）不變。issue 上的附件仍是原本的 PNG 版，那是正式紀錄，不重新上傳；索引以 `issueCopySha256` 記錄那一版的 SHA-256。`bdd.mjs prune` 以 manifest 的 `originalSha256` 比對工作區原圖，所以重新壓縮後仍可據以清理。
 
 ## 索引與狀態
 
@@ -140,8 +153,8 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/recompress-bdd.ps1" -Archive <zip>
 上傳並確認後登記（附件 ID 或網址必填；登記前會重算 SHA-256，與建立時不同就拒絕）：
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -Mark -Archive <zip> -Status uploaded-verified -Attachment <附件 ID 或網址>
-pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -List -Repo . -Issue <單號>
+node "<skill 目錄>/scripts/bdd.mjs" archive-index --mark --archive <zip> --status uploaded-verified --attachment <附件 ID 或網址>
+node "<skill 目錄>/scripts/bdd.mjs" archive-index --list --repo . --issue <單號>
 ```
 
 ## 清理工作區證據
@@ -149,11 +162,13 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -List -Repo
 先重新核對上述〈執行前：核對 issue 交付〉，即使既有 ZIP 已是 `uploaded-verified` 也不能略過。預設合併收尾須同時滿足 issue 交付核對與下列封存涵蓋條件，才能套用清理計畫；不能僅憑腳本回傳 `prune` 就刪除。
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/prune-bdd.ps1" -Repo <worktree 或主 checkout>          # 只列計畫
-pwsh -NoProfile -File "<skill 目錄>/scripts/prune-bdd.ps1" -Repo <worktree 或主 checkout> -Apply   # 實際刪除
+node "<skill 目錄>/scripts/bdd.mjs" prune --repo <worktree 或主 checkout>          # 只列計畫
+node "<skill 目錄>/scripts/bdd.mjs" prune --repo <worktree 或主 checkout> --apply   # 實際刪除
 ```
 
-只有 `evidence/` 每個檔案、`evidence.zip` 每個項目的**內容**都收在 `uploaded-verified` 的同主題封存裡，才會刪除 `evidence/` 與 `evidence.zip`。`.feature`、`REPORT.md`、`verification.json`、`masking.json` 一律保留。結果為 `keep` 的項目會寫明原因（未上傳、封存後又新增證據、封存檔不存在或被改動等），照原因處理，不要手動刪除。
+清理工具核對同一 repo、同主題且已登記為 `uploaded-verified` 的 ZIP，讀取封存中的實際內容並驗證 SHA-256。只有 `evidence/` 每個檔案與 `evidence.zip` 每個項目的內容都有對應副本，才可清理。對匯入後轉成 WebP 的原圖，還須有本工具逐像素驗證後寫入索引的來源雜湊。舊匯入缺少該紀錄時，保留無法以相同內容核對的原圖。
+
+報告、情境、遮罩紀錄與 Git 已追蹤的證據均保留。結果為 `keep` 時，依 `reason` 核對原因。如果清理中斷並留下 `.bdd-prune-*` 暫存目錄，先確認程序已結束，再核對其中的 `evidence/`、`evidence.zip` 與原路徑，保留兩邊仍需復原的檔案。
 
 ## 遷移舊資料（使用者要求搬移時）
 
@@ -161,9 +176,9 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prune-bdd.ps1" -Repo <worktree 或
 
 1. **舊版封存 ZIP**（例如主 checkout 的 `.claude/bdd-archives/*.zip`，沒有 manifest）：原檔匯入封存庫的 `<單號>/legacy/`，不重新打包，SHA-256 不變；issue 上有同一個檔案時，再登記 `uploaded-verified`。
    ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-archive-index.ps1" -Import -Archive <舊 zip> -Repo . -Issue <單號> -Topic <輸出資料夾名> -Commit <短 SHA> -Note "<來源說明>" -Move
+   node "<skill 目錄>/scripts/bdd.mjs" archive-index --import --archive <舊 zip> --repo . --issue <單號> --topic <輸出資料夾名> --commit <短 SHA> --note "<來源說明>" --move
    ```
-2. **工作區的 `.bdd/<單號-主題>/`**（含 `evidence/` 或 `evidence.zip`）：照一般流程封存。舊截圖沒有遮罩登記，而且不會上傳時，用 `-AllowUnmaskedReason "<理由>"` 明確放行，manifest 會記下未遮罩清單與理由；這種封存**不可上傳 issue**。之後用 `prune-bdd.ps1 -AllowLocalOnly` 清理工作區證據，清完後本機封存庫就是唯一的完整副本。
+2. **工作區的 `.bdd/<單號-主題>/`**（含 `evidence/` 或 `evidence.zip`）：照一般流程封存。舊截圖沒有遮罩登記，而且不會上傳時，用 `--allow-unmasked-reason "<理由>"` 明確放行，manifest 會記下未遮罩清單與理由；這種封存**不可上傳 issue**。之後用 `bdd.mjs prune --allow-local-only` 清理工作區證據，清完後本機封存庫就是唯一的完整副本。
 
 進行中的單（功能分支還沒併回、還會再跑下一輪的）不要遷移。
 

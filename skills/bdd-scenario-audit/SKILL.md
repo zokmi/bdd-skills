@@ -27,10 +27,10 @@ description: 用於檢查既有 BDD／Gherkin／feature 情境是否合規，或
 
 ## 檢查方式
 
-先執行唯讀格式檢查（有 Git repo 及 PowerShell 時）：
+在有 Git 工作區與 Node.js 的環境執行唯讀格式檢查。
 
 ```text
-pwsh -NoProfile -File "<插件目錄>/skills/bdd-local-test/scripts/bdd-modules.ps1" -Repo "<受查 repo>" -Lint
+node "<插件目錄>/skills/bdd-local-test/scripts/bdd.mjs" modules --repo "<受查 repo>" --lint
 ```
 
 記錄命令、exit code、模組數及問題。exit 0 只代表 lint 範圍內無格式問題；模組數為 0、未涵蓋的舊文件、工具失敗或缺少環境皆不能當作通過。此命令掃描整個 repo 的模組；指定局部審查時，範圍外的結果另列，不混入本次結論。工具不可用時手動核對格式並說明未執行原因，仍完成可做的語意審查。

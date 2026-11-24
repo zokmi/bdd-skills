@@ -233,6 +233,23 @@ Describe 'BddArchive.psm1' {
         @(Get-RepoWorktrees (Join-Path $t.repo '.bdd/_/x')).Count | Should -Be 1
         Get-RepoTopLevel (Join-Path $t.repo '.bdd/_') | Should -Be (Get-NormalizedPath $t.repo)
     }
+
+    It '管理入口尊重封存索引鎖，鎖釋放後可追加到沒有結尾換行的舊索引' {
+        $root = Join-Path $base 'index-test'
+        $null = New-Item -ItemType Directory -Path $root
+        $index = Join-Path $root 'index.jsonl'
+        $first = '{"archive":"first","event":"created"}'
+        [IO.File]::WriteAllText($index, $first)
+        [IO.File]::WriteAllText("$index.lock", '')
+        $next = @{ archive = 'second'; event = 'created'; topic = '中文' }
+        { Add-ArchiveIndexEvent $root $next } | Should -Throw '*封存索引正由其他程序使用*'
+        [IO.File]::ReadAllText($index) | Should -Be $first
+        [IO.File]::Delete("$index.lock")
+        Add-ArchiveIndexEvent $root $next
+        $events = @(Read-ArchiveIndex $root)
+        $events.Count | Should -Be 2
+        $events[1].topic | Should -Be '中文'
+    }
 }
 
 Describe 'extract-bdd.ps1' {
@@ -547,6 +564,44 @@ Describe 'archive-bdd.ps1 WebP' {
         (@($names | Where-Object { $_ -like 'evidence/R2_DM-02_列表.*' })).Count | Should -Be 2
     }
 
+    It '<operation> 依格式驗證同內容圖片，錯誤副檔名排在前後都保留原檔' -ForEach @(
+        @{ operation = 'archive' }
+        @{ operation = 'recompress' }
+    ) {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $evidence = Join-Path $t.bdd 'evidence'
+        Copy-Item -LiteralPath (Join-Path $evidence 'R1_DM-01_首頁.png') -Destination (Join-Path $evidence 'A_first.jpg')
+        Copy-Item -LiteralPath (Join-Path $evidence 'R2_DM-02_列表.png') -Destination (Join-Path $evidence 'Z_last.jpg')
+        Register-AllExempt $t.bdd
+        if ($operation -eq 'recompress') { $env:BDD_WEBP_ENCODER = 'none' }
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+        if ($operation -eq 'recompress') {
+            $env:BDD_WEBP_ENCODER = 'pillow'
+            & "$script:Scripts/recompress-bdd.ps1" -Archive $r.archive | Out-Null
+        }
+        $manifest = Read-Manifest $r.archive
+        $manifest.webp.converted | Should -Be 3
+        @($manifest.webp.skipped | Where-Object reason -eq 'encoder-failed').Count | Should -Be 2
+        foreach ($name in @('A_first.jpg', 'Z_last.jpg')) {
+            $manifest.files."evidence/$name".sha256 | Should -Be (Get-FileHash -LiteralPath (Join-Path $evidence $name)).Hash
+        }
+        $manifest.files.'evidence/R1_DM-01_首頁.webp'.lossless | Should -BeTrue
+        $manifest.files.'evidence/R2_DM-02_列表.webp'.lossless | Should -BeTrue
+    }
+
+    It '過期遮罩登記經重新壓縮與還原後仍列為未遮罩' {
+        if (-not $script:HasPillow) { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        Register-AllExempt $t.bdd
+        New-TestPng (Join-Path $t.bdd 'evidence/R2_DM-02_列表.png') '#11AA33'
+        $env:BDD_WEBP_ENCODER = 'none'
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot; AllowUnmaskedReason = '僅本機保存' }
+        $env:BDD_WEBP_ENCODER = 'pillow'
+        & "$script:Scripts/recompress-bdd.ps1" -Archive $r.archive | Out-Null
+        $restored = & "$script:Scripts/extract-bdd.ps1" -Archive $r.archive -To (Join-Path $base 'restored') | ConvertFrom-Json
+        $status = & "$script:Scripts/mask-evidence.ps1" -Status -Dir $restored.folder | ConvertFrom-Json
+        @($status.unmasked) | Should -Be @('evidence/R2_DM-02_列表.webp')
+    }
+
     It '沒有編碼器時保留原格式並警告 webpUnavailable' {
         $env:BDD_WEBP_ENCODER = 'none'
         Register-AllExempt $t.bdd
@@ -556,6 +611,27 @@ Describe 'archive-bdd.ps1 WebP' {
         (Read-Manifest $r.archive).files.PSObject.Properties.Name | Should -Contain 'evidence/R1_DM-01_首頁.png'
         $created = Get-Content -LiteralPath (Join-Path $archiveRoot 'index.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object event -eq 'created'
         $created.webp | Should -BeFalse
+    }
+
+    It '全部為 WebP 時直接封存並略過編碼器' {
+        $env:BDD_WEBP_ENCODER = 'none'
+        $pixels = [Convert]::FromBase64String('UklGRhoAAABXRUJQVlA4TA4AAAAvAUAAAAcQEf0PRET/Aw==')
+        $images = Get-ChildItem -LiteralPath (Join-Path $t.bdd 'evidence') -File -Filter '*.png'
+        foreach ($image in $images) {
+            $destination = [IO.Path]::ChangeExtension($image.FullName, '.webp')
+            Move-Item -LiteralPath $image.FullName -Destination $destination
+            [IO.File]::WriteAllBytes($destination, $pixels)
+        }
+        Register-AllExempt $t.bdd
+
+        $r = Invoke-Archive @{ Dir = $t.bdd; ArchiveRoot = $archiveRoot }
+
+        $r.webpConverted | Should -Be 0
+        $r.webpEncoder | Should -BeNullOrEmpty
+        @($r.warnings) -join ' ' | Should -Not -Match 'webpUnavailable'
+        $manifest = Read-Manifest $r.archive
+        $manifest.files.'evidence/R1_DM-01_首頁.webp'.sha256 |
+            Should -Be (Get-FileHash -LiteralPath (Join-Path $t.bdd 'evidence/R1_DM-01_首頁.webp')).Hash
     }
 
     It '.bdd/config.json 設 webp = off 時不轉檔也不警告' {

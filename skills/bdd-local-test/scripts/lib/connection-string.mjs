@@ -1,5 +1,3 @@
-'use strict';
-
 function parseConnectionString(text) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('Empty connection string');
   const values = Object.create(null);
@@ -68,4 +66,4 @@ function toMssqlConfig(text, { requestTimeout = 120000 } = {}) {
   return config;
 }
 
-module.exports = { parseConnectionString, toMssqlConfig };
+export { parseConnectionString, toMssqlConfig };

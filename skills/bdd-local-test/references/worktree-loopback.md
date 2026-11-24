@@ -1,6 +1,6 @@
 # 在 git worktree 裡測：用 loopback IP 分流
 
-本文件適用 `scripts/loopback-slot.ps1` 回傳 `isolated=true` 的工作區：worktree 自動隔離；多專案的主 checkout 明確加 `-Isolate`。必須先完成 `SKILL.md` 第 5 節的 preflight，才啟動或沿用本輪服務。
+本文件適用 `node scripts/bdd.mjs loopback-slot` 回傳 `isolated=true` 的工作區：worktree 自動隔離；多專案的主 checkout 明確加 `--isolate`。必須先完成 `SKILL.md` 第 5 節的 preflight，才啟動或沿用本輪服務。
 
 多專案同時使用相同 port 時使用同一使用者的 `%USERPROFILE%/.bdd-loopback/registry-v1/` 共用登記與檔案鎖，在服務啟動前預約不同 IP；不使用可能因 sandbox 而不同的 TEMP。`preflight.registryPath` 必須指向相同登記檔。`BDD_LOOPBACK_REGISTRY_DIR` 僅供隔離測試 fixture 覆寫；正式多專案不可各自設成不同目錄。不同使用者、未使用此分配器的服務及綁全部 IP 的程序仍須核對占用；沒有共用登記存取權時先處理權限，不降級為 repo 私有分配。無法取得隔離 IP 時列為阻塞。其他工作區的服務維持運作。
 
@@ -8,7 +8,7 @@
 
 啟動前在報告逐服務填寫：`repo/worktree → 原始 localhost URL（含協定與 port）→ 本輪實際監聽 port → 設定來源 → 本輪綁定 IP → 完整啟動命令（遮罩秘密）`。前端 dev-server port、API port、HTTPS port 與 proxy 的 upstream port 分別查證；以專案文件、生效 profile／環境覆寫及啟動日誌核對，不能套用文件中的示例數字。無法確認實際 port 時先阻塞。
 
-原埠可用時沿用，被占用時自動分配臨時埠。`portMappings` 列出每個 `originalPort` 與 `effectivePort`，`effectivePorts` 供本輪啟動與清理，`occupied` 保留原埠占用證據。要求固定埠或已確認沿用本工作區原埠服務時，加 `-KeepOriginalPorts`。同一工作區的測試輪次序列執行。
+原埠可用時沿用，被占用時自動分配臨時埠。`portMappings` 列出每個 `originalPort` 與 `effectivePort`，`effectivePorts` 供本輪啟動與清理，`occupied` 保留原埠占用證據。要求固定埠或已確認沿用本工作區原埠服務時，加 `--keep-original-ports`。同一工作區的測試輪次序列執行。
 
 執行順序：確認資料庫授權與上述啟動契約 → 檢查分配 IP／原 port 占用 → 以臨時參數啟動本輪前後端服務 → 核對實際監聽 IP／port、PID、工作區與版本 → 啟動帶 `chromiumArg` 的獨立 MCP Chrome／Chromium → 導覽本輪 localhost URL，驗證 UI 與真實 API 請求。
 
@@ -23,16 +23,16 @@
 在該 worktree 根目錄執行，埠號取自專案文件：
 
 ```powershell
-pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <原埠號，逗號分隔> -OutputDir <本輪輸出目錄>/mcp
+node "<skill 目錄>/scripts/bdd.mjs" prepare-worktree-mcp --ports "<原埠號，逗號分隔>" --output-dir "<本輪輸出目錄>/mcp"
 ```
 
 回傳 preflight、原 ports、portMappings、effectivePorts、唯一 isolationId、configPath 與 stdio MCP 的 server.command／server.args。產生器只寫本輪臨時檔，不啟動瀏覽器、不變更專案或全域 MCP 設定；`status=configuration-only` 不代表已連線或可測。將完整回傳 JSON 保存到本輪輸出目錄，作為唯一對應。若啟動時被其他程序搶占或工具自行換埠，停止本輪已啟動的自有服務，重新準備並更新全部啟動參數與測試網址，最多重試兩次。仍無法綁定時列為阻塞。
 
-多專案主 checkout 在上述命令與 `loopback-slot.ps1` 加 `-Isolate`，同樣綁回傳 IP／有效埠 並使用 MCP resolver。未加時維持原 localhost 解析（可能是 IPv6），不代表已隔離；多專案同 port 不可直接沿用此模式。清理明確隔離的主 checkout 時，`stop-slot-services.ps1` 也加 `-Isolate`，仍只停止路徑歸屬符合的自有程序；未加時一律不停止主 checkout 服務。
+多專案主 checkout 在上述命令與 `node bdd.mjs loopback-slot` 加 `--isolate`，同樣綁回傳 IP／有效埠 並使用 MCP resolver。未加時維持原 localhost 解析（可能是 IPv6），不代表已隔離；多專案同 port 不可直接沿用此模式。清理明確隔離的主 checkout 時，`node bdd.mjs stop-slot-services` 也加 `--isolate`，仍只停止路徑歸屬符合的自有程序；未加時一律不停止主 checkout 服務。
 
-啟動描述使用 `npx --offline --no-install @playwright/mcp@latest --config <路徑>`，重用與 Codex 預設 Playwright MCP 相同的 npm 快取鍵。找不到套件時，可用下方的 `--mcp-cli` 指定已安裝版本。
+服務代理已確認本機 Playwright MCP 的安裝位置時，準備各 worktree 設定時傳入 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`，再把各自的準備結果 JSON 交給測資與實測代理。專用工作階段會直接用 Node.js 啟動該 CLI，省去每輪的 npm 套件查找。未指定時沿用 `npx --offline --no-install @playwright/mcp@latest --config <路徑>`，重用與 Codex 預設 Playwright MCP 相同的 npm 快取鍵。
 
-核對本輪實際目標後，可依 [登入自動化](authentication.md) 選擇已對應的私有狀態檔，再以 `-StorageState <檔案>` 產生設定。回傳的 MCP 參數會帶入 `--storage-state`；每個 session 仍以獨立 context 啟動。未指定時從乾淨狀態開始。
+核對本輪實際目標後，可依 [登入自動化](authentication.md) 選擇已對應的私有狀態檔，再以 `--storage-state <檔案>` 產生設定。回傳的 MCP 參數會帶入 `--storage-state`；每個 session 仍以獨立 context 啟動。未指定時從乾淨狀態開始。
 
 1. 核對 preflight.occupied 的程序歸屬，依下節臨時啟動本輪服務。
 2. 在每個 worktree／同時執行組別啟動下方的 [專用 MCP 工作階段](#啟動專用-mcp-工作階段)，傳入本輪準備結果 JSON。入口以回傳的 `--config` 建立獨立 stdio MCP server，並自動用同一條連線完成路由探測。若客戶端已支援任務範圍的獨立 MCP 連線，也可使用回傳的 command／args 建立，並執行下方的手動探測。
@@ -43,7 +43,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <
 6. 同時測兩個 worktree 前，確認兩個 MCP 瀏覽器的登入／儲存狀態互不影響，前端與 API 版本皆正確。核對專案相關檔案的前後 diff，確認沒有因導轉改動 localhost／埠號。
 7. 符合[服務停止](closeout.md#服務停止)的全部收尾條件後，由管理者向本輪終端入口送出 `{"tool":"close"}`，或關閉本輪客戶端連線。確認 MCP 與瀏覽器關閉後，再停止本輪服務。臨時設定在使用程序停止後清理，不停止其他 worktree 或使用者原服務，也不刪除共用分配鎖檔。
 
-完成本輪獨立 MCP 探測後，若需要把瀏覽器的 localhost HTTP(S) 請求改送到 slot（如硬編碼原埠或 slot HTTPS 憑證），使用內建 `route-snippet.cjs --prepared <本輪準備結果 JSON>`。這個入口從 `.bdd/config.json` 讀取前端／API 埠，套用本輪有效埠。把輸出的片段貼到同一個已驗證 session 的 browser_run_code，然後導覽並核對各服務的實際目標。它只處理瀏覽器 HTTP(S)，WebSocket（HMR）仍由 Chromium resolver 處理，程序間連線仍依上述啟動契約設定。參閱[內建實測工具](test-kit.md)。
+完成本輪獨立 MCP 探測後，若需要把瀏覽器的 localhost HTTP(S) 請求改送到 slot（如硬編碼原埠或 slot HTTPS 憑證），使用內建 `route-snippet.mjs --prepared <本輪準備結果 JSON>`。這個入口從 `.bdd/config.json` 讀取前端／API 埠，套用本輪有效埠。把輸出的片段貼到同一個已驗證 session 的 browser_run_code，然後導覽並核對各服務的實際目標。它只處理瀏覽器 HTTP(S)，WebSocket（HMR）仍由 Chromium resolver 處理，程序間連線仍依上述啟動契約設定。參閱[內建實測工具](test-kit.md)。
 
 共用 session 只能序列測試，切換 worktree 前仍須關閉舊瀏覽器並以新設定重新建立及驗證連線；僅換分頁不會更新 localhost 對應。獨立連線不可得時，可繼續獨立的 API／DB 範圍，不宣稱 UI 通過。
 
@@ -52,10 +52,10 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/prepare-worktree-mcp.ps1" -Ports <
 在支援持久 stdin 的終端以 Node.js 18.2 以上啟動：
 
 ```powershell
-node "<skill 目錄>/scripts/bdd.cjs" mcp-session "<本輪準備結果 JSON>"
+node "<skill 目錄>/scripts/bdd.mjs" mcp-session "<本輪準備結果 JSON>"
 ```
 
-在 Codex 使用可寫入 stdin 的終端（`exec_command` 設 `tty: true`，後續用 `write_stdin` 向同一 session ID 送一行 JSON 並按 Enter）。如果終端沙箱拒絕 loopback 或 Chrome 啟動，使用平台提供的本機執行授權後重試。若已安裝的 MCP 位於獨立工具目錄，附加 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`。
+在 Codex 使用可寫入 stdin 的終端（`exec_command` 設 `tty: true`，後續用 `write_stdin` 向同一 session ID 送一行 JSON 並按 Enter）。如果終端沙箱拒絕 loopback 或 Chrome 啟動，使用平台提供的本機執行授權後重試。準備結果已記錄 CLI 路徑時直接使用即可。需要為該次啟動指定不同的已安裝 CLI 時，附加 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`。兩種入口都使用本輪瀏覽器設定並執行原有路由探測。
 
 看到 `status=ready` 後才開始操作。保留其中 `probe` 的 `status=matched`、`isolationId`、`ip` 與 `port` 作為路由證據。每次送一行，等相同 `id` 的 `result` 或 `error` 後再送下一個操作：
 
@@ -73,7 +73,7 @@ node "<skill 目錄>/scripts/bdd.cjs" mcp-session "<本輪準備結果 JSON>"
 用 Node.js 18.2 以上啟動探測器，傳入本輪準備腳本回傳的完整 JSON 檔：
 
 ```powershell
-node "<skill 目錄>/scripts/bdd.cjs" mcp-probe "<本輪準備結果 JSON>"
+node "<skill 目錄>/scripts/bdd.mjs" mcp-probe "<本輪準備結果 JSON>"
 ```
 
 探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內用將要執行 UI 測試的 MCP `browser_navigate` 開啟回傳的完整 `url`。保留瀏覽器回應與探測器輸出，兩邊都須有 `status=matched`，且 `isolationId`、`ip`、`port` 與 `ready` 相符。探測器收到符合本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時則以非零狀態退出。
@@ -82,11 +82,15 @@ Chrome 的 `chrome://version` 可協助診斷啟動旗標。實際路由以探�
 
 ## 服務與 slot
 
+Windows CLI 透過隨插件提供的 C# 原始碼存取系統檔案鎖、TCP 監聽表與程序身分。每個需要這些功能的 Node 程序會使用 Windows .NET Framework 編譯器建立暫存執行檔，正常退出後清理。新舊入口共用相同的 registry、slot 檔與鎖定順序。
+
+若 Windows 或執行沙箱拒絕讀取 TCP 監聽表，preflight 會中止。請在能讀取該主機監聽資訊的環境重跑，確認既有監聽者後再啟動服務。
+
 slot 分配先取得跨 repo 的共用登記鎖，再取得共用 Git 目錄的鎖，避免服務尚未監聽時跨專案同時分到同一 IP。既有 slot 重複、無效或與登記不一致時停止，不在服務可能仍運作時自動換 IP。分配鎖不代表服務、帳號或資料已隔離。
 
 1. 從專案文件確認本輪所有前後端原埠號，在受測 repo 根目錄執行：
    ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/loopback-slot.ps1" -Ports <專案用到的埠，逗號分隔>
+   node "<skill 目錄>/scripts/bdd.mjs" loopback-slot --ports "<專案用到的埠，逗號分隔>"
    ```
    保存 JSON 的 `slot`、`ip`、`chromiumArg`、`occupied`。以 MCP 準備腳本回傳的本輪對應為準。
 2. 按 `occupied` 的位址、埠號、PID 確認原埠占用者。另起服務時使用分配的有效埠。指定固定埠且無法沿用服務時列為阻塞。

@@ -45,6 +45,33 @@ function Get-WebpEncoder {
     $result
 }
 
+function Start-WebpBatch($Encoder) {
+    if ($Encoder.kind -ne 'pillow') { throw '沒有可用的 WebP 編碼器（需要支援 WebP 的 Python Pillow）' }
+    $info = [Diagnostics.ProcessStartInfo]::new($Encoder.command)
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+    foreach ($arg in $Encoder.prefixArgs) { $info.ArgumentList.Add($arg) }
+    $info.ArgumentList.Add($Encoder.helper)
+    $info.ArgumentList.Add('batch')
+    $encoderProcess = [Diagnostics.Process]::Start($info)
+    $encoderProcess.BeginErrorReadLine()
+    $encoderProcess
+}
+
+function Stop-WebpBatch([Diagnostics.Process]$Batch) {
+    try {
+        try { $Batch.StandardInput.Close() } catch [IO.IOException] {}
+        if (-not $Batch.WaitForExit(3000)) {
+            if (-not $Batch.HasExited) { $Batch.Kill() }
+            $Batch.WaitForExit()
+        }
+    } finally { $Batch.Dispose() }
+}
+
 <#
 .SYNOPSIS
   把一張圖片轉成無損 WebP 並逐像素驗證；不改動來源檔。
@@ -52,14 +79,29 @@ function Get-WebpEncoder {
   ok 為 false 時刪除 Destination，不留下產物。
 #>
 function Convert-ToLosslessWebp {
-    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination, [Parameter(Mandatory)]$Encoder)
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination,
+        [Parameter(Mandatory)]$Encoder,
+        [Diagnostics.Process]$Batch
+    )
     if ($Encoder.kind -ne 'pillow') { throw '沒有可用的 WebP 編碼器（需要支援 WebP 的 Python Pillow）' }
     $sourceBytes = (Get-Item -LiteralPath $Source).Length
-    $prefix = @($Encoder.prefixArgs)
-    $out = & $Encoder.command @prefix $Encoder.helper convert $Source $Destination 2>$null
-    $exit = $LASTEXITCODE
     $result = @{ ok = $false; reason = 'encoder-failed'; encoder = 'pillow'; sourceBytes = $sourceBytes; webpBytes = $null }
-    if ($exit -eq 0 -and $out -and (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+    if ($Batch) {
+        $request = @{ source = $Source; destination = $Destination } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii
+        $out = $null
+        try {
+            $Batch.StandardInput.WriteLine($request)
+            $Batch.StandardInput.Flush()
+            $out = $Batch.StandardOutput.ReadLine()
+        } catch [IO.IOException] {}
+    } else {
+        $prefix = @($Encoder.prefixArgs)
+        $out = & $Encoder.command @prefix $Encoder.helper convert $Source $Destination 2>$null
+        if ($LASTEXITCODE -ne 0) { $out = $null }
+    }
+    if ($out -and (Test-Path -LiteralPath $Destination -PathType Leaf)) {
         $report = $null
         try { $report = ($out | Select-Object -Last 1) | ConvertFrom-Json } catch { $report = $null }
         if ($report -and $report.PSObject.Properties['identical']) {

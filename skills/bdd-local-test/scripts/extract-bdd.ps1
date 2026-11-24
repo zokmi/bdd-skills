@@ -24,8 +24,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib/BddExtract.psm1') -Force
-
-Expand-BddArchive -Archive $Archive -To $To |
-    Select-Object archive, destination, folder, hasManifest, written, restoredAliases, skippedIdentical, verifiedFiles |
-    ConvertTo-Json
+$PSNativeCommandUseErrorActionPreference = $false
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$cliOutput = & node (Join-Path $PSScriptRoot 'bdd.mjs') extract "--archive=$Archive" "--to=$To" 2>&1
+if ($LASTEXITCODE -ne 0) { throw ($cliOutput -join [Environment]::NewLine) }
+$cliOutput

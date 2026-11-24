@@ -1,5 +1,5 @@
-const {DatabaseSync}=require('node:sqlite');
-const http=require('node:http');
+import http from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 const [mode,file]=process.argv.slice(2);
 const db=new DatabaseSync(file,{readOnly:mode==='read'});
 if(mode==='read'){

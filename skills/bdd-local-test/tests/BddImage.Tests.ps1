@@ -91,6 +91,21 @@ Describe 'Convert-ToLosslessWebp（假編碼器）' {
 }
 
 Describe 'Convert-ToLosslessWebp（Pillow）' {
+    It '分段比較 RGBA 時保留最後一列與透明像素 RGB 的差異' {
+        if ($script:Pillow.kind -ne 'pillow') { Set-ItResult -Skipped -Because '沒有支援 WebP 的 Python Pillow'; return }
+        $probe = @'
+import runpy, sys
+from PIL import Image
+same = runpy.run_path(sys.argv[1])['_same_rgba']
+with Image.new('RGBA', (1024, 513)) as a, a.copy() as b:
+    assert same(a, b)
+    b.putpixel((1023, 512), (1, 2, 3, 0))
+    assert not same(a, b)
+'@
+        & $script:Pillow.command @($script:Pillow.prefixArgs) -c $probe $script:Pillow.helper
+        $LASTEXITCODE | Should -Be 0
+    }
+
     It '拒絕偽裝格式、超出像素上限及動畫 PNG' -ForEach @(
         @{ fixture = 'gif'; generator = 'Image.new("P", (8, 8)).save(p, format="GIF")'; message = '*cannot identify image file*' }
         @{ fixture = 'large'; generator = 'Image.new("1", (10000, 4000)).save(p)'; message = '*pixel limit*' }

@@ -32,7 +32,7 @@ git branch -r | head -20
 - **模組情境**：`<git 根目錄>/.bdd/modules/<portal>/<主路由>/`。切法、MODULE.md 格式、編號規則見 [模組情境集](modules.md)。
   repo 還沒有 `.bdd/modules/` 但 issue 資料夾裡有舊的 `.feature` 時，照舊格式接著做，並提醒使用者可以依 modules.md〈遷移舊資料〉整併；不要自己遷移。
 - 資料夾**已存在**時先讀既有檔案，在上面補充或更新，不要整個覆蓋——上一輪的證據與報告可能還有用。接著做〈1-1 比對既有驗證紀錄〉。
-- 建立 `.bdd` 輸出前，先讀專案版控規範，再執行 `node "<skill 目錄>/scripts/bdd.cjs" gitignore --repo "<git 根目錄>"`，自動驗證並補齊忽略規則，不等使用者手動補充。已有明確相反專案規範時改用 `--check` 並回報差異。exit 1 須處理缺漏或已追蹤產物；exit 2 須排除錯誤／衝突，不得宣稱通過。詳見 [版控分工](version-control.md)。
+- 建立 `.bdd` 輸出前，先讀專案版控規範，再執行 `node "<skill 目錄>/scripts/bdd.mjs" gitignore --repo "<git 根目錄>"`，自動驗證並補齊忽略規則，不等使用者手動補充。已有明確相反專案規範時改用 `--check` 並回報差異。exit 1 須處理缺漏或已追蹤產物；exit 2 須排除錯誤／衝突，不得宣稱通過。詳見 [版控分工](version-control.md)。
 - 舊版 skill 輸出在 `docs/bdd/`。若該處已有同單號的資料夾而 `.bdd/` 還沒有，先告知使用者並建議搬到 `.bdd/` 再接續，不要自己搬、也不要另起一份重複的。
 
 ### 1-1. 比對既有驗證紀錄（同步後自動複測）
@@ -40,13 +40,13 @@ git branch -r | head -20
 資料夾裡已有 `verification.json`，或使用者提到剛做過 cherry-pick／merge／跨 repo 同步時，**先比對，不要直接沿用舊報告**：
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Check -Dir <輸出資料夾>
+node "<skill 目錄>/scripts/bdd.mjs" verification --check --dir "<輸出資料夾>"
 ```
 
-腳本在**目前所在的 repo** 執行 git 比對，`-Dir` 可以指向別的 repo 裡的報告資料夾
+腳本在**目前所在的 repo** 執行 git 比對，`--dir` 可以指向別的 repo 裡的報告資料夾
 （例如 `.bdd/` 沒跟著同步過來時，直接指向來源 repo 的那一份）。它會回報：
 
-- repo 是否相同（比對 origin URL）、HEAD 是否相同、受測檔案有沒有未提交異動。
+- 優先用 origin URL 辨識 repo，沒有 origin 時使用第一個 remote。兩邊都沒有 remote 時，核對工作區名稱與 Git 歷史。受測當時或目前的相關檔案有未提交異動，都需要重測。
 - 每個受測 commit 在目前 repo 的對應：`same`（同 SHA）、`patch`（cherry-pick，內容相同）、
   `subject`（只找到同標題、內容有差異，通常是解衝突或手改）、`missing`（沒同步過來）。
 - 受測檔案在目前 HEAD 的內容是否與受測時相同。
@@ -73,7 +73,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-verification.ps1" -Check -Dir 
 - 跨 repo 時，步驟 4 的環境安全確認要重新做一次——另一個 repo 的連線字串、資料庫、帳號都可能不同。
 - 輪次遞增：新一輪的證據檔名加 `R<輪次>_` 前綴（如 `R2_IC-05_列表單價顯示.png`），不覆蓋前一輪的證據。
   舊輪次若有 `evidence.zip`，依舊封存指引保留及核對；要從本機舊封存接續時，
-  用 `extract-bdd.ps1 -Archive <封存檔> -To <repo>/.bdd` 還原（見 [BDD 封存、遮罩與清理](archive.md)）。
+  用 `node "<skill 目錄>/scripts/bdd.mjs" extract --archive <封存檔> --to <repo>/.bdd` 還原（見 [BDD 封存、遮罩與清理](archive.md)）。
 
 ### 2. 蒐集事實：需求與實作都要看
 
@@ -85,7 +85,7 @@ git status --porcelain
 
 - **找出受影響的模組**：
   ```bash
-  pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-modules.ps1" -Base <基準>
+  node "<skill 目錄>/scripts/bdd.mjs" modules --base <基準>
   ```
   `modules` 是命中的模組，先讀它們現有的情境——那是這個功能目前的規則，本單要在上面修改。
   `unmatched` 裡有屬於前端頁面或後端服務的檔案時，依「portal＋主路由」提出新模組（名稱、前綴、paths），**請使用者確認後**才建立 MODULE.md；
@@ -100,7 +100,7 @@ git status --porcelain
 
 格式、標籤、編號與寫法的細節見 [情境寫法](feature-guide.md)，寫之前先讀。重點：
 
-- 情境寫在**模組**裡：修改或新增既有模組的 `.feature`，不在 issue 資料夾另寫一份。新情境的編號用 `bdd-modules.ps1 -NextId -Module <模組>` 取得，
+- 情境寫在**模組**裡：修改或新增既有模組的 `.feature`，不在 issue 資料夾另寫一份。新情境的編號用 `node bdd.mjs modules --next-id --module <模組>` 取得，
   每個情境標上本單單號（`@#5349`）；修改既有情境時在原地改，補上本單單號。
 - 本單沒改、但屬於受影響模組的情境，挑和異動相關的列為**回歸**，一起執行。
 - 每個情境標 `@UI`／`@API`／`@DB` 說明驗證手段；讀程式已知會失敗的標 `@已知缺陷` 並註解原因。
@@ -108,7 +108,7 @@ git status --porcelain
 - 覆蓋分支與邊界：成功、驗證失敗、權限不足、空值／零值、重複、找不到資料、與既有資料的互動。
   只寫 happy path 的情境集等於沒測。
 - 先依 [情境範圍](feature-guide.md#情境範圍) 區分對外業務行為與工程調整。SQL／資料轉置、部署設定、純重構等另列技術驗證項目與證據，不因存在異動就新增 `.feature`；影響使用者、外部系統或事件／排程業務流程時補足該流程的成功與異常情境。資料保留、錯誤停止與 rollback 等安全驗證仍須執行。
-- 寫完先跑 `bdd-modules.ps1 -Lint`，通過才送審。
+- 寫完先跑 `node bdd.mjs modules --lint`，通過才送審。
 
 ### 3-1. 子代理獨立審核情境
 

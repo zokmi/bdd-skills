@@ -25,7 +25,7 @@ Git 保存持續維護的規格；執行紀錄及核准的驗證截圖存於本�
 每次開始 BDD、切換 repo/worktree 或整合分支後，建立輸出前執行：
 
 ```text
-node "<skill 目錄>/scripts/bdd.cjs" gitignore --repo "<git 根目錄>"
+node "<skill 目錄>/scripts/bdd.mjs" gitignore --repo "<git 根目錄>"
 ```
 
 預設用 Git 實際忽略結果驗證預期路徑及現有 `.bdd` 檔案；缺漏時在根目錄 `.gitignore` 附加有標記的規則區塊，保留原始內容，已符合規範則不修改。整個 `.bdd/` 被忽略時會補上父目錄放行規則，讓 Git 能遍歷 modules。重跑不重複新增。`--check` 僅檢查，適合專案明確禁止自動修改時使用。

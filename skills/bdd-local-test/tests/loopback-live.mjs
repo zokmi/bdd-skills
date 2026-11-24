@@ -1,10 +1,10 @@
 // No browser automation dependency: all page operations go through independent
 // stdio Playwright MCP servers, using the generated localhost resolver configs.
-const fs = require('node:fs');
-const http = require('node:http');
-const { openWorktreeMcp } = require('../scripts/lib/worktree-mcp.cjs');
-const path = require('node:path');
-const assert = require('node:assert/strict');
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { openWorktreeMcp } from '../scripts/lib/worktree-mcp.mjs';
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8').replace(/^\uFEFF/, ''));
 const { uiPort, apiPort } = manifest;
 const uiOrigin = 'http://localhost:' + uiPort;

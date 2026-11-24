@@ -10,7 +10,7 @@
 
 已完成整合完整驗證且程式、情境與環境均未變時沿用該輪。推送同一受測 commit 後只核對遠端 SHA，不再完整重跑。報告與證據不新增到 Git；更新執行產物不改變受測 SHA，也不額外建立文件 commit。
 
-**重測條件**：develop 前進而需重新整合、解衝突或修改改變程式／情境、依賴、設定、資料庫結構或測試環境改變時，重新整合或修正、建置／重啟後再完整驗證。bdd-verification.ps1 -Check 的 current／still-valid 只涵蓋記錄範圍，不能代替整合驗證。
+**重測條件**：develop 前進而需重新整合、解衝突或修改改變程式／情境、依賴、設定、資料庫結構或測試環境改變時，重新整合或修正、建置／重啟後再完整驗證。node bdd.mjs verification --check 的 current／still-valid 只涵蓋記錄範圍，不能代替整合驗證。
 
 **自動詢問觸發**：worktree 開發完成，修正與相關回歸情境通過，且使用者尚未指定交付方式時，主動詢問，不等使用者另說「收尾」。成功交付只允許「轉為正式 feature 分支」或「合併回 develop」。此時不必先完整 all pass，以免合併模式在整合前多跑一輪。
 
@@ -62,11 +62,11 @@
 
 1. **確認目標與準備提交**：由使用者指定的單號、分支或專案設定找出唯一 issue 與其系統（如 Redmine），確認目前是對應的功能分支、遠端 `develop` 存在、最新一輪修正與相關回歸情境已通過；完整 all pass 於整合後取得。若單號、issue、目標 repo 或 `develop` 不明，先查專案文件與遠端；仍無法唯一確認就停止收尾並回報。檢查原有未提交異動，只挑本次修正、模組情境及共用設定提交（見 [版控分工](version-control.md)）；本輪報告、驗證與遮罩紀錄及證據不提交，不夾帶其他人的變更；無法分離時停止合併並說明。提交修正與情境後確認工作區乾淨，直接進入整合，不因提交再完整重跑。保留開發輪次報告；正式受測 SHA 與完整結果於下一步記錄。
 2. **合併與驗證 develop**：先把功能分支的 `.bdd/` 報告、`verification.json` 和核准的驗證證據保存在可讀的暫存位置；不搬移已判讀並刪除的代理暫存截圖。若這些檔案未進版控，整合工作區不會自動帶入。`git fetch origin develop`，從最新 `origin/develop` 建立隔離的整合工作區；用 `git log origin/develop..<功能分支>` 與 diff 確認待合併範圍沒有無關變更，再將修正與相關回歸已通過的功能分支合併進去。把前輪報告、核准的驗證證據及必要交付材料帶到整合工作區；新一輪必要截圖使用新的 `R<輪次>_`。
-   **衝突全部落在 `.bdd/modules/` 底下時自行解**，做法見 [模組情境集](modules.md)〈並行分支撞號〉；合併後一律跑 `bdd-modules.ps1 -Lint`，有問題先改號再重跑。
+   **衝突全部落在 `.bdd/modules/` 底下時自行解**，做法見 [模組情境集](modules.md)〈並行分支撞號〉；合併後一律跑 `node bdd.mjs modules --lint`，有問題先改號再重跑。
    遇衝突就保留原分支與整合工作區供檢查，停止並回報衝突檔案；不動 `origin/develop`，不推未解衝突版本。合併後建置／重啟整合工作區服務，確認測試網址提供此版本，再依〈1-1〉記錄差異，在乾淨 commit **完整執行本輪選定的全部情境與必要回歸一次**；尚未完成整合驗證時不可因 current／still-valid 跳過。確認 API、UI、資料庫與既有整合沒有退步；若有失敗或阻塞，不推 `develop`，回報原因與證據。全部通過才用非強制的 `git push origin HEAD:refs/heads/develop` 推送整合工作區的 HEAD，再查遠端 SHA 核對；遠端前進、權限不足或分支保護拒絕時，不用 `--force`，回報本機結果與待處理步驟。若原本就在 `develop`，先 fetch 並確認已包含最新 origin/develop；同一乾淨 commit 與環境已有完整驗證時沿用，否則完整驗證後才推送。推送後只核對遠端 SHA。遠端前進而需重新整合時，重新整合並完整驗證。這輪受測程式 SHA 與最後的遠端 HEAD 都要記錄。
 3. **一致性審核閘門**：更新 issue 前，依當下 issue 系統與單號、完整需求來源、repo／分支／commit 範圍、BDD 報告與可用 skill 清單，動態選擇最合適的唯讀一致性審核 skill。Redmine issue 且需要需求／程式雙向比對時優先選 `issue-code-consistency-check`；找不到適用 skill 時結果為 `UNAVAILABLE`，不得繞過審核。派子代理只讀原始需求、git 事實與證據，不修改程式、測試、BDD 輸出或 issue；只有 `PASS` 可進入下一步，`FAIL`、`UNVERIFIED`、`UNAVAILABLE` 都停止 issue 寫入並回報原因。
    〈結果報告審核〉與一致性審核皆取得 `PASS` 後，才用可用的 issue 工具追加給 PM 看的簡短結果，並**只上傳 issue 驗收明確需要的最後一輪修正後截圖**。回覆優先遵循〈共用 issue 交付〉讀取的 issue-writing skill 與驗證完成模板，不在此另訂標題、欄位或順序；根因、Scenario、commit、檔案行號與一致性審核細節留在 BDD 報告及查核報告。純 API／DB 情境依模板註明截圖不適用並附真實替代驗證結果。優先先上傳附件、取得可用附件識別或連結，再一次儲存註記；若是 Redmine，先讀 `~/.redmine-issue-guides/SKILL.md`（存在時）與專案指引，保留原概述與驗收標準，在適當欄位追加註記；未另有明確授權時保留狀態；已授權的狀態更新才依專案流程執行。
-   上傳前檢查必要截圖不含帳密或不應外傳的資料，並以 `mask-evidence.ps1 -Status` 確認要上傳的圖片全部是 `masked`；有 `unmasked`／`stale` 就先遮罩、登記再上傳。確認 issue 註記與每張必要截圖附件真的儲存成功，記下 issue 連結及附件清單。若註記已儲存但附件失敗，分別記錄「註記已更新／附件未完成」，重試前先讀現有註記，避免重複留言。沒有可用工具、附件上傳失敗或權限不足時，保留核准的驗證截圖、重試交付所需證據與可貼上的說明，回報使用者；不要假稱已更新或只貼尚未上傳的圖片連結。
+   上傳前檢查必要截圖不含帳密或不應外傳的資料，並以 `node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --status` 確認要上傳的圖片全部是 `masked`；有 `unmasked`／`stale` 就先遮罩、登記再上傳。確認 issue 註記與每張必要截圖附件真的儲存成功，記下 issue 連結及附件清單。若註記已儲存但附件失敗，分別記錄「註記已更新／附件未完成」，重試前先讀現有註記，避免重複留言。沒有可用工具、附件上傳失敗或權限不足時，保留核准的驗證截圖、重試交付所需證據與可貼上的說明，回報使用者；不要假稱已更新或只貼尚未上傳的圖片連結。
 4. **準備完成紀錄**：在報告〈收尾紀錄〉先列出合併前後 SHA、`develop` 遠端核對、整合後推送前完整驗證結果、issue 連結、必要修正截圖與上傳狀態。服務依下節在本機驗證完成後立即清理，不等待 issue 更新；依〈7-2〉完成最終報告，再依〈7-3〉清理必要本機截圖與 worktree；避免遠端或 issue 附件停在舊狀態。當收尾任何一項未完成時，明確區分「本機 all pass」與「develop 已合併／issue 已更新」。
 
 ### 服務停止
@@ -82,18 +82,18 @@
 核准的驗證截圖保存在本輪 `evidence/`；需交付 issue 的截圖另依附件核對流程清理。其他供代理即時驗證的截圖另存暫存位置，讀取後立即刪除，不進入 `evidence/` 或封存。既有 `evidence.zip` 依[舊封存清理](archive.md)處理。
 
 **達成上述條件且在 worktree 裡測時，逐一停止本輪功能與整合 worktree 綁在各自 `127.0.0.N` 上的前後端服務**，
-釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；一般主目錄（`isWorktree=false` 且未指定 `-Isolate`）一律不停。明確以 `-Isolate` 啟動的多專案主 checkout 屬於本輪隔離服務，清理時對同一工作區使用 `stop-slot-services.ps1 -Isolate`，仍須核對路徑歸屬，不能套用到使用者一般 localhost 服務。
+釋放埠號與記憶體（不必問使用者）。有任何失敗、阻塞或未執行就不停，保留給下一輪複測；一般主目錄（`isWorktree=false` 且未指定 `--isolate`）一律不停。明確以 `--isolate` 啟動的多專案主 checkout 屬於本輪隔離服務，清理時對同一工作區使用 `node bdd.mjs stop-slot-services --isolate`，仍須核對路徑歸屬，不能套用到使用者一般 localhost 服務。
 
 1. 先核對背景工作確實屬於本輪 worktree 啟動的服務，再用可用的背景工作停止工具結束（例如 `run_in_background`／`TaskStop`）；不停止其他工作區或無法確認歸屬的背景工作。
 2. 在每個本輪 worktree 的目錄內分別跑停止腳本，帶上該輪保存的 `effectivePorts`，收掉本輪殘留的子程序：
    ```bash
-   pwsh -NoProfile -File "<skill 目錄>/scripts/stop-slot-services.ps1" -Ports <本輪有效埠，逗號分隔>
+   node "<skill 目錄>/scripts/bdd.mjs" stop-slot-services --ports "<本輪有效埠，逗號分隔>"
    ```
    腳本只停「監聽在本 worktree 專屬 IP 上、且執行檔或命令列位於本 worktree 路徑下」的程序（連同 `dotnet run`／`npx` 等啟動器）；
    主目錄的 `127.0.0.1`、綁 `0.0.0.0`／`::` 的程序、路徑不在本 worktree 的程序都只列在 `skipped`，不會動。
-   不確定時先加 `-DryRun` 看會停哪些。
-3. 輸出的 `remaining` 不為空（仍有埠在監聽），或 `skipped` 裡有本該屬於本 worktree 的服務，就**回報使用者**，不要改用 `taskkill` 自己硬停。
-4. 腳本也選取 `--user-data-dir` 解析後位於本 worktree 下的 Chrome／Chromium／Edge 主程序，連同子程序結束；不需它監聽服務埠。個人 profile、其他 worktree、只有頁面網址包含本 worktree 路徑者一律保留。以 `browsers` 核對選取清單，`-DryRun` 不執行停止。另核對本輪瀏覽器已退出，不能只看 `remaining` 的服務埠。
+   不確定時先加 `--dry-run` 看會停哪些。
+3. 檢查退出碼與 JSON。若 `remaining` 有仍在監聽的埠、`remainingPids` 有仍在執行的目標、`terminationErrors` 記錄停止錯誤，或 `skipped` 有預期應停止的服務，回報具體原因並保留程序資訊。
+4. 腳本也選取 `--user-data-dir` 解析後位於本 worktree 下的 Chrome／Chromium／Edge 主程序，連同子程序結束；不需它監聽服務埠。個人 profile、其他 worktree、只有頁面網址包含本 worktree 路徑者一律保留。以 `browsers` 核對選取清單，`--dry-run` 不執行停止。另核對本輪瀏覽器已退出，不能只看 `remaining` 的服務埠。
 5. 在 `REPORT.md` 標題表格填「服務狀態」列，包含瀏覽器停止結果與保留原因。
 
 ### 7-2. 完成最終報告
