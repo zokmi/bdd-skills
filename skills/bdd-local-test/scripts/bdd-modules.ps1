@@ -39,43 +39,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib/BddModules.psm1') -Force
+$PSNativeCommandUseErrorActionPreference = $false
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-
-try {
-    $wantPaths = $PSBoundParameters.ContainsKey('ForPaths') -or $PSBoundParameters.ContainsKey('Base')
-    if (@(@([bool]$Lint, [bool]$NextId, $wantPaths) | Where-Object { $_ }).Count -ne 1) { throw '請擇一指定 -Lint、-NextId 或 -ForPaths／-Base' }
-    $top = git -C (Resolve-Path -LiteralPath $Repo).Path rev-parse --show-toplevel 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $top) { throw "不在 git 工作區內：$Repo" }
-    $top = [IO.Path]::GetFullPath(($top | Select-Object -First 1).Trim())
-
-    if ($Lint) {
-        $problems = @(Test-BddModules $top)
-        [pscustomobject]@{ repo = $top; modules = @(Get-BddModules $top).Count; problems = $problems } | ConvertTo-Json -Depth 4
-        exit $(if ($problems.Count) { 1 } else { 0 })
-    }
-
-    if ($NextId) {
-        if (-not $Module) { throw '-NextId 需要 -Module' }
-        $m = Get-BddModules $top | Where-Object { $_.name -eq $Module.Replace('\', '/') } | Select-Object -First 1
-        if (-not $m) { throw "找不到模組：$Module" }
-        if ($m.errors.Count) { throw "模組的 MODULE.md 有錯誤：$($m.errors -join '；')" }
-        [pscustomobject]@{ module = $m.name; prefix = $m.prefix; next = (Get-NextScenarioId $m) } | ConvertTo-Json
-        exit 0
-    }
-
-    $paths = @($ForPaths | Where-Object { $_ })
-    if ($Base) {
-        $diff = @(git -c core.quotepath=false -C $top diff --name-only "$Base...HEAD")
-        if ($LASTEXITCODE -ne 0) { throw "無法取得 $Base...HEAD 的差異" }
-        $paths += $diff
-        $paths += @(git -c core.quotepath=false -C $top diff --name-only HEAD)
-        $paths += @(git -c core.quotepath=false -C $top ls-files --others --exclude-standard)
-    }
-    $r = Find-ModulesForPaths -RepoRoot $top -Paths $paths
-    [pscustomobject]@{ repo = $top; modules = $r.modules; unmatched = $r.unmatched } | ConvertTo-Json -Depth 4
-    exit 0
-} catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
-    exit 2
+$cliArgs = @('modules', "--repo=$Repo")
+if ($Lint) { $cliArgs += '--lint' }
+if ($NextId) { $cliArgs += '--next-id' }
+if ($Module) { $cliArgs += "--module=$Module" }
+if ($PSBoundParameters.ContainsKey('ForPaths')) {
+    $cliArgs += '--path='
+    foreach ($p in $ForPaths) { $cliArgs += "--path=$p" }
 }
+if ($PSBoundParameters.ContainsKey('Base')) { $cliArgs += "--base=$Base" }
+& node (Join-Path $PSScriptRoot 'bdd.mjs') @cliArgs
+exit $LASTEXITCODE

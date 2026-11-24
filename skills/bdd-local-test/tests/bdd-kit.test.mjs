@@ -1,28 +1,66 @@
-'use strict';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
+import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import vm from 'node:vm';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { assertSlotIp, assertPort, routeOptions, routeLocalhostToSlot, buildMcpSnippet } from '../scripts/lib/routing.mjs';
+import { assertRoleName, resolveApiUrl, extractToken, assertNoCredentials } from '../scripts/lib/api-helpers.mjs';
+import { parseConnectionString, toMssqlConfig } from '../scripts/lib/connection-string.mjs';
+import { createApi } from '../scripts/api.mjs';
+import { createDb, resolveConnectionString } from '../scripts/db.mjs';
 
-const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
-const { EventEmitter } = require('node:events');
-const fs = require('node:fs');
-const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
-const vm = require('node:vm');
-const scripts = path.resolve(__dirname, '../scripts');
-const { assertSlotIp, assertPort, routeOptions, routeLocalhostToSlot, buildMcpSnippet } =
-  require('../scripts/lib/routing.cjs');
-const { assertRoleName, resolveApiUrl, extractToken, assertNoCredentials } =
-  require('../scripts/lib/api-helpers.cjs');
-const { parseConnectionString, toMssqlConfig } = require('../scripts/lib/connection-string.cjs');
-const { createApi } = require('../scripts/api.cjs');
-const { createDb, resolveConnectionString } = require('../scripts/db.cjs');
+const scripts = fileURLToPath(new URL('../scripts', import.meta.url));
 
 function temp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-kit-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
+
+test('installed kit runs from a standalone scripts directory', async t => {
+  const root = temp(t);
+  const installed = path.join(root, 'skill #1', 'scripts');
+  fs.cpSync(scripts, installed, { recursive: true });
+  fs.mkdirSync(path.join(root, '.bdd'));
+  fs.writeFileSync(path.join(root, '.bdd', 'config.json'), '{"kit":{"database":{"enabled":false}}}');
+
+  const load = name => import(pathToFileURL(path.join(installed, name)).href);
+  const config = await load('lib/kit-config.mjs');
+  const api = await load('api.mjs');
+  const db = await load('db.mjs');
+  const kit = config.loadKitConfig(root);
+  assert.deepEqual(kit.database, { enabled: false });
+  assert.equal(api.createApi({ ip: '127.0.0.2' }).token('none'), null);
+  await assert.rejects(db.createDb(kit.database, { root }).query('SELECT 1'), /disabled/);
+
+  if (process.features.require_module) {
+    const requireInstalled = createRequire(path.join(installed, 'consumer.cjs'));
+    fs.writeFileSync(path.join(installed, 'consumer.mjs'), `
+      import { createApi } from './api.cjs';
+      import { createDb, resolveConnectionString } from './db.cjs';
+      import { loadKitConfig, readJson } from './lib/kit-config.cjs';
+      import { assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildMcpSnippet } from './lib/routing.cjs';
+      export { createApi, createDb, resolveConnectionString, loadKitConfig, readJson,
+        assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildMcpSnippet };
+    `);
+    const imported = await load('consumer.mjs');
+    const routing = await load('lib/routing.mjs');
+    for (const [entry, esm] of Object.entries({ api, db, 'lib/kit-config': config, 'lib/routing': routing })) {
+      const required = requireInstalled('./' + entry + '.cjs');
+      for (const [name, fn] of Object.entries(esm)) {
+        assert.equal(imported[name], fn, name);
+        assert.equal(required[name], fn, name);
+      }
+    }
+  }
+});
 
 test('validates both slot IP and port boundaries', () => {
   for (const ip of ['127.0.0.2', '127.0.0.254']) assert.equal(assertSlotIp(ip), ip);
@@ -144,7 +182,7 @@ test('CLI reads BOM config and isolated preflight port mappings', async (t) => {
   fs.writeFileSync(path.join(cwd, '.bdd/config.json'), '\uFEFF' + JSON.stringify({
     kit: { routing: { frontendPorts: [81], apiPorts: [82] } },
   }));
-  const run = (...args) => spawnSync(process.execPath, [path.join(scripts, 'route-snippet.cjs'), ...args],
+  const run = (...args) => spawnSync(process.execPath, [path.join(scripts, 'route-snippet.mjs'), ...args],
     { cwd, encoding: 'utf8' });
   const result = run('127.0.0.3');
   assert.equal(result.status, 0, result.stderr);
@@ -277,6 +315,35 @@ test('timeout is a total deadline even if HTTP response keeps producing data', a
   await assert.rejects(api.call('none', 'GET', 'http://127.0.0.2:8080/'), /timed out after 120ms/);
 });
 
+test('API reuses the slot connection per client and can release it before a service restart', async t => {
+  const ip = '127.0.0.4';
+  const sockets = new Set();
+  const server = http.createServer((request, response) => {
+    sockets.add(request.socket);
+    response.end(request.url);
+  });
+  const api = createApi({ ip });
+  const other = createApi({ ip });
+  server.listen(0, ip);
+  t.after(() => {
+    api.closeConnections?.();
+    other.closeConnections?.();
+    server.close();
+    server.closeAllConnections();
+  });
+  await once(server, 'listening');
+  const url = 'http://' + ip + ':' + server.address().port;
+  for (const route of ['/first', '/second', '/third']) {
+    assert.equal((await api.call('none', 'GET', url + route)).body, route);
+  }
+  assert.equal(sockets.size, 1);
+  await other.call('none', 'GET', url + '/other');
+  assert.equal(sockets.size, 2);
+  api.closeConnections();
+  await api.call('none', 'GET', url + '/after-close');
+  assert.equal(sockets.size, 3);
+});
+
 test('ADO.NET parsing supports quoting, delimiters, aliases, instance, port and timeout', () => {
   assert.deepEqual(parseConnectionString(` ; USER ID=x=y;Password="a;""b"""; Other='it''s'; Empty= ;`),
     { 'user id': 'x=y', password: 'a;"b"', other: "it's", empty: '' });
@@ -327,10 +394,10 @@ test('DB config honors environment priority, ordered overlays, disabled and miss
 });
 
 test('only the HTTPS transport receives the private certificate exception', async (t) => {
-  const https = require('node:https');
   const request = t.mock.method(https, 'request', (url, { agent }, callback) => {
     assert.equal(url.hostname, '127.0.0.254');
     assert.equal(agent.options.rejectUnauthorized, false);
+    assert.equal(agent.keepAlive, true);
     assert.notEqual(agent, https.globalAgent);
     const req = new EventEmitter();
     req.end = () => {
@@ -346,6 +413,51 @@ test('only the HTTPS transport receives the private certificate exception', asyn
   await assert.rejects(api.call('none', 'GET', 'https://127.0.0.2/'), /slot IP/);
   assert.equal((await api.call('none', 'GET', 'api:/ready')).status, 204);
   assert.equal(request.mock.callCount(), 1);
+});
+
+test('DB shares one pool in a scope, waits for pending queries, and reconnects after failure', async t => {
+  const root = temp(t);
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({
+    ConnectionStrings: { DefaultConnection: 'Server=fixture;Database=fixture;UID=fixture' },
+  }));
+  const driver = path.join(root, 'node_modules', 'mssql');
+  fs.mkdirSync(driver, { recursive: true });
+  fs.writeFileSync(path.join(driver, 'package.json'), '{"exports":"./index.mjs"}');
+  fs.writeFileSync(path.join(driver, 'index.mjs'), `
+    import { setTimeout as delay } from 'node:timers/promises';
+    export const state = { events: [], offline: false };
+    const { events } = state;
+    export class ConnectionPool {
+      async connect() { events.push('connect'); if (state.offline) throw Error('offline'); }
+      async close() { events.push('close'); }
+      request() {
+        return {
+          input(name, value) { events.push([name, value]); },
+          async query(text) { await delay(5); events.push(text); return { recordset: [text] }; },
+          async batch(text) { return { recordsets: [[text], []] }; },
+        };
+      }
+    }
+  `);
+  const { state: sql } = await import(pathToFileURL(path.join(driver, 'index.mjs')).href);
+  const db = createDb({ enabled: true, appsettings: ['settings.json'] }, { root });
+  let scoped;
+  assert.deepEqual(await db.withSession(async session => {
+    scoped = session;
+    return Promise.all([session.query('SELECT @id', { id: 7 }), session.run('SELECT 2')]);
+  }), [['SELECT @id'], [['SELECT 2'], []]]);
+  assert.deepEqual(sql.events.splice(0), ['connect', ['id', 7], 'SELECT @id', 'close']);
+  await assert.rejects(scoped.query('SELECT 3'), /session is closed/);
+  await assert.rejects(db.withSession(session => {
+    session.query('SELECT 4');
+    throw Error('verification failed');
+  }), /verification failed/);
+  assert.deepEqual(sql.events.splice(0), ['connect', 'SELECT 4', 'close']);
+  sql.offline = true;
+  await assert.rejects(db.withSession(() => assert.fail('connected while offline')), /offline/);
+  sql.offline = false;
+  assert.deepEqual(await db.withSession(session => session.query('SELECT 5')), ['SELECT 5']);
+  assert.deepEqual(sql.events, ['connect', 'close', 'connect', 'SELECT 5', 'close']);
 });
 
 test('DB lazily loads project driver, binds values and closes after all lock outcomes', async (t) => {
@@ -379,7 +491,7 @@ test('DB lazily loads project driver, binds values and closes after all lock out
     '  }',
     '};',
   ].join('\n'));
-  const sql = require(driver);
+  const { default: sql } = await import(pathToFileURL(path.join(driver, 'index.js')).href);
   assert.deepEqual(await db.run('batch'), [['batch'], []]);
   assert.deepEqual(await db.query('SELECT @id', { id: 'sample' }), [{ text: 'SELECT @id' }]);
   assert.deepEqual(sql.events.splice(0), ['connect', 'close', 'connect', ['id', 'sample'], 'close']);

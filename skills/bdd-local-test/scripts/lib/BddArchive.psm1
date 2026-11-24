@@ -221,9 +221,11 @@ function Read-ArchiveIndex([Parameter(Mandatory)][string]$Root) {
   在封存索引追加一筆事件。索引只增不改，目前狀態以每個封存檔的最後一筆 status 事件為準。
 #>
 function Add-ArchiveIndexEvent([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)]$Event) {
-    [IO.Directory]::CreateDirectory($Root) | Out-Null
-    $line = ($Event | ConvertTo-Json -Depth 6 -Compress) + "`n"
-    [IO.File]::AppendAllText((Join-Path $Root 'index.jsonl'), $line, $script:Utf8NoBom)
+    $OutputEncoding = $script:Utf8NoBom
+    $PSNativeCommandUseErrorActionPreference = $false
+    $line = $Event | ConvertTo-Json -Depth 6 -Compress
+    $output = $line | & node (Join-Path $PSScriptRoot 'archive-index.mjs') (Get-NormalizedPath $Root) 2>&1
+    if ($LASTEXITCODE -ne 0) { throw ($output -join [Environment]::NewLine) }
 }
 
 <#

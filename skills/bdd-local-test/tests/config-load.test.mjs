@@ -1,13 +1,13 @@
-'use strict';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import test from 'node:test';
+import { loadKitConfig } from '../scripts/lib/kit-config.mjs';
+import { fileURLToPath } from 'node:url';
 
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { spawnSync } = require('node:child_process');
-const test = require('node:test');
-const { loadKitConfig } = require('../scripts/lib/kit-config.cjs');
-const schema = require('../schemas/config.schema.json');
+const schema = JSON.parse(fs.readFileSync(new URL('../schemas/config.schema.json', import.meta.url), 'utf8'));
 
 function fixture(t, config) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-config-'));
@@ -51,7 +51,7 @@ for (const [config, pointer] of invalid) {
 test('invalid config stops CLI before emitting executable snippet and does not leak values', t => {
   const secret = 'fixture-secret-do-not-print';
   const root = fixture(t, { kit: { api: { password: secret } } });
-  const cli = path.resolve(__dirname, '../scripts/route-snippet.cjs');
+  const cli = fileURLToPath(new URL('../scripts/route-snippet.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [cli, '127.0.0.2'], { cwd: root, encoding: 'utf8' });
   assert.equal(result.status, 2);
   assert.equal(result.stdout, '');

@@ -1,6 +1,4 @@
-'use strict';
-
-const { assertSlotIp, assertPort } = require('./routing.cjs');
+import { assertSlotIp, assertPort } from './routing.mjs';
 
 function assertRoleName(role) {
   if (typeof role !== 'string' || !role || /[^A-Za-z0-9_-]/.test(role) || role.length > 64 ||
@@ -74,4 +72,4 @@ function assertNoCredentials(value) {
   return text;
 }
 
-module.exports = { assertRoleName, resolveApiUrl, extractToken, assertNoCredentials };
+export { assertRoleName, resolveApiUrl, extractToken, assertNoCredentials };

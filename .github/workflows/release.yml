@@ -28,12 +28,23 @@ jobs:
       - name: Configure isolated loopback address on macOS
         if: runner.os == 'macOS'
         run: sudo ifconfig lo0 alias 127.0.0.4 netmask 255.255.255.255
-      - name: Install pinned validator development dependencies
+      - name: Install pinned development dependencies
         run: npm ci --ignore-scripts
       - name: Check generated configuration validator
         run: npm run check:config-validator
+      - name: Check bundled ZIP runtime
+        run: npm run check:zip-runtime
       - name: Verify internal Node.js CLI and loopback routing
         run: npm test
+      - name: Set up the minimum supported routing runtime
+        if: runner.os == 'Linux'
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: '18.2.0'
+          package-manager-cache: false
+      - name: Verify ESM MCP entry points on Node.js 18.2
+        if: runner.os == 'Linux'
+        run: node --test skills/bdd-local-test/tests/Test-McpRouteProbe.mjs
 
   verify:
     runs-on: windows-latest
@@ -91,6 +102,9 @@ jobs:
           Install-Module Pester -RequiredVersion 5.6.1 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
           Import-Module Pester -RequiredVersion 5.6.1 -ErrorAction Stop
           Invoke-Pester -Path skills/bdd-local-test/tests -CI
+
+      - name: Verify concurrent recompression with the pinned Pillow encoder
+        run: node --test skills/bdd-local-test/tests/recompress.test.mjs
 
       - name: Run parallel BDD contract and summary checks
         shell: pwsh

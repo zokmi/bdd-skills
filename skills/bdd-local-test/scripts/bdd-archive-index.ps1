@@ -35,76 +35,26 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib/BddArchive.psm1') -Force
-
-if (@($List, $Mark, $Import | Where-Object { $_ }).Count -ne 1) { throw '請擇一指定 -List、-Mark 或 -Import' }
-
-# 決定封存庫根目錄
-function Find-IndexRoot {
-    if ($ArchiveRoot) { return Get-NormalizedPath $ArchiveRoot }
-    if ($Archive -and -not $Import) {
-        try { return Find-ArchiveIndexRoot $Archive } catch { if (-not $Repo) { throw } }
+$PSNativeCommandUseErrorActionPreference = $false
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$cliArgs = @('archive-index')
+if ($List) { $cliArgs += '--list' }
+if ($Mark) { $cliArgs += '--mark' }
+if ($Import) { $cliArgs += '--import' }
+if ($Move) { $cliArgs += '--move' }
+foreach ($paramName in 'Archive', 'Repo', 'ArchiveRoot') {
+    if ($PSBoundParameters[$paramName]) {
+        $option = if ($paramName -eq 'ArchiveRoot') { 'archive-root' } else { $paramName.ToLowerInvariant() }
+        $fullPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PSBoundParameters[$paramName])
+        $cliArgs += "--${option}=$fullPath"
     }
-    if ($Repo) {
-        # Resolve-ArchiveRoot 以「輸出目錄的上一層」找 .bdd/config.json，所以傳入 <repo>/.bdd/ 底下的虛擬子目錄
-        $top = Get-RepoTopLevel (Get-NormalizedPath $Repo)
-        return (Resolve-ArchiveRoot -BddDir (Join-Path $top '.bdd/_')).path
-    }
-    throw '找不到封存索引，請指定 -ArchiveRoot、-Archive 或 -Repo'
 }
-
-$root = Find-IndexRoot
-$states = @(Get-ArchiveStates $root)
-
-if ($List) {
-    $result = @($states | Where-Object { (-not $Issue -or $_.issue -eq $Issue) -and (-not $Topic -or $_.topic -eq $Topic) } |
-        ForEach-Object { $_ | Add-Member -NotePropertyName exists -NotePropertyValue (Test-Path -LiteralPath $_.archive) -PassThru })
-    [pscustomobject]@{ archiveRoot = $root; count = $result.Count; archives = $result } | ConvertTo-Json -Depth 5
-    return
-}
-
-if ($Import) {
-    if (-not $Archive -or -not $Issue -or -not $Topic) { throw '-Import 需要 -Archive、-Issue 與 -Topic' }
-    $sourcePath = Get-NormalizedPath $Archive
-    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "來源封存檔不存在：$sourcePath" }
-    $warnings = @()
-    $repoId = $null
-    if ($Repo) {
-        $warnings += @(Assert-OutsideRepoWorktrees -Target $root -RepoPath (Get-NormalizedPath $Repo))
-        $repoId = @(Get-RepoWorktrees (Get-NormalizedPath $Repo))[0]
+foreach ($paramName in 'Commit', 'Status', 'Note', 'Issue', 'Topic') {
+    if ($PSBoundParameters.ContainsKey($paramName)) {
+        $cliArgs += "--$($paramName.ToLowerInvariant())=$($PSBoundParameters[$paramName])"
     }
-    $target = Get-NormalizedPath (Join-Path $root "$Issue/legacy/$(Split-Path $sourcePath -Leaf)")
-    if (Test-PathUnder $sourcePath $root) { throw "來源已在封存庫內，不需要匯入：$sourcePath" }
-    $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
-    if (@($states | Where-Object { (Get-NormalizedPath $_.archive) -ieq $target }).Count) { throw "索引已有這個封存檔：$target" }
-    if (Test-Path -LiteralPath $target) {
-        if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $sourceHash) { throw "封存庫已有同名但內容不同的檔案：$target" }
-    } else {
-        [IO.Directory]::CreateDirectory((Split-Path $target -Parent)) | Out-Null
-        Copy-Item -LiteralPath $sourcePath -Destination $target
-    }
-    if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $sourceHash) { throw "複製後 SHA-256 不符，保留來源：$sourcePath" }
-    $now = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
-    Add-ArchiveIndexEvent $root ([ordered]@{
-        event = 'created'; archive = $target; name = (Split-Path $target -Leaf); issue = $Issue; topic = $Topic
-        commit = $Commit; sha256 = $sourceHash; bytes = (Get-Item -LiteralPath $target).Length; repo = $repoId
-        sourceDir = $null; legacy = $true; importedFrom = $sourcePath; note = $Note; at = $now
-    })
-    if ($Move) { Remove-Item -LiteralPath $sourcePath -Force }
-    [pscustomobject]@{ archiveRoot = $root; archive = $target; sha256 = $sourceHash; movedSource = [bool]$Move; warnings = $warnings } | ConvertTo-Json -Depth 3
-    return
 }
-
-if (-not $Archive -or -not $Status) { throw '-Mark 需要 -Archive 與 -Status' }
-$archivePath = Get-NormalizedPath $Archive
-$state = $states | Where-Object { (Get-NormalizedPath $_.archive) -ieq $archivePath } | Select-Object -First 1
-if (-not $state) { throw "索引裡沒有這個封存檔：$archivePath（索引：$root）" }
-if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) { throw "封存檔不存在：$archivePath" }
-$actual = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-if ($actual -ne $state.sha256) { throw "封存檔 SHA-256 與建立時不同（建立 $($state.sha256)、目前 $actual），拒絕登記" }
-$attachments = @($Attachment | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-if ($Status -in @('uploaded', 'uploaded-verified') -and -not $attachments.Count) { throw "$Status 必須以 -Attachment 指定 issue 附件 ID 或網址" }
-
-$event = [ordered]@{ event = 'status'; archive = $state.archive; status = $Status; attachments = $attachments; note = $Note; at = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz') }
-Add-ArchiveIndexEvent $root $event
-[pscustomobject]@{ archiveRoot = $root; archive = $state.archive; previousStatus = $state.status; status = $Status; attachments = $attachments; sha256 = $actual } | ConvertTo-Json -Depth 4
+foreach ($item in $Attachment) { $cliArgs += "--attachment=$item" }
+$output = & node (Join-Path $PSScriptRoot 'bdd.mjs') @cliArgs 2>&1
+if ($LASTEXITCODE -ne 0) { throw ($output -join [Environment]::NewLine) }
+$output

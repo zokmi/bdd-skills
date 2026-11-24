@@ -58,7 +58,7 @@
 ## 編號
 
 - 每個模組一個 2–3 字母前綴，登記在該模組的 `MODULE.md`（`SS` 賽制管理、`MT` 場地時間表），情境依序 `SS-01`、`SS-02`…
-- 新增情境用 `bdd-modules.ps1 -NextId -Module <模組>` 取號；用過的號碼不重用，刪除的記進 MODULE.md 的 `removed`。
+- 新增情境用 `node bdd.mjs modules --next-id --module <模組>` 取號；用過的號碼不重用，刪除的記進 MODULE.md 的 `removed`。
 - 編號一旦寫進報告與證據檔名就不要重排。並行分支撞號時的改號規則見 [模組情境集](modules.md)。
 
 ## 寫法要點

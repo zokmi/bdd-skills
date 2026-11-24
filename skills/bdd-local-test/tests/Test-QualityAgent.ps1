@@ -1,7 +1,7 @@
 param([ValidateSet('baseline','candidate')][string]$Version, [switch]$InjectFailure, [ValidateSet('Fixed','Autonomous')][string]$Strategy = 'Autonomous')
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot/../../..").Path
-$bench = Join-Path $PSScriptRoot 'Test-QualityBenchmark.cjs'
+$bench = Join-Path $PSScriptRoot 'Test-QualityBenchmark.mjs'
 $fixture = Join-Path ([IO.Path]::GetTempPath()) "bdd-agent-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {
@@ -18,7 +18,7 @@ try {
     }
     $faultArg = if ($InjectFailure) { ' wrong-state' } else { '' }
     $faultInstruction = if ($InjectFailure) { 'Run the command exactly once. A nonzero exit is final evidence. Never retry or repair the fixture.' }
-    $hookPath = Join-Path $fixture 'hook.cjs'
+    $hookPath = Join-Path $fixture 'hook.mjs'
     $skillContext = if ($Version -eq 'candidate') {
         "Apply this preloaded Skill entry:`n$(Get-Content -Raw -LiteralPath $skill)`n"
     } else {

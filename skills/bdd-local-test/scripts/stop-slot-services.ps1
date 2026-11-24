@@ -32,119 +32,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# 輸出含中文，統一 UTF-8 讓 Git Bash 等呼叫端讀得正確
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-
-$portList = @($Ports | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
-
-$root = (git rev-parse --show-toplevel).Trim()
-$gitDir = (Resolve-Path (git rev-parse --absolute-git-dir).Trim()).Path
-$commonDir = (git rev-parse --git-common-dir).Trim()
-if (-not [IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $root $commonDir }
-$commonDir = (Resolve-Path $commonDir).Path
-$isWorktree = $gitDir -ne $commonDir
-
-if (-not $isWorktree -and -not $Isolate) {
-    [pscustomobject]@{ isWorktree = $false; ip = '127.0.0.1'; stopped = @(); skipped = @(); remaining = @()
-        message = '主目錄不是 worktree，不停止任何服務' } | ConvertTo-Json -Depth 4
-    return
-}
-
-$slotFile = Join-Path $gitDir 'bdd-loopback-slot'
-if (-not (Test-Path $slotFile)) { throw '本 worktree 尚未分配 slot（找不到 bdd-loopback-slot），沒有可停止的服務' }
-$slot = [int](Get-Content $slotFile -Raw).Trim()
-if ($slot -lt 2 -or $slot -gt 254) { throw '無效的隔離 slot，不停止任何程序' }
-$ip = "127.0.0.$slot"
-
-# 路徑比對統一成反斜線、小寫，並以結尾分隔符避免 foo 誤中 foo-bar
-$rootKey = ((Resolve-Path $root).Path -replace '/', '\').TrimEnd('\').ToLowerInvariant() + '\'
-
-<#
-  判斷程序的執行檔路徑或命令列是否位於本 worktree 底下。
-#>
-function Test-InWorktree($cim) {
-    if (-not $cim) { return $false }
-    $text = (("$($cim.ExecutablePath) $($cim.CommandLine)") -replace '/', '\').ToLowerInvariant()
-    return $text.Contains($rootKey)
-}
-
-<#
-  從監聽程序往上找：父程序若是 dotnet／node 且同樣位於本 worktree，就改以它為結束對象，
-  回傳最上層符合條件的程序 CIM 物件。
-#>
-function Get-TopOwnedProcess($cim) {
-    $top = $cim
-    while ($true) {
-        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($top.ParentProcessId)" -ErrorAction SilentlyContinue
-        if (-not $parent) { break }
-        if ($parent.Name -notmatch '^(dotnet|node)(\.exe)?$') { break }
-        if (-not (Test-InWorktree $parent)) { break }
-        $top = $parent
-    }
-    return $top
-}
-
-$stopped = @()
-$skipped = @()
-$targets = @{}
-$browsers = @()
-
-# 登入用 persistent Chromium 不一定監聽服務埠；以獨立 profile 的歸屬辨識。
-# 不用命令列中任意出現 worktree 路徑作為瀏覽器歸屬，避免誤停開啟本機頁面的個人瀏覽器。
-foreach ($browser in @(Get-CimInstance Win32_Process)) {
-    if ($browser.Name -notmatch '^(chrome|chromium|msedge)(\.exe)?$') { continue }
-    if ($browser.CommandLine -match '(?:^|\s)--type=') { continue }
-    $profileMatch = [regex]::Match($browser.CommandLine, '(?i)--user-data-dir=(?:"([^"]+)"|([^\s]+))')
-    if (-not $profileMatch.Success) { continue }
-    $profile = if ($profileMatch.Groups[1].Success) { $profileMatch.Groups[1].Value } else { $profileMatch.Groups[2].Value }
-    if (-not [IO.Path]::IsPathRooted($profile)) { continue }
-    $profileKey = ([IO.Path]::GetFullPath($profile) -replace '/', '\').ToLowerInvariant()
-    if (-not $profileKey.StartsWith($rootKey)) { continue }
-    $targets[[int]$browser.ProcessId] = $browser
-    $browsers += [pscustomobject]@{ pid = [int]$browser.ProcessId; process = $browser.Name; profile = $profile }
-}
-
-foreach ($p in $portList) {
-    foreach ($l in @(Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue)) {
-        $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($l.OwningProcess)" -ErrorAction SilentlyContinue
-        $name = if ($cim) { $cim.Name } else { $null }
-        if ($l.LocalAddress -ne $ip) {
-            # 別的 IP（含主目錄的 127.0.0.1、綁全部 IP 的 0.0.0.0／::）一律不動
-            if ($l.LocalAddress -in @('0.0.0.0', '::')) {
-                $skipped += [pscustomobject]@{ port = $p; address = $l.LocalAddress; pid = $l.OwningProcess; process = $name; reason = '綁全部 IP，非本 worktree 專屬' }
-            }
-            continue
-        }
-        if (-not (Test-InWorktree $cim)) {
-            $skipped += [pscustomobject]@{ port = $p; address = $l.LocalAddress; pid = $l.OwningProcess; process = $name; reason = '執行檔與命令列都不在本 worktree 底下' }
-            continue
-        }
-        $top = Get-TopOwnedProcess $cim
-        $targets[[int]$top.ProcessId] = $top
-        $stopped += [pscustomobject]@{ port = $p; address = $l.LocalAddress; pid = $l.OwningProcess; process = $name; killedRootPid = [int]$top.ProcessId; killedRoot = $top.Name }
-    }
-}
-
-if (-not $DryRun) {
-    foreach ($id in $targets.Keys) {
-        # /T 連同子程序一起結束；程序可能已隨父程序結束，失敗不中斷
-        taskkill /PID $id /T /F 2>&1 | Out-Null
-    }
-    if ($targets.Count -gt 0) { Start-Sleep -Seconds 2 }
-}
-
-$remaining = @()
-foreach ($p in $portList) {
-    if (Get-NetTCPConnection -State Listen -LocalAddress $ip -LocalPort $p -ErrorAction SilentlyContinue) { $remaining += $p }
-}
-
-[pscustomobject]@{
-    isWorktree = $isWorktree
-    isolated   = $true
-    ip         = $ip
-    dryRun     = [bool]$DryRun
-    stopped    = $stopped
-    browsers   = $browsers
-    skipped    = $skipped
-    remaining  = $remaining
-} | ConvertTo-Json -Depth 4
+$PSNativeCommandUseErrorActionPreference = $false
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$cliArgs = @('stop-slot-services')
+foreach ($port in $Ports) { $cliArgs += "--ports=$port" }
+if ($DryRun) { $cliArgs += '--dry-run' }
+if ($Isolate) { $cliArgs += '--isolate' }
+$output = & node (Join-Path $PSScriptRoot 'bdd.mjs') @cliArgs 2>&1
+$code = $LASTEXITCODE
+if ($code -ge 2) { throw ($output -join [Environment]::NewLine) }
+$output
+exit $code

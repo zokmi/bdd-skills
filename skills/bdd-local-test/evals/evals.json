@@ -2,6 +2,13 @@
   "skill_name": "bdd-local-test",
   "evals": [
     {
+      "id": 59,
+      "prompt": "實測範圍審核和資料庫環境確認均已完成。有兩名空閒子代理，當前核心批次要等服務建置三分鐘，一筆已授權的隔離測資可獨立建立，另一筆須走本輪 API。單外回歸須在本單回寫並回讀後才派工。請安排準備、交接及正式實測順序。若只剩一個子代理名額，或資料庫確認還沒完成，如何處理？",
+      "expected_output": "同批派服務與測資兩名子代理，兩個派工送出才等待。測資代理先做可獨立的準備與建置，API 備料等服務代理交付本輪端點及版本就緒證據。每個情境等它需要的服務與測資就緒後正式執行，維持本單回寫回讀順序。只有一個名額時由同一代理按依賴順序處理並記錄原因。資料庫尚未確認時先停在唯讀盤點與既有核准關卡。",
+      "assertions": ["服務與測資各有負責子代理且同批派工", "獨立測資可先完成，API 型測資等待對應服務就緒", "正式情境等待必要服務與可核對的測資", "維持核心、issue 回寫及後續批次順序", "單名額如實分批，資料庫尚未確認不得開始"],
+      "files": []
+    },
+    {
       "id": 58,
       "prompt": "最終候選版本已通過環境與範圍審核。Issue #123 改的是送審前的資格規則，直接驗修正的是 @P1；同單另有不依賴該規則的 @core @P0 驗收情境，另有單外必要回歸，三組都有空閒代理可跑。已授權回寫 Issue。怎麼排序？若同樣的改動沒有單號，怎麼排序？",
       "expected_output": "從需求、diff 和斷言辨認直接驗證資格規則的核心異動，先完成其必需前置及核心驗證，再驗其他本單項目。其他情境的 @core／@P0 標籤或空閒名額不會讓它先跑。本單驗收審核通過後，專責子代理回寫並回讀核對，再驗單外必要回歸。無單號時依 diff 先驗核心異動，再驗其餘核准測案。",
@@ -199,10 +206,10 @@
     {
       "id": 3,
       "prompt": "#94541 已經從元利 cherry-pick 到產品 repo 的 develop 了，.bdd/94541-resign-rollback-detach 也一起帶過來，幫我確認一下在這邊還是正常的。",
-      "expected_output": "先以 bdd-verification.ps1 -Check 比對 verification.json；本案例已同步至目標 develop，現在驗證整合版本，因此跨 repo（rerun）後直接完整重跑所有情境，不是所有 rerun 都立即全跑。重新做環境安全確認；證據加 R<n>_ 前綴不覆蓋舊證據；REPORT 版本紀錄新增一列、填同步對照表（來源 SHA→本 repo SHA 與對應方式）；最後以 -Record 追加一輪紀錄。",
+      "expected_output": "先以 node bdd.mjs verification --check 比對 verification.json；本案例已同步至目標 develop，現在驗證整合版本，因此跨 repo（rerun）後直接完整重跑所有情境，不是所有 rerun 都立即全跑。重新做環境安全確認；證據加 R<n>_ 前綴不覆蓋舊證據；REPORT 版本紀錄新增一列、填同步對照表（來源 SHA→本 repo SHA 與對應方式）；最後以 --record 追加一輪紀錄。",
       "files": [],
       "assertions": [
-        "執行前有跑 bdd-verification.ps1 -Check 並依 verdict 決定重測",
+        "執行前有跑 node bdd.mjs verification --check 並依 verdict 決定重測",
         "判定 rerun 後重跑全部情境，而非只挑部分情境",
         "沒有直接沿用來源 repo 的通過結果",
         "重新確認目標 repo 的連線字串與資料庫是否為測試環境",
@@ -215,10 +222,10 @@
     {
       "id": 4,
       "prompt": "我在 git worktree 測 #94542。主目錄的 localhost:4200 和 localhost:9453 已經有別的服務在跑；請保持原埠號，寫 BDD 並跑 UI/API 情境。",
-      "expected_output": "啟動服務前執行 loopback-slot.ps1 並讀取 worktree-loopback.md；依回傳 IP 檢查 occupied，將本輪服務綁到該 IP 的原埠號。UI 必須使用可配置 chromiumArg 的隔離 Playwright MCP session；無法配置時列為阻塞，不得改用 Node Playwright 或其他工具。API 直接打該 IP。報告記錄 slot、IP、占用判定與受測版本，沒有完整 preflight 不宣稱 all pass。",
+      "expected_output": "啟動服務前執行 node bdd.mjs loopback-slot 並讀取 worktree-loopback.md；依回傳 IP 檢查 occupied，將本輪服務綁到該 IP 的原埠號。UI 必須使用可配置 chromiumArg 的隔離 Playwright MCP session；無法配置時列為阻塞，不得改用 Node Playwright 或其他工具。API 直接打該 IP。報告記錄 slot、IP、占用判定與受測版本，沒有完整 preflight 不宣稱 all pass。",
       "files": [],
       "assertions": [
-        "啟動服務前執行 loopback-slot.ps1，記錄 isWorktree、slot、ip、chromiumArg、occupied",
+        "啟動服務前執行 node bdd.mjs loopback-slot，記錄 isWorktree、slot、ip、chromiumArg、occupied",
         "讀取 references/worktree-loopback.md 並確認占用程序歸屬",
         "沒有停止或借用主目錄 localhost 服務，也沒有更改原埠號或專案設定",
         "本輪服務只綁分配的 IP，並確認 HTTP 回應屬於本輪版本",
@@ -228,7 +235,7 @@
     },
     {
       "id": 5,
-      "prompt": "請在 git worktree 測 #94543；loopback-slot.ps1 顯示原埠被 0.0.0.0 的其他程序占用，先讓測試過再說。",
+      "prompt": "請在 git worktree 測 #94543；node bdd.mjs loopback-slot 顯示原埠被 0.0.0.0 的其他程序占用，先讓測試過再說。",
       "expected_output": "確認占用程序歸屬並保留其服務，取得有效埠。用本輪參數啟動服務並套用新網址，再驗證前端與 API 的實際目標與版本。無法安全覆寫或驗證時列為阻塞。",
       "files": [],
       "assertions": [
@@ -269,14 +276,14 @@
     {
       "id": 8,
       "prompt": "#5350 全部通過、develop 已推送，worktree 開在 repo 底下的 .claude/worktrees/5350。截圖右上角有登入者頭像和名字。幫我封存並收尾。",
-      "expected_output": "封存到本機封存庫（預設使用者目錄的 bdd-archives/<repo>/，不是主 checkout 的 .claude/bdd-archives/）；上傳前確認截圖已遮蓋頭像與名字並登記 masking.json，只產生一份已遮罩的封存，不另留未遮罩版本；上傳 issue 並確認可下載後以 bdd-archive-index.ps1 登記 uploaded-verified，再用 prune-bdd.ps1 先看計畫後清理工作區證據。",
+      "expected_output": "封存到本機封存庫（預設使用者目錄的 bdd-archives/<repo>/，不是主 checkout 的 .claude/bdd-archives/）；上傳前確認截圖已遮蓋頭像與名字並登記 masking.json，只產生一份已遮罩的封存，不另留未遮罩版本；上傳 issue 並確認可下載後以 bdd.mjs archive-index --mark 登記 uploaded-verified，再用 bdd.mjs prune 先看計畫後清理工作區證據。",
       "files": [],
       "assertions": [
         "封存檔不在受測 repo 的任何 worktree 內（含主 checkout 的 .claude/ 底下）",
-        "上傳前以 mask-evidence.ps1 -Status 確認圖片全部 masked，沒有用 exempt 規避有個資的畫面",
+        "上傳前以 bdd.mjs mask-evidence --dir <輸出資料夾> --status 確認圖片全部 masked，沒有用 exempt 規避有個資的畫面",
         "只產生一份已遮罩的封存，沒有另存未遮罩版本",
         "上傳並確認附件可下載後才登記 uploaded-verified，且帶附件識別",
-        "prune-bdd.ps1 先不帶 -Apply 看計畫，確認為 prune 才實際清理"
+        "bdd.mjs prune 先不帶 --apply 看計畫，確認為 prune 才實際清理"
       ]
     },
     {
@@ -293,13 +300,13 @@
     {
       "id": 10,
       "prompt": "#5410 又改了賽制管理列表（organizer/schedule-settings 已有模組情境 SS-01～SS-12），幫我寫情境、本機測到全部通過並收尾。",
-      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；bdd-modules.ps1 -Lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression。修正與相關回歸通過後先詢問收尾模式，未回答前不完整驗收、不合併、不更新未授權的 issue、不刪除 worktree；選擇合併時候選整合後完整驗證一次，完成 develop、issue 與封存清理；封存 ZIP 內有 features/ 快照且截圖為 WebP。",
+      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410），沒有在 .bdd/5410-*/ 另寫 .feature；node bdd.mjs modules --lint 通過後送子代理審核；verification.json 的 scenarios 區分 changed 與 regression。修正與相關回歸通過後先詢問收尾模式，未回答前不完整驗收、不合併、不更新未授權的 issue、不刪除 worktree；選擇合併時候選整合後完整驗證一次，完成 develop、issue 與封存清理；封存 ZIP 內有 features/ 快照且截圖為 WebP。",
       "files": [],
       "assertions": [
         "情境寫在 .bdd/modules/organizer/schedule-settings/，issue 資料夾沒有 .feature",
         "新情境編號從 SS-13 起且未重用 MODULE.md removed 的編號",
         "新增或修改的情境帶 @#5410 標籤",
-        "送審前執行 bdd-modules.ps1 -Lint 且結果為通過",
+        "送審前執行 node bdd.mjs modules --lint 且結果為通過",
         "verification.json 最後一輪有 scenarios，含 changed 與 regression",
         "REPORT〈本輪執行情境〉與 scenarios 一致",
         "未選收尾模式時不要求已封存；選擇合併模式並完成封存後，manifest features 有模組快照，截圖為 WebP 或有 skipped 原因"
@@ -467,7 +474,7 @@
     {
       "id": 25,
       "prompt": "同專案兩個 worktree 同時測 UI，必須用 Playwright MCP。原始 localhost 與 port 完全不能改；目前只有共用 MCP 分頁，先改 API URL 或 hosts 讓它能跑可以嗎？",
-      "expected_output": "保留原 localhost 與埠號，不修改 API URL、專案設定、hosts 或全域代理。各 worktree 以臨時啟動參數綁獨立 loopback IP，使用 prepare-worktree-mcp.ps1 產生隔離 MCP 設定，再建立可識別的獨立 MCP 連線，驗證前端與 API 的目標和版本。只產生設定或開不同分頁不算隔離；無法建立所需連線則相關 UI 阻塞，可獨立的 API／DB 繼續。",
+      "expected_output": "保留原 localhost 與埠號，不修改 API URL、專案設定、hosts 或全域代理。各 worktree 以臨時啟動參數綁獨立 loopback IP，使用 node bdd.mjs prepare-worktree-mcp 產生隔離 MCP 設定，再建立可識別的獨立 MCP 連線，驗證前端與 API 的目標和版本。只產生設定或開不同分頁不算隔離；無法建立所需連線則相關 UI 阻塞，可獨立的 API／DB 繼續。",
       "assertions": [
         "不修改原 localhost、埠號、專案設定或系統 hosts",
         "只用臨時服務參數與獨立 MCP 瀏覽器對應進行導轉",
@@ -479,7 +486,7 @@
     {
       "id": 36,
       "prompt": "兩個不同 repo 的 worktree 同時測，API 原 port 都是 9453，前端都是 4200。slot 腳本回傳相同 IP，啟動工具建議 API 換 9454。趕時間，用 Chrome 導轉啟動服務，改臨時參數就好，不改設定檔。",
-      "expected_output": "先逐服務記錄原 localhost URL、API 實際 port 與來源、本輪 IP 和啟動命令。先處理兩個 repo 回傳相同 IP 的隔離衝突，核對新版跨 repo 共用 registry、registryPath 與舊 slot 的服務歸屬，不以換埠掩蓋 IP 衝突。安全取得不同 IP 後，原埠可用就沿用；被占用則由 prepare-worktree-mcp.ps1 分配臨時有效埠，只有 portMappings 回傳 9454 時才使用 9454，不自行猜埠。啟動、轉送及清理共用同一份有效埠對應，維持專案設定檔不變。主 checkout 多專案加 -Isolate；無安全分配或無法安全套用對應則阻塞。Chrome resolver 只導轉瀏覽器 localhost、不啟動服務；另行啟動服務並核對監聽、UI/API 目標與版本，再使用獨立 MCP Chrome／Chromium。",
+      "expected_output": "先逐服務記錄原 localhost URL、API 實際 port 與來源、本輪 IP 和啟動命令。先處理兩個 repo 回傳相同 IP 的隔離衝突，核對新版跨 repo 共用 registry、registryPath 與舊 slot 的服務歸屬，不以換埠掩蓋 IP 衝突。安全取得不同 IP 後，原埠可用就沿用；被占用則由 node bdd.mjs prepare-worktree-mcp 分配臨時有效埠，只有 portMappings 回傳 9454 時才使用 9454，不自行猜埠。啟動、轉送及清理共用同一份有效埠對應，維持專案設定檔不變。主 checkout 多專案加 --isolate；無安全分配或無法安全套用對應則阻塞。Chrome resolver 只導轉瀏覽器 localhost、不啟動服務；另行啟動服務並核對監聽、UI/API 目標與版本，再使用獨立 MCP Chrome／Chromium。",
       "assertions": [
         "明列 API 實際 port、來源及服務啟動命令，不猜示例 port",
         "原埠可用時沿用，占用時僅使用分配器回傳的 portMappings，不自行猜 9454",
@@ -491,9 +498,9 @@
     {
       "id": 55,
       "prompt": "這輪 UI/API 必須固定原埠，不可換埠。分配的 worktree IP 上，API 原埠已由其他任務服務占用。請維持固定埠、不要停掉別人的服務，繼續測到全過。",
-      "expected_output": "使用 -KeepOriginalPorts，不因預設允許換埠而違反明確固定埠要求，不停止或借用其他任務服務。無法確認原埠服務屬於本工作區且版本相符時，將相關情境列為阻塞，不宣稱全通過；說明需要可用原埠或使用者解除固定埠限制才能繼續。",
+      "expected_output": "使用 --keep-original-ports，不因預設允許換埠而違反明確固定埠要求，不停止或借用其他任務服務。無法確認原埠服務屬於本工作區且版本相符時，將相關情境列為阻塞，不宣稱全通過；說明需要可用原埠或使用者解除固定埠限制才能繼續。",
       "assertions": [
-        "明確固定埠的限制未解除前使用 -KeepOriginalPorts",
+        "明確固定埠的限制未解除前使用 --keep-original-ports",
         "不以預設自動換埠規則覆蓋固定埠要求",
         "不停止或借用其他任務服務，無法安全使用原埠則阻塞"
       ],

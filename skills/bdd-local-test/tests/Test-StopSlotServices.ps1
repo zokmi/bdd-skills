@@ -1,52 +1,49 @@
+# Exercise both the compatibility entry point and the ESM cleanup on one disposable listener.
 $ErrorActionPreference = 'Stop'
+$stop = Join-Path $PSScriptRoot '../scripts/stop-slot-services.ps1'
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('bdd-stop-' + [guid]::NewGuid())
-$null = New-Item -ItemType Directory -Path "$fixture/repo", "$fixture/git", "$fixture/common"
-Set-Content "$fixture/git/bdd-loopback-slot" '5'
-$killed = [Collections.Generic.List[int]]::new()
-function git {
-    if ($args -contains '--show-toplevel') { return "$fixture/repo" }
-    if ($args -contains '--absolute-git-dir') { return "$fixture/git" }
-    if ($args -contains '--git-common-dir') { return "$fixture/common" }
-    throw 'Unexpected git invocation'
-}
-function Get-NetTCPConnection { param($State, $LocalPort, $LocalAddress, $ErrorAction) @() }
-function Get-CimInstance {
-    param($ClassName, $Filter, $ErrorAction)
-    if ($Filter) { return $null }
-    @(
-        [pscustomobject]@{ ProcessId=101; ParentProcessId=1; Name='chrome.exe'; ExecutablePath='C:/playwright/chrome.exe'; CommandLine="chrome --user-data-dir=`"$fixture/repo/.bdd/run/login-profile`" --remote-debugging-pipe" }
-        [pscustomobject]@{ ProcessId=102; ParentProcessId=1; Name='chrome.exe'; ExecutablePath='C:/chrome.exe'; CommandLine="chrome --user-data-dir=`"$fixture/repo-other/profile`"" }
-        [pscustomobject]@{ ProcessId=103; ParentProcessId=101; Name='chrome.exe'; ExecutablePath='C:/chrome.exe'; CommandLine="chrome --type=renderer --user-data-dir=`"$fixture/repo/.bdd/run/login-profile`"" }
-        [pscustomobject]@{ ProcessId=104; ParentProcessId=1; Name='chrome.exe'; ExecutablePath='C:/chrome.exe'; CommandLine="chrome --user-data-dir=C:/personal --app=$fixture/repo/page" }
-    )
-}
-function taskkill { $killed.Add([int]$args[1]) }
-function Start-Sleep { param($Seconds) }
+$repo = Join-Path $fixture 'test checkout'
+$null = New-Item -ItemType Directory -Path $repo
+$listener = $null
+Push-Location -LiteralPath $repo
 try {
-    $stop = Join-Path $PSScriptRoot '../scripts/stop-slot-services.ps1'
-    $result = & $stop -Ports 9453,4200,4201 -DryRun | ConvertFrom-Json
-    if (@($result.browsers).Count -ne 1 -or $result.browsers[0].pid -ne 101) { throw 'Owned login browser must be selected even without a listening service' }
-    if ($killed.Count) { throw 'DryRun killed a process' }
-    $result = & $stop -Ports 9453,4200,4201 | ConvertFrom-Json
-    if ($killed.Count -ne 1 -or $killed[0] -ne 101) { throw 'Must kill only the owned browser root' }
-    'PASS browser ownership, no listener, DryRun and process-tree cleanup'
-    function git {
-        if ($args -contains '--show-toplevel') { return "$fixture/repo" }
-        if ($args -contains '--absolute-git-dir') { return "$fixture/git" }
-        if ($args -contains '--git-common-dir') { return "$fixture/git" }
-        throw 'Unexpected git invocation'
-    }
-    $killed.Clear()
-    $result = & $stop -Ports 9453 | ConvertFrom-Json
-    if ($killed.Count -or $result.isWorktree) { throw 'Default main checkout must not stop anything' }
-    $result = & $stop -Ports 9453 -Isolate | ConvertFrom-Json
-    if ($result.isWorktree -or -not $result.isolated -or $killed.Count -ne 1) { throw 'Explicit isolated main checkout cleanup failed' }
-    Set-Content "$fixture/git/bdd-loopback-slot" '1'
+    git init -q
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git init failed.' }
+    $result = & $stop -Ports 12345 | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $result.isWorktree -or $result.stopped.Count) { throw 'Main checkout must preserve ordinary services.' }
+    Set-Content -LiteralPath '.git/bdd-loopback-slot' -Value '1'
     $rejected = $false
-    try { & $stop -Ports 9453 -Isolate | Out-Null } catch { $rejected = $true }
-    if (-not $rejected -or $killed.Count -ne 1) { throw 'Isolated cleanup must reject localhost slot 1' }
-    'PASS main checkout opt-in cleanup and invalid slot safety'
-} finally {
-    Remove-Item -LiteralPath $fixture -Recurse -Force
-}
+    try { $null = & $stop -Isolate -DryRun } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Isolated cleanup must reject slot 1.' }
 
+    Set-Content -LiteralPath '.git/bdd-loopback-slot' -Value '244'
+    $script = Join-Path $repo 'fixture.mjs'
+    Set-Content -LiteralPath $script -Value "import { createServer } from 'node:net'; const server = createServer(); server.listen(0,'127.0.0.244', () => console.log(server.address().port));"
+    $stdout = Join-Path $fixture 'port.txt'
+    $listener = Start-Process -FilePath (Get-Command node).Source -ArgumentList ('"' + $script + '"') -WindowStyle Hidden -WorkingDirectory $repo -RedirectStandardOutput $stdout -RedirectStandardError (Join-Path $fixture 'stderr.txt') -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 100
+        if ($listener.HasExited) { throw 'Fixture listener exited before binding.' }
+        $port = Get-Content -LiteralPath $stdout -ErrorAction SilentlyContinue
+    } until ($port -or [DateTime]::UtcNow -ge $deadline)
+    if (-not $port) { throw 'Timed out waiting for fixture listener.' }
+
+    $preview = & $stop -Ports $port -Isolate -DryRun | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $preview.stopped.Count -ne 1 -or $preview.stopped[0].killedRootPid -ne $listener.Id -or $preview.browsers.Count -or $listener.HasExited) {
+        throw 'DryRun must select exactly the fixture listener.'
+    }
+    $result = & $stop -Ports $port -Isolate | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $result.remaining.Count -or $result.remainingPids.Count -or -not $listener.WaitForExit(5000)) { throw 'The owned listener did not exit.' }
+    'PASS main checkout protection, slot validation, dry run, and verified fixture cleanup'
+} finally {
+    Pop-Location
+    if ($null -ne $listener) {
+        if (-not $listener.HasExited) { $listener.Kill(); $null = $listener.WaitForExit(5000) }
+        $listener.Dispose()
+    }
+    $resolved = (Resolve-Path -LiteralPath $fixture).Path
+    if ((Split-Path $resolved -Parent) -eq [IO.Path]::GetTempPath().TrimEnd('\','/') -and (Split-Path $resolved -Leaf) -match '^bdd-stop-[0-9a-f-]{36}$') {
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}

@@ -36,103 +36,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'lib/BddArchive.psm1') -Force
-Add-Type -AssemblyName System.IO.Compression
-
-$top = Get-RepoTopLevel (Get-NormalizedPath $Repo)
-$bddRoot = Join-Path $top '.bdd'
-if (-not (Test-Path -LiteralPath $bddRoot -PathType Container)) {
-    [pscustomobject]@{ repo = $top; applied = [bool]$Apply; items = @() } | ConvertTo-Json; return
-}
-# Resolve-ArchiveRoot 以「輸出目錄的上一層」找 .bdd/config.json，所以傳入 .bdd/ 底下的虛擬子目錄
-$root = (Resolve-ArchiveRoot -BddDir (Join-Path $bddRoot '_') -ArchiveRoot $ArchiveRoot).path
-$states = @(Get-ArchiveStates $root)
-
-# 讀出封存檔 manifest 的所有內容雜湊；讀不到 manifest（舊版封存）回傳 $null
-function Get-ManifestHashes([string]$Path) {
-    $zip = [IO.Compression.ZipFile]::OpenRead($Path)
-    try {
-        $entry = $zip.Entries | Where-Object { $_.FullName -match '^[^/]+/bdd-manifest\.json$' } | Select-Object -First 1
-        if (-not $entry) { return $null }
-        $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
-        try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-        # 轉成 WebP 的檔案同時認原檔雜湊：工作區留的是原始 PNG
-        @($manifest.files.PSObject.Properties | ForEach-Object {
-            $_.Value.sha256
-            if ($_.Value.PSObject.Properties['originalSha256'] -and $_.Value.originalSha256) { $_.Value.originalSha256 }
-        })
-    } finally { $zip.Dispose() }
-}
-
-$items = foreach ($dir in Get-ChildItem -LiteralPath $bddRoot -Directory -Force) {
-    $evidenceDir = Join-Path $dir.FullName 'evidence'
-    $legacyZip = Join-Path $dir.FullName 'evidence.zip'
-    $hasDir = Test-Path -LiteralPath $evidenceDir -PathType Container
-    $hasZip = Test-Path -LiteralPath $legacyZip -PathType Leaf
-    if (-not $hasDir -and -not $hasZip) { continue }
-
-    $item = [ordered]@{ topic = $dir.Name; path = $dir.FullName; bytes = 0L; action = 'keep'; reason = ''; coveredBy = @() }
-    if ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint -or
-        @(Get-ChildItem -LiteralPath $dir.FullName -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
-        $item.reason = '含符號連結或 junction，不自動清理'; [pscustomobject]$item; continue
-    }
-    # 被 git 追蹤的證據（即使列在 .gitignore 也可能早已提交）刪了會變成工作區異動，交給使用者以 git rm 決定
-    $trackedPaths = @(@($evidenceDir, $legacyZip) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object {
-        git -C $top ls-files -- ([IO.Path]::GetRelativePath($top, $_).Replace('\', '/'))
-    } | Where-Object { $_ })
-    if ($trackedPaths.Count) {
-        $item.reason = "有 $($trackedPaths.Count) 個證據檔已被 git 追蹤（例如 $($trackedPaths[0])），不自動刪除；要移出版控請另以 git rm 提交"
-        [pscustomobject]$item; continue
-    }
-
-    $hashes = [Collections.Generic.List[string]]::new()
-    if ($hasDir) {
-        foreach ($f in Get-ChildItem -LiteralPath $evidenceDir -Recurse -File -Force) { $hashes.Add((Get-Sha256Hex -Path $f.FullName)); $item.bytes += $f.Length }
-    }
-    if ($hasZip) {
-        $item.bytes += (Get-Item -LiteralPath $legacyZip).Length
-        $zip = [IO.Compression.ZipFile]::OpenRead($legacyZip)
-        try {
-            foreach ($e in $zip.Entries | Where-Object { -not $_.FullName.EndsWith('/') }) {
-                $s = $e.Open(); try { $hashes.Add((Get-Sha256Hex -Stream $s)) } finally { $s.Dispose() }
-            }
-        } finally { $zip.Dispose() }
-    }
-
-    $accepted = if ($AllowLocalOnly) { @('uploaded-verified', 'uploaded', 'local-only') } else { @('uploaded-verified') }
-    $candidates = @($states | Where-Object { $_.topic -eq $dir.Name -and $_.status -in $accepted })
-    if (-not $candidates.Count) { $item.reason = "沒有狀態為 $($accepted -join '／') 的同主題封存"; [pscustomobject]$item; continue }
-    $known = [Collections.Generic.HashSet[string]]::new()
-    foreach ($c in $candidates) {
-        if (-not (Test-Path -LiteralPath $c.archive -PathType Leaf)) { continue }
-        if ((Get-FileHash -LiteralPath $c.archive -Algorithm SHA256).Hash -ne $c.sha256) { continue }
-        $manifestHashes = Get-ManifestHashes $c.archive
-        if ($null -eq $manifestHashes) { continue }
-        foreach ($h in $manifestHashes) { $null = $known.Add($h) }
-        $item.coveredBy += $c.archive
-    }
-    if (-not $item.coveredBy.Count) { $item.reason = '同主題封存檔不存在、SHA-256 不符或沒有 manifest'; [pscustomobject]$item; continue }
-    $missing = @($hashes | Where-Object { -not $known.Contains($_) })
-    if ($missing.Count) { $item.reason = "有 $($missing.Count) 個證據檔的內容不在已上傳的封存裡"; [pscustomobject]$item; continue }
-
-    $item.action = 'prune'
-    $item.reason = if ($AllowLocalOnly) { '證據內容全部收在本機封存庫的封存中' } else { '證據內容全部收在已上傳並確認的封存中' }
-    if ($Apply) {
-        foreach ($p in @($evidenceDir, $legacyZip)) {
-            if (-not (Test-Path -LiteralPath $p)) { continue }
-            if (-not (Test-PathUnder $p $dir.FullName) -or -not (Test-PathUnder $p $bddRoot)) { throw "路徑檢查失敗，停止清理：$p" }
-            Remove-Item -LiteralPath $p -Recurse -Force
-        }
-        $item.action = 'pruned'
-    }
-    [pscustomobject]$item
-}
-
-$items = @($items)
-[pscustomobject]@{
-    repo = $top
-    archiveRoot = $root
-    applied = [bool]$Apply
-    prunableBytes = [long](($items | Where-Object { $_.action -in 'prune', 'pruned' } | ForEach-Object { $_.bytes } | Measure-Object -Sum).Sum)
-    items = $items
-} | ConvertTo-Json -Depth 4
+$PSNativeCommandUseErrorActionPreference = $false
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$cliArgs = @('prune', "--repo=$Repo")
+if ($PSBoundParameters.ContainsKey('ArchiveRoot')) { $cliArgs += "--archive-root=$ArchiveRoot" }
+if ($Apply) { $cliArgs += '--apply' }
+if ($AllowLocalOnly) { $cliArgs += '--allow-local-only' }
+$output = & node (Join-Path $PSScriptRoot 'bdd.mjs') @cliArgs 2>&1
+if ($LASTEXITCODE -ne 0) { throw ($output -join [Environment]::NewLine) }
+$output

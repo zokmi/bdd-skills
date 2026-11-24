@@ -43,7 +43,7 @@ removed:
 | 欄位 | 說明 |
 |------|------|
 | `prefix` | 2–3 個大寫英文字母，整個 repo 內唯一 |
-| `paths` | 對應程式路徑（glob，`**` 跨目錄）；`bdd-modules.ps1 -Base` 依此從異動檔案找出模組 |
+| `paths` | 對應程式路徑（glob，`**` 跨目錄）；`node bdd.mjs modules --base` 依此從異動檔案找出模組 |
 | `issues` | 新增或修改過本模組情境的單號 |
 | `removed` | 已刪除的編號：`<編號> #<單號> <原因>`；這些編號不可再用 |
 
@@ -51,7 +51,7 @@ front matter 之後的正文寫給人看：入口、範圍、注意事項。
 
 ## 編號
 
-- 模組內流水號，新增的用 `bdd-modules.ps1 -NextId -Module <模組>` 取得（現有與已移除的最大號加一）。
+- 模組內流水號，新增的用 `node bdd.mjs modules --next-id --module <模組>` 取得（現有與已移除的最大號加一）。
 - 用過的號碼不重用；刪除情境時在 `removed` 記一行。
 - 修改既有情境的預期：改在原地，補上本單的單號標籤，例如 `@SS-03 @#5349 @#5410 @UI`。
 - 每個情境要有：一個編號、至少一個單號標籤、至少一個 `@UI`／`@API`／`@DB`。
@@ -59,7 +59,8 @@ front matter 之後的正文寫給人看：入口、範圍、注意事項。
 ## 檢查
 
 ```bash
-pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-modules.ps1" -Lint
+node "<skill 目錄>/scripts/bdd.mjs" modules --lint
+node "<skill 目錄>/scripts/bdd.mjs" modules --path "src/orders/list.ts" --path "src/orders/detail.ts"
 ```
 
 有問題時 exit 1 並列出：編號重複、前綴重複、編號前綴不符、缺單號或驗證手段標籤、用回已移除的編號、情境檔所在目錄沒有 MODULE.md、MODULE.md 格式錯誤。在〈3-1〉送審前與〈7-1〉合併後各跑一次，**有問題不進入執行、不推 develop**。
@@ -69,8 +70,8 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-modules.ps1" -Lint
 兩條分支都從 develop 開出、都新增了 `SS-13`：
 
 1. 〈7-1〉把功能分支合併進最新的 `origin/develop` 時處理。
-2. 合併衝突**全部**落在 `.bdd/modules/` 底下時，自行解：`.feature` 兩邊的情境都保留，本分支新增的情境改用 `-NextId` 取得的新號；`MODULE.md` 的 `issues`、`removed` 取聯集。只要同時有任何 `.bdd/modules/` 以外的檔案衝突，整個合併就照現行規則停下來回報，連 `.bdd/modules/` 的衝突也先不動。
-3. 沒有文字衝突、但 `-Lint` 報 `duplicate-id` 時，同樣把本分支新增的改號。
+2. 合併衝突**全部**落在 `.bdd/modules/` 底下時，自行解：`.feature` 兩邊的情境都保留，本分支新增的情境改用 `--next-id` 取得的新號；`MODULE.md` 的 `issues`、`removed` 取聯集。只要同時有任何 `.bdd/modules/` 以外的檔案衝突，整個合併就照現行規則停下來回報，連 `.bdd/modules/` 的衝突也先不動。
+3. 沒有文字衝突、但 `--lint` 報 `duplicate-id` 時，同樣把本分支新增的改號。
 4. 改號寫進 REPORT〈情境修訂〉（例如「`SS-13`→`SS-15`（與 #5401 撞號）」）；合併後重跑那一輪的證據用新編號，舊輪次證據保留原檔名。
 
 ## 遷移舊資料（使用者要求時）
@@ -78,7 +79,7 @@ pwsh -NoProfile -File "<skill 目錄>/scripts/bdd-modules.ps1" -Lint
 舊版每張單的 `.feature` 放在 issue 資料夾裡。整併到模組的步驟：
 
 1. 列出對照表給使用者確認：每個舊情境 → 模組、新編號、合併／保留／刪除與理由。內容重複或矛盾要語意判斷，不靠腳本。
-2. 確認後寫進 `.bdd/modules/`，整批依〈3-1〉送子代理審核，並通過 `-Lint`。
+2. 確認後寫進 `.bdd/modules/`，整批依〈3-1〉送子代理審核，並通過 `--lint`。
 3. 刪除 issue 資料夾裡的 `.feature`（git 歷史與封存都還在），舊 REPORT.md 與 verification.json 不動。
 4. 新增 `.bdd/modules/MIGRATION-<年>-<月>.md`，記錄舊編號 → 新編號。
 

@@ -29,7 +29,9 @@
 
 ### 5. 準備環境
 
-**啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `-Isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `prepare-worktree-mcp.ps1 -Ports <原埠清單> -OutputDir <本輪輸出目錄>/mcp`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。
+範圍審核與環境確認完成後，依[並行準備服務與測資](parallel-bdd.md#並行準備服務與測資)派工。下列環境準備由服務子代理負責，已核對的就緒資訊交給測資代理及適用的實測代理。
+
+**啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `--isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `node bdd.mjs prepare-worktree-mcp --ports <原埠清單> --output-dir <本輪輸出目錄>/mcp`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。
 
 - 依本輪有效埠啟動服務並設定前端 API／proxy／SSR。隔離輪次使用 [專用 MCP 工作階段](worktree-loopback.md#啟動專用-mcp-工作階段)，看到本輪路由探測通過後，使用同一條連線導覽應用頁面。直接 API 驗證使用本輪 IP 與有效埠。
 - Node 專案若在 `npm run build` 時報埠號占用，檢查 `package.json` 的 `prebuild`、`build`、`postbuild` 及它們啟動的子程序。純建置可並行。啟動 dev server、preview 或 SSR 的命令須使用本輪有效埠；若流程可拆開，先完成 build，再以有效埠啟動提供建置產物的服務。建置時若會連到 API 或把 API URL 寫入產物，也要在建置程序中套用本輪 API 目標。
@@ -49,9 +51,8 @@
 | `@API` | `curl` 帶登入取得的 token 直接呼叫端點 | 請求與回應摘要存 `evidence/<編號>_<描述>.json` 或寫進報告 |
 | `@DB` | 專案的查詢工具（如 `sqlcmd`、`psql`），**只下查詢**驗證結果 | 查詢語句與結果摘要寫進報告 |
 
-- 核准的驗證截圖使用 `evidence/<情境編號>_<簡短中文描述>.png`（如 `IC-05_列表單價顯示.png`），檔名對應情境；其他供代理目視確認的截圖用暫存位置，記錄必要的實際畫面結果後立即刪除，不加入持久 evidence 清單。通過的 UI 情境可用 `REPORT.md#<情境編號>` 記錄操作及觀察到的實際結果作為文字證據。
-- **截圖當下就遮蓋個資**：截圖前注入遮罩樣式（帳號名稱、頭像、Email、電話等，選擇器以 `.bdd/config.json` 的 `mask.selectors` 為準），
-  確認後以 `mask-evidence.ps1 -Mark -Method css` 登記；畫面本來就沒有個資的用 `-Method exempt -Note <理由>`。
+- 核准的驗證截圖使用 `evidence/<情境編號>_<簡短中文描述>.webp` 或 `.png`，檔名對應情境。其他供代理目視確認的截圖用暫存位置，記錄必要的實際畫面結果後立即刪除，不加入持久 evidence 清單。通過的 UI 情境可用 `REPORT.md#<情境編號>` 記錄操作及觀察到的實際結果作為文字證據。
+- **截圖當下就遮蓋個資**：在已驗證的 Playwright MCP 工作階段使用 `bdd/screenshot`，從受測 worktree 的 `.bdd/config.json` 套用 `mask.selectors`。確認帳號名稱、頭像、Email、電話等均已遮蓋後，以 `node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --mark --pattern <截圖檔名> --method css` 登記。畫面本來就沒有個資的用 `--method exempt --note <理由>`。
   未遮罩的原圖不要留下，事後補救用 `-Apply` 套座標規則。保留的驗證截圖須有有效遮罩登記；暫存截圖若畫面含個資也必須先遮罩再查看，讀取完成後立即刪除。封存時沒有有效遮罩登記的圖片會被拒絕。
   做法見 [BDD 封存、遮罩與清理](archive.md)〈遮罩〉。
 - 前置資料盡量透過 UI 或 API 建立，走真實路徑；只有真的做不到才直接寫資料庫，並在報告註明。

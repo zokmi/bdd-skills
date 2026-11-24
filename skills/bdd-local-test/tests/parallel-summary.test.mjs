@@ -1,0 +1,141 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { checkModifiedPaths, checkSeparateDirectories } from '../scripts/lib/summary-evidence.mjs';
+
+const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
+const docs = new URL('../references/parallel-bdd-contract.md', import.meta.url);
+
+test('parallel summary checks masking hashes and verification rounds, deduplicates checkouts and preserves blockers', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const group = path.join(temp, 'group');
+  const evidence = path.join(group, 'evidence');
+  const coord = path.join(group, 'coordination/attempt-1');
+  fs.mkdirSync(evidence, { recursive: true });
+  fs.mkdirSync(coord, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=bdd@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'fixture');
+  const head = git('rev-parse', 'HEAD');
+  const examples = fs.readFileSync(docs, 'utf8').split('```json').slice(1).map(e => JSON.parse(e.split('```')[0]));
+  const [a, r] = examples;
+  a.outputDir = group;
+  Object.assign(a.target, { repo: temp, workDir: temp, head });
+  const scenario = a.scenarios[0];
+  const round = {
+    repo: { name: path.basename(temp), url: '' }, head, dirtyPaths: [],
+    scenarios: [{ path: scenario.feature, ids: [scenario.id], role: scenario.kind }],
+    result: { passed: 1, failed: 0, blocked: 0, notRun: 0 },
+  };
+  const json = (file, data) => fs.writeFileSync(file, '\uFEFF' + JSON.stringify(data));
+  const assignment = path.join(coord, 'assignment.json');
+  json(assignment, a);
+  json(path.join(group, 'verification.json'), { rounds: [round] });
+  const image = 'evidence/圖片.png';
+  r.scenarios[0].evidence = [image + '#step'];
+  json(path.join(coord, 'result.json'), r);
+  fs.writeFileSync(path.join(evidence, '圖片.png'), 'fixture');
+  fs.writeFileSync(path.join(group, 'REPORT.md'), 'report');
+  const ledger = path.join(group, 'masking.json');
+  json(ledger, { files: { [image]: { method: 'css', sha256: createHash('sha256').update('fixture').digest('hex').toUpperCase() } } });
+  function run(name, code, extra = []) {
+    const output = path.join(temp, name);
+    const result = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', output, '--assignment', assignment, ...extra], { encoding: 'utf8' });
+    assert.equal(result.status, code, result.stderr || result.stdout);
+    if (code < 2) {
+      const summary = JSON.parse(result.stdout);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'summary.json'), 'utf8')), summary);
+      return summary;
+    }
+  }
+  assert.equal(run('valid', 0).eligibleForReview, true);
+  run('valid', 2);
+  assert.equal(run('duplicate', 1, ['--assignment', assignment]).counts.passed, 1);
+  const secondCoord = path.join(group, 'coordination/second');
+  fs.mkdirSync(secondCoord);
+  const otherAssignment = structuredClone(a);
+  otherAssignment.groupId = 'other-team';
+  otherAssignment.target.repo = group;
+  json(path.join(secondCoord, 'assignment.json'), otherAssignment);
+  json(path.join(secondCoord, 'result.json'), { ...r, groupId: 'other-team' });
+  const aliased = run('shared-checkout', 1, ['--assignment', path.join(secondCoord, 'assignment.json')]);
+  assert.equal(aliased.counts.passed, 1);
+  assert.match(aliased.issues.join('\n'), /Repeated cross-group/);
+  const linked = path.join(temp, 'linked-checkout');
+  git('worktree', 'add', '--quiet', '--detach', linked, head);
+  Object.assign(otherAssignment.target, { repo: linked, workDir: linked });
+  const secondRound = structuredClone(round);
+  secondRound.repo.name = path.basename(linked);
+  const secondResult = structuredClone(r);
+  secondResult.groupId = otherAssignment.groupId;
+  secondResult.verification.path = 'linked-verification.json';
+  function summarizePair(name, code) {
+    json(path.join(group, secondResult.verification.path), { rounds: [secondRound] });
+    json(path.join(secondCoord, 'assignment.json'), otherAssignment);
+    json(path.join(secondCoord, 'result.json'), secondResult);
+    return run(name, code, ['--assignment', path.join(secondCoord, 'assignment.json')]);
+  }
+  const repeated = summarizePair('linked-duplicate', 1);
+  assert.deepEqual(repeated.issues, ['Repeated cross-group scenario requires manual review: ' + scenario.feature + '|' + scenario.id]);
+  assert.equal(repeated.counts.passed, 1);
+  const secondId = 'SS-14';
+  otherAssignment.scenarios[0].id = secondId;
+  secondRound.scenarios[0].ids = [secondId];
+  secondResult.scenarios[0].id = secondId;
+  const independent = summarizePair('linked-distinct', 0);
+  assert.equal(independent.eligibleForReview, true);
+  assert.equal(independent.counts.passed, 2);
+  assert.deepEqual(independent.groups.map(g => g.version.repo.name), [path.basename(temp), path.basename(linked)]);
+  const verificationPath = path.join(group, 'verification.json');
+  json(verificationPath, { rounds: { 0: round } });
+  assert.equal(run('invalid-rounds', 1).counts['not-run'], 1);
+  round.scenarios[0].blob = null;
+  json(verificationPath, { rounds: [round] });
+  assert.equal(run('uncommitted-scenario', 1).counts['not-run'], 1);
+  delete round.scenarios[0].blob;
+  if (process.platform !== 'win32') {
+    round.scenarios[0].path = scenario.feature.toUpperCase();
+    json(verificationPath, { rounds: [round] });
+    assert.equal(run('case-mismatch', 1).counts['not-run'], 1);
+    round.scenarios[0].path = scenario.feature;
+  }
+  json(verificationPath, { rounds: [round] });
+  fs.appendFileSync(path.join(evidence, '圖片.png'), 'changed');
+  const stale = run('stale', 1);
+  assert.equal(stale.counts['not-run'], 1);
+  assert.match(stale.issues.join('\n'), /Invalid image masking/);
+  run('group/summary', 2);
+  assert.ok(!fs.existsSync(path.join(group, 'summary')));
+  r.taskStatus = 'blocked';
+  r.blockers = [{ reason: 'Missing account', scenarioIds: [scenario.id], resolution: null }];
+  r.verification = null;
+  Object.assign(r.scenarios[0], { status: 'blocked', reason: 'Missing account', evidence: [] });
+  json(path.join(coord, 'result.json'), r);
+  assert.equal(run('blocked', 1).counts.blocked, 1);
+});
+
+test('summary destination cannot alias group output through a directory link', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-link-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const group = path.join(temp, 'group');
+  const link = path.join(temp, 'link');
+  fs.mkdirSync(group);
+  try { fs.symlinkSync(group, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) {
+    if (error.code === 'EPERM') return t.skip('Environment cannot create directory links');
+    throw error;
+  }
+  assert.throws(() => checkSeparateDirectories(group, path.join(link, 'nested', 'summary')), /separate from group/);
+});
+
+test('editable paths retain PowerShell string wildcard and literal rules', () => {
+  checkModifiedPaths(['src/a/b.js', 'file3.txt', 'f*.js'], ['src/*.js', 'file[0-9].txt', 'f\x60*.js']);
+  assert.throws(() => checkModifiedPaths(['filex.txt'], ['file[0-9].txt']), /Unauthorized/);
+  assert.throws(() => checkModifiedPaths(['src/../outside'], ['*']), /Unsafe/);
+});

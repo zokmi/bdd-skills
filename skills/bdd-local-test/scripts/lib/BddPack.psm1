@@ -57,7 +57,7 @@ function Get-ScenarioSnapshotEntries {
         [Parameter(Mandatory)][string]$Staging
     )
     foreach ($s in $Scenarios) {
-        if (-not $s.blob) { throw "情境檔受測時尚未提交，無法取出受測版本：$($s.path)；請 commit 後重新以 bdd-verification.ps1 -Record 記錄" }
+        if (-not $s.blob) { throw "情境檔受測時尚未提交，無法取出受測版本：$($s.path)；請 commit 後重新以 node bdd.mjs verification --record 記錄" }
         $actual = git -C $RepoRoot rev-parse --verify --quiet "${Commit}:$($s.path)"
         if (-not $actual -or "$actual".Trim() -ne $s.blob) { throw "情境檔在受測 commit $Commit 的版本與紀錄不符：$($s.path)" }
         $relative = 'features/' + ($s.path.Replace('\', '/') -replace '^\.bdd/modules/', '')
@@ -65,6 +65,11 @@ function Get-ScenarioSnapshotEntries {
         Save-GitBlob -Repo $RepoRoot -Blob $s.blob -Destination $destination
         New-PackEntry -Relative $relative -Path $destination -Extra ([ordered]@{ scenarioPath = $s.path; blob = $s.blob; role = $s.role })
     }
+}
+
+function Test-PackEntryWebpCandidate($Entry) {
+    $Entry.relative.StartsWith('evidence/', [StringComparison]::OrdinalIgnoreCase) -and
+        $WebpConvertibleExtensions -contains [IO.Path]::GetExtension($Entry.relative)
 }
 
 <#
@@ -79,35 +84,46 @@ function Convert-PackEntriesToWebp {
     $skipped = [Collections.Generic.List[object]]::new()
     $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($e in $Entries) { $null = $names.Add($e.relative) }
-    $bySha = @{}
-    foreach ($e in @($Entries | Sort-Object -Property relative -CaseSensitive)) {
-        $ext = [IO.Path]::GetExtension($e.relative).ToLowerInvariant()
-        if (-not $e.relative.StartsWith('evidence/', [StringComparison]::OrdinalIgnoreCase) -or $WebpConvertibleExtensions -notcontains $ext) {
-            $result.Add($e); continue
+    $byContentAndFormat = @{}
+    $batch = $null
+    try {
+        foreach ($e in @($Entries | Sort-Object -Property relative -CaseSensitive)) {
+            if (-not (Test-PackEntryWebpCandidate $e)) {
+                $result.Add($e); continue
+            }
+            $webpName = [IO.Path]::ChangeExtension($e.relative, '.webp').Replace('\', '/')
+            if ($names.Contains($webpName)) {
+                $skipped.Add([pscustomobject]@{ file = $e.relative; reason = 'name-conflict' }); $result.Add($e); continue
+            }
+            $format = [IO.Path]::GetExtension($e.relative).TrimStart('.').ToLowerInvariant() -replace '^jpg$', 'jpeg'
+            $cacheKey = "$($e.sha256)-$format"
+            if (-not $byContentAndFormat.ContainsKey($cacheKey)) {
+                if ($batch -and $batch.HasExited) {
+                    Stop-WebpBatch $batch
+                    $batch = $null
+                }
+                if (-not $batch) { $batch = Start-WebpBatch $Encoder }
+                $destination = Join-Path $Staging "webp/$cacheKey.webp"
+                $outcome = Convert-ToLosslessWebp -Source $e.path -Destination $destination -Encoder $Encoder -Batch $batch
+                $outcome.path = $destination
+                $byContentAndFormat[$cacheKey] = $outcome
+            }
+            $c = $byContentAndFormat[$cacheKey]
+            if (-not $c.ok) { $skipped.Add([pscustomobject]@{ file = $e.relative; reason = $c.reason }); $result.Add($e); continue }
+            $null = $names.Add($webpName)
+            $extra = [ordered]@{}
+            foreach ($k in $e.extra.Keys) { $extra[$k] = $e.extra[$k] }
+            $extra.originalName = $e.relative
+            $extra.originalSha256 = $e.sha256
+            $extra.encoder = $c.encoder
+            $extra.lossless = $true
+            $new = New-PackEntry -Relative $webpName -Path $c.path -Extra $extra
+            $new.lastWrite = $e.lastWrite
+            $result.Add($new)
+            $converted.Add([pscustomobject]@{ from = $e.relative; to = $webpName; sourceBytes = $c.sourceBytes; webpBytes = $c.webpBytes })
         }
-        $webpName = [IO.Path]::ChangeExtension($e.relative, '.webp').Replace('\', '/')
-        if ($names.Contains($webpName)) {
-            $skipped.Add([pscustomobject]@{ file = $e.relative; reason = 'name-conflict' }); $result.Add($e); continue
-        }
-        if (-not $bySha.ContainsKey($e.sha256)) {
-            $destination = Join-Path $Staging "webp/$($e.sha256).webp"
-            $outcome = Convert-ToLosslessWebp -Source $e.path -Destination $destination -Encoder $Encoder
-            $outcome.path = $destination
-            $bySha[$e.sha256] = $outcome
-        }
-        $c = $bySha[$e.sha256]
-        if (-not $c.ok) { $skipped.Add([pscustomobject]@{ file = $e.relative; reason = $c.reason }); $result.Add($e); continue }
-        $null = $names.Add($webpName)
-        $extra = [ordered]@{}
-        foreach ($k in $e.extra.Keys) { $extra[$k] = $e.extra[$k] }
-        $extra.originalName = $e.relative
-        $extra.originalSha256 = $e.sha256
-        $extra.encoder = $c.encoder
-        $extra.lossless = $true
-        $new = New-PackEntry -Relative $webpName -Path $c.path -Extra $extra
-        $new.lastWrite = $e.lastWrite
-        $result.Add($new)
-        $converted.Add([pscustomobject]@{ from = $e.relative; to = $webpName; sourceBytes = $c.sourceBytes; webpBytes = $c.webpBytes })
+    } finally {
+        if ($batch) { Stop-WebpBatch $batch }
     }
     [pscustomobject]@{ entries = @($result); converted = @($converted); skipped = @($skipped) }
 }
@@ -171,6 +187,7 @@ function Update-PackMaskLedger {
     foreach ($c in $Converted) {
         if (-not $files.Contains($c.from)) { continue }
         $old = $files[$c.from]
+        if ($old -isnot [Collections.IDictionary] -or $old['sha256'] -ine $byName[$c.to].extra.originalSha256) { continue }
         $record = [ordered]@{}
         foreach ($k in $old.Keys) { $record[$k] = $old[$k] }
         $record.sha256 = $byName[$c.to].sha256

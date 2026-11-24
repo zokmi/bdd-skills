@@ -1,9 +1,9 @@
-const { spawn } = require('node:child_process');
-const fs = require('node:fs');
-const path = require('node:path');
-const readline = require('node:readline');
-const { setTimeout: delay } = require('node:timers/promises');
-const { readManifest, startProbe, validateIsolation } = require('../probe-mcp-route.cjs');
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
+import { readManifest, startProbe, validateIsolation } from '../probe-mcp-route.mjs';
 
 function launchSpec(manifest, mcpCli) {
   const { configPath, server, preflight } = manifest;
@@ -24,7 +24,17 @@ function launchSpec(manifest, mcpCli) {
       launchArgs.filter(arg => arg.startsWith('--host-resolver-rules')).join('') !== resolver) {
     throw new Error('Playwright MCP config does not match the allocated localhost resolver');
   }
-  if (mcpCli) return [process.execPath, [path.resolve(mcpCli), ...mcpArgs]];
+  const installedCli = mcpCli ?? manifest.mcpCli;
+  if (installedCli !== undefined) {
+    if (typeof installedCli !== 'string' || !installedCli.trim() ||
+        (mcpCli === undefined && !path.isAbsolute(installedCli))) {
+      throw new Error('Expected an absolute Playwright MCP CLI path in the prepared manifest');
+    }
+    const cliFile = path.resolve(installedCli);
+    const info = fs.statSync(cliFile, { throwIfNoEntry: false });
+    if (!info?.isFile() || !info.size) throw new Error('The selected Playwright MCP CLI file is missing or empty');
+    return [process.execPath, [cliFile, ...mcpArgs]];
+  }
   if (process.platform !== 'win32') return ['npx', args];
 
   // Invoke the npm entry point with argv intact, including Windows paths with spaces.
@@ -143,4 +153,4 @@ async function openWorktreeMcp(manifest, { cwd = manifest?.preflight?.root, mcpC
   }
 }
 
-module.exports = { openWorktreeMcp, readManifest };
+export { openWorktreeMcp, readManifest };

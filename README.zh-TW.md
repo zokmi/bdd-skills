@@ -22,9 +22,12 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 
 ## 前置需求
 
-- 本機腳本需要 Git 和 PowerShell 7（`pwsh`）。內建轉送與 API 工具需要 Node.js 18.2 以上。
+- 模組檢查、品質計畫、驗證紀錄與並行測試摘要使用 Git 和 Node.js。命令入口是 `skills/bdd-local-test/scripts/bdd.mjs`。
+- Windows 的 Node.js CLI 亦負責分配 worktree IP、準備隔離 MCP 設定及停止已確認歸屬的程序。CLI 會呼叫 Windows .NET Framework 的 C# 編譯器，建立處理原生檔案鎖與程序查詢的小工具。
+- 用 `bdd.mjs mask-evidence` 登記或檢查截圖遮罩，`bdd.mjs archive` 建立 ZIP，`bdd.mjs extract` 還原封存。插件已內附 ZIP 套件。依座標對既有圖片補遮罩使用 Windows 的 System.Drawing。
+- 用 `bdd.mjs archive-index` 查詢、匯入或標記封存，`bdd.mjs recompress` 重新壓縮歷史截圖，`bdd.mjs prune` 預覽可清理的證據。核對清單後加上 `--apply` 才執行清理。既有 PowerShell 指令會轉交 Node.js CLI 執行。
 - UI 測試需要已連線的 Playwright MCP，BDD 實測需要子代理派工支援。
-- 使用內建 SQL Server 工具時，在受測專案安裝 `mssql`。封存截圖轉成無損 WebP 時，需要 Python 和支援 WebP 的 Pillow 13.0.0 以上版本。
+- Node.js 18.2 以上可用 ESM 匯入內建轉送與 API 工具。既有腳本若使用 `require()`，請參閱[實測工具遷移說明](skills/bdd-local-test/references/test-kit.md)。使用內建 SQL Server 工具時，在受測專案安裝 `mssql`。封存截圖轉成無損 WebP 時，需要 Python 和支援 WebP 的 Pillow 13.0.0 以上版本。
 
 ## 特色
 
