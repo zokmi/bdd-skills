@@ -1,5 +1,5 @@
 import { isCliEntry } from './lib/cli-entry.mjs';
-import { buildMcpSnippet } from './lib/routing.mjs';
+import { buildCliSnippet } from './lib/routing.mjs';
 import { loadKitConfig, readJson } from './lib/kit-config.mjs';
 
 export function main([target, preparedFile, extra]) {
@@ -16,7 +16,7 @@ export function main([target, preparedFile, extra]) {
     ip: prepared ? prepared.preflight.ip : target,
     portMappings: prepared?.portMappings,
   };
-  console.log(buildMcpSnippet(options));
+  console.log(buildCliSnippet(options));
 }
 
 export function runCli(args) {

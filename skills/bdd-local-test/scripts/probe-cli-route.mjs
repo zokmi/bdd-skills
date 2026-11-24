@@ -12,15 +12,15 @@ function validateIsolation({ isolationId, preflight }) {
   const ip = preflight?.ip;
   const slot = isIPv4(ip) ? Number(ip.split('.')[3]) : 0;
   if (preflight?.isolated !== true || !isIPv4(ip) || !ip.startsWith('127.0.0.') || slot < 2 || slot > 254 ||
-      typeof isolationId !== 'string' || !/^bdd-mcp-[a-f0-9]{32}$/.test(isolationId)) {
-    throw new Error('Expected an isolated prepare-worktree-mcp manifest');
+      typeof isolationId !== 'string' || !/^bdd-cli-[a-f0-9]{32}$/.test(isolationId)) {
+    throw new Error('Expected an isolated prepare-worktree-cli manifest');
   }
 }
 
 async function startProbe(manifest) {
   validateIsolation(manifest);
   const { isolationId, preflight: { ip } } = manifest;
-  const route = '/bdd-mcp-probe/' + randomUUID();
+  const route = '/bdd-cli-probe/' + randomUUID();
   let finish;
   const matched = new Promise(resolve => { finish = resolve; });
   let timeout;
@@ -57,7 +57,7 @@ async function main([manifestPath]) {
   const probe = await startProbe(readManifest(manifestPath));
   console.log(JSON.stringify(probe.ready));
   const evidence = await probe.matched;
-  if (!evidence) throw new Error('Timed out waiting for the localhost request from Playwright MCP');
+  if (!evidence) throw new Error('Timed out waiting for the localhost request from Playwright CLI');
   console.log(JSON.stringify(evidence));
 }
 

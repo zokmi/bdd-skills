@@ -10,7 +10,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertSlotIp, assertPort, routeOptions, routeLocalhostToSlot, buildMcpSnippet } from '../scripts/lib/routing.mjs';
+import { assertSlotIp, assertPort, routeOptions, routeLocalhostToSlot, buildCliSnippet } from '../scripts/lib/routing.mjs';
 import { assertRoleName, resolveApiUrl, extractToken, assertNoCredentials } from '../scripts/lib/api-helpers.mjs';
 import { parseConnectionString, toMssqlConfig } from '../scripts/lib/connection-string.mjs';
 import { createApi } from '../scripts/api.mjs';
@@ -46,9 +46,9 @@ test('installed kit runs from a standalone scripts directory', async t => {
       import { createApi } from './api.cjs';
       import { createDb, resolveConnectionString } from './db.cjs';
       import { loadKitConfig, readJson } from './lib/kit-config.cjs';
-      import { assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildMcpSnippet } from './lib/routing.cjs';
+      import { assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildCliSnippet, buildMcpSnippet } from './lib/routing.cjs';
       export { createApi, createDb, resolveConnectionString, loadKitConfig, readJson,
-        assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildMcpSnippet };
+        assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildCliSnippet, buildMcpSnippet };
     `);
     const imported = await load('consumer.mjs');
     const routing = await load('lib/routing.mjs');
@@ -122,13 +122,13 @@ const routeSettings = {
   portMappings: [{ originalPort: 82, effectivePort: 83 }],
 };
 
-test('Node and VM MCP snippet route requests identically and preserve existing mocks', async () => {
+test('Node and VM CLI snippet route requests identically and preserve existing mocks', async () => {
   const node = routeFixture();
-  const mcp = routeFixture();
-  const installMcp = (fixture, options) => vm.runInNewContext(buildMcpSnippet(options), { URL })({
+  const cli = routeFixture();
+  const installCli = (fixture, options) => vm.runInNewContext(buildCliSnippet(options), { URL })({
     context: () => fixture.context,
   });
-  for (const [fixture, install] of [[node, routeLocalhostToSlot.bind(null, node.context)], [mcp, installMcp.bind(null, mcp)]]) {
+  for (const [fixture, install] of [[node, routeLocalhostToSlot.bind(null, node.context)], [cli, installCli.bind(null, cli)]]) {
     await install(routeSettings);
     await fixture.visit('http://localhost/view?next=//localhost:81');
     await fixture.visit('https://localhost:82/call');
@@ -150,7 +150,7 @@ test('Node and VM MCP snippet route requests identically and preserve existing m
     await install({ ip: '127.0.0.2' });
     assert.deepEqual(fixture.installed, [fixture.mock, { match: mock84, handler: mockHandler }]);
   }
-  assert.deepEqual(node.events, mcp.events);
+  assert.deepEqual(node.events, cli.events);
   assert.deepEqual(node.events.map(([operation, address]) => [operation, address]), [
     ['continue', 'http://127.0.0.3/view?next=//localhost:81'],
     ['fetch', 'https://127.0.0.3:83/call'], ['fulfill', true], ['dispose', undefined],

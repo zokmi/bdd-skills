@@ -66,15 +66,23 @@
 
 目的是讓未遮罩的原圖**從來不落地**，整個流程只產生一份可外傳的證據，不再有「原檔＋遮罩版」兩個封存。
 
-1. **截圖時套用遮罩**。在[已通過路由探測的 MCP 工作階段](worktree-loopback.md#啟動專用-mcp-工作階段)送出下列 JSONL。先建立本輪的 `evidence/`，並在受測 worktree 的 `.bdd/config.json` 設定 `mask.selectors`。選擇器至少要匹配一個可見元素才會寫檔。
+1. **截圖時套用遮罩**。先建立本輪 `evidence/`，並在受測 worktree 的 `.bdd/config.json` 設定 `mask.selectors`。從該 worktree 使用實際操作畫面的具名 CLI session。隔離測試先完成[路由探測](worktree-loopback.md#啟動專用-cli-工作階段)。
 
-   ```jsonl
-   {"id":4,"tool":"bdd/screenshot","args":{"filename":".bdd/123-結帳/evidence/R2_IC-05_結帳結果.webp","target":"#checkout-result"}}
+   ```powershell
+   node "<skill 目錄>/scripts/bdd.mjs" cli-screenshot --session "<本輪 session 名稱>" --filename ".bdd/123-結帳/evidence/R2_IC-05_結帳結果.png" --target "#checkout-result"
    ```
 
-   `target` 是選用的 CSS 選擇器。省略時截取 viewport，或以 `fullPage: true` 截取整頁。預設使用 CSS 像素，需保存裝置解析度時指定 `scale: "device"`。支援 WebP 的 Playwright 可直接輸出無損 `.webp`。需座標補遮罩、交付端要求 PNG，或目前的 Playwright 只支援 PNG 時，改指定 `.png`。工具拒絕覆蓋既有證據。
+   至少一個遮罩 selector 匹配可見元素才會存檔。以 `--target <CSS 選擇器>` 截取指定區塊，省略時截取 viewport，或加 `--full-page` 截取整頁。預設使用 CSS 像素，可用 `--scale device` 保存裝置解析度。若 CLI 不在 PATH，可指定 `--cli-path "<playwright-cli.js 絕對路徑>"`。支援的格式為 PNG 及 WebP，座標補遮罩時使用 PNG，每份證據使用新的檔名。若特定頁面缺少適用的共用 selector，可在本輪已驗證的 session 用原生 `run-code` 於截圖當下套用遮罩。以下 CSS 須換成該頁所有需遮蓋的欄位，檔名換成本輪尚不存在的證據絕對路徑（Windows 使用 `/`）。
 
-   專案尚未設定 selector 時，仍可在已連線的 Playwright MCP 依畫面注入實色遮罩，再用 `browser_take_screenshot` 輸出。個別頁面需要不同遮罩時，依當輪已核准的畫面範圍確認覆蓋，並檢查檔案中沒有個資。
+   ```powershell
+   playwright-cli -s="<本輪 session 名稱>" run-code "async page => {
+     const fields = page.locator('.account-email:visible, .contact-phone:visible');
+     if (await fields.count() === 0) throw Error('找不到可見的遮罩欄位');
+     await page.screenshot({ path: '<本輪 evidence 絕對路徑>/R2_IC-05_結帳結果.png', mask: [fields], maskColor: '#000' });
+   }"
+   ```
+
+   逐張確認實際遮罩範圍後，以 `--method css` 登記。若已確認整個畫面沒有個資，可用同一個 `playwright-cli -s=<名稱> screenshot --filename="<本輪證據絕對路徑>.png"` 另存新檔，按下列方式登記豁免。
 2. **登記**：截圖確認已遮罩後，登記到 `masking.json`（記錄當下的 SHA-256，之後檔案被改動就會失效）：
    ```bash
    node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --mark --pattern 'R2_*' --method css

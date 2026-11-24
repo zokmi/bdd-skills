@@ -1,6 +1,6 @@
 ---
 name: bdd-local-test
-description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護模組業務行為規格、本機 UI／API／DB 驗證、Playwright MCP 測 localhost、失敗修正與複測，以及 cherry-pick／merge／跨 repo 同步後的結果有效性確認。適用互動畫面、外部系統 API 與事件／排程觸發的業務流程。
+description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護模組業務行為規格、本機 UI／API／DB 驗證、Playwright CLI 測 localhost、失敗修正與複測，以及 cherry-pick／merge／跨 repo 同步後的結果有效性確認。適用互動畫面、外部系統 API 與事件／排程觸發的業務流程。
 ---
 
 # BDD 情境與本機驗證
@@ -13,12 +13,12 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 - **情境範圍**：BDD 文件描述模組對使用者或外部角色承諾的可觀察業務行為，以角色、前置條件、操作或觸發事件、成功與異常結果為主。外部系統 API、事件與排程的業務流程同樣適用，不限畫面操作。純重構、部署設定、SQL migration、工具與文件調整等工程項目，依風險列入驗證清單與報告，不逐項轉成 `.feature`。`@UI`／`@API`／`@DB` 是驗證手段，情境範圍依業務承諾判定；詳細界線見 [情境寫法](references/feature-guide.md)。
 
-- **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠可用時沿用；原埠在本輪隔離 IP 被占用時，由 `node bdd.mjs prepare-worktree-mcp` 自動分配臨時有效埠，不自行猜埠。啟動、轉送、測試及清理使用同一份 `portMappings`。使用者要求固定原埠時使用 `--keep-original-ports`，無法安全使用原埠則列阻塞，不以換埠掩蓋跨 repo 的 IP／registry 衝突。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。用本輪 Playwright MCP 連線通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。
+- **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠可用時沿用；原埠在本輪隔離 IP 被占用時，由 `node bdd.mjs prepare-worktree-cli` 自動分配臨時有效埠，不自行猜埠。啟動、轉送、測試及清理使用同一份 `portMappings`。使用者要求固定原埠時使用 `--keep-original-ports`，無法安全使用原埠則列阻塞，不以換埠掩蓋跨 repo 的 IP／registry 衝突。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。以本輪具名 Playwright CLI session 通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。
 
 - 先讀目標專案的 `AGENTS.md`／`CLAUDE.md`／README、環境設定及 `.bdd/config.json`。本 skill 不預設埠號、帳號、基準分支或資料庫。下文的 `<skill 目錄>` 是此檔所在資料夾。
 - 依 [版控分工](references/version-control.md)，Git 只保存模組情境、`MODULE.md` 與共用設定；報告、驗證與遮罩紀錄保存在本機，依審核通過的清單保存截圖，不新增到 Git、不另建純報告提交。既有追蹤輸出先核對非圖片紀錄及 Redmine 附件，再依明確授權遷移。
 - 「那麼」以需求為準，不照抄錯誤實作；發現不符時標 `@已知缺陷`，實測讓它失敗。只有走真實路徑驗到的結果才能記「通過」；模擬回應、假 token 或旁證不能代替端對端驗證。
-- BDD 的 `@UI` 情境必須使用 Playwright MCP 操作與取證，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。MCP 無法連線或無法滿足隔離時先排查；仍無法執行則列「阻塞」。共用 MCP session 的 UI 情境序列執行；純 `@API`／`@DB` 情境維持各自的真實驗證工具。
+- BDD 的 `@UI` 情境以 Microsoft Playwright CLI 操作與取證。每組從受測工作區以唯一 session 名稱執行 `playwright-cli -s=<名稱>` 的各項命令。共用 session 的 UI 操作序列執行。CLI、瀏覽器或路由隔離無法就緒時，排查後將受影響的 UI 情境列「阻塞」。`@API`／`@DB` 情境使用各自的真實驗證工具。
 - 報告只對記錄的 repo、commit 與工作區狀態有效。同步或受測檔案變更時先用 `node bdd.mjs verification --check` 判定；`rerun` 代表舊結果失效，完整重跑的時機依下節驗證階段決定，不在合併前後各跑一輪。
 - **資料庫環境確認是實測前的必要關卡**：依 [執行前的安全確認](references/local-execution.md) 展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，收到使用者針對該目標的明確確認後，才可開始 UI／API／DB 實測、啟動可能連庫寫入的服務或派實測子代理。本機與唯讀情境同樣須確認；只告知、已提問、沉默或「測到全過」不算確認。同任務目標與授權範圍未變的複測沿用既有明確確認；目標或範圍改變時重新確認。缺帳密不得繞過驗證，相關情境列「阻塞」。
 - **情境文件異動自動檢查**：新增、修改、刪除、改名或整併 `.feature`，以及修改影響情境歸屬／規則的 `MODULE.md` 後，自動依 [bdd-scenario-audit](../bdd-scenario-audit/SKILL.md) 派未參與撰寫的唯讀子代理檢查，不另問是否執行。先跑 `node bdd.mjs modules --lint`；與下述獨立審核可合併派工並分別記錄結論。必修修正後複審，無子代理時記阻塞，不以自行檢查代替獨立通過。
@@ -38,7 +38,7 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 依 [情境等級與必測範圍](references/scenario-priority.md) 為新增與實質修改的情境標 `@P0`／`@P1`／`@P2`，並依變更類型核對驗收條件、必測情境與技術驗證。小 issue 走 TARGETED 時，以受影響模組的 `@core`、本單 `@#<單號>` 為候選，補入受影響的 P0、變更類型必測項及必要回歸。最終候選版本也按同一規則核對。報告列出實測情境與略過理由。
 
-同一 UI 情境中，將相容的導航與 locator 檢查批次交給 Playwright MCP，逐項保留斷言與失敗位置。跨情境維持狀態隔離。
+同一 UI 情境中，可用同一個 Playwright CLI session 的 `run-code` 批次執行相容的導航與 locator 檢查，逐項保留斷言與失敗位置。跨情境維持狀態隔離。
 
 通過環境確認後，需要登入的情境依 [登入自動化](references/authentication.md) 準備前置狀態：優先沿用已驗證的同環境、同帳號狀態，失效時執行專案提供的測試登入流程。
 

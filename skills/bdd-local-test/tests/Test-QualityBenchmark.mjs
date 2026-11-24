@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,89 +8,34 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import { runPlaywrightCli } from '../scripts/lib/worktree-cli.mjs';
+
 const fixture = fileURLToPath(new URL('./quality-fixture.mjs', import.meta.url));
 
-function launchMcp(directory) {
-  const child = spawn(process.env.ComSpec, [
-    '/d', '/s', '/c', 'npm exec --offline --yes --package=@playwright/mcp@0.0.84 -- playwright-mcp --headless --isolated',
-  ], { cwd: directory, stdio: ['pipe', 'pipe', 'inherit'] });
-  const pending = new Map();
-  let id = 0;
-  let failure;
-
-  function fail(error) {
-    failure ??= error;
-    for (const request of pending.values()) request.reject(failure);
-  }
-  const closed = new Promise(resolve => child.once('close', (code, signal) => {
-    fail(new Error('MCP exited with ' + (signal ?? code)));
-    resolve();
-  }));
-  child.on('error', fail);
-  child.stdin.on('error', fail);
-  const lines = createInterface({ input: child.stdout });
-  lines.on('line', line => {
-    try {
-      const message = JSON.parse(line);
-      pending.get(message.id)?.resolve(message);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-  function send(message) {
-    if (failure) throw failure;
-    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n');
-  }
-
-  async function rpc(method, params) {
-    const key = ++id;
-    let timer;
-    try {
-      const reply = await new Promise((resolve, reject) => {
-        pending.set(key, { resolve, reject });
-        timer = setTimeout(() => reject(new Error(method + ' timeout')), 45000);
-        send({ id: key, method, params });
-      });
-      if (reply.error) throw new Error(JSON.stringify(reply.error));
-      return reply.result;
-    } finally {
-      clearTimeout(timer);
-      pending.delete(key);
-    }
-  }
-
-  return {
-    rpc,
-    notify: method => send({ method }),
-    async close() {
-      child.stdin.end();
-      await closed;
-      lines.close();
-    },
-  };
-}
-
-async function runMode(mode, mcp, url, db, expectedState) {
+async function runMode(mode, directory, url, db, expectedState) {
   const start = performance.now();
   let calls = 0;
-  async function ui(name, args) {
+  const session = 'bdd-bench-' + randomUUID();
+  const ui = (...args) => {
     calls++;
-    const result = await mcp.rpc('tools/call', { name, arguments: args });
-    if (result.isError) throw new Error(JSON.stringify(result));
-  }
+    return runPlaywrightCli(session, args, { cwd: directory });
+  };
   const go = 'await page.goto(' + JSON.stringify(url) + ');';
   const title = "if(await page.getByRole('heading').innerText()!=='Order 1')throw Error('heading');";
   const state = "if(await page.getByRole('status').innerText()!==" + JSON.stringify(expectedState) + ")throw Error('state');";
 
   try {
-    if (mode === 'separate') {
-      await ui('browser_navigate', { url });
-      for (const check of [title, state]) await ui('browser_run_code_unsafe', { code: 'async page=>{' + check + '}' });
-    } else {
-      await ui('browser_run_code_unsafe', { code: 'async page=>{' + go + title + state + '}' });
+    await ui('open');
+    try {
+      if (mode === 'separate') {
+        await ui('goto', url);
+        for (const check of [title, state]) await ui('run-code', 'async page=>{' + check + '}');
+      } else {
+        await ui('run-code', 'async page=>{' + go + title + state + '}');
+      }
+    } finally {
+      await ui('close');
     }
-    await ui('browser_close', {});
     const response = await fetch(url + '/api/orders/1');
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /^application\/json/);
@@ -101,11 +47,11 @@ async function runMode(mode, mcp, url, db, expectedState) {
     assert.equal((await once(query, 'close'))[0], 0);
     assert.deepEqual(JSON.parse(output), { id: 1, state: 'paid' });
     console.log(JSON.stringify({
-      mode, ms: Math.round(performance.now() - start), mcpCalls: calls,
+      mode, ms: Math.round(performance.now() - start), cliCalls: calls,
       assertions: ['heading', 'state', 'status', 'schema', 'body', 'db'], status: 'PASSED', tokens: null,
     }));
   } catch (error) {
-    console.log(JSON.stringify({ mode, ms: Math.round(performance.now() - start), mcpCalls: calls, status: 'FAILED', error: error.message }));
+    console.log(JSON.stringify({ mode, ms: Math.round(performance.now() - start), cliCalls: calls, status: 'FAILED', error: error.message }));
     process.exitCode = 1;
   }
 }
@@ -118,7 +64,6 @@ async function benchmark() {
   const db = join(directory, 'orders.sqlite');
   const server = spawn(process.execPath, [fixture, 'serve', db]);
   const serverClosed = new Promise(resolve => server.once('close', resolve));
-  let mcp;
   try {
     const lines = createInterface({ input: server.stdout });
     const [port] = await Promise.race([
@@ -126,15 +71,12 @@ async function benchmark() {
       once(server, 'exit').then(([code]) => { throw new Error('Fixture exited before startup with ' + code); }),
     ]);
     const url = 'http://127.0.0.1:' + port;
-    mcp = launchMcp(directory);
-    await mcp.rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'bdd-fixture', version: '1' } });
-    mcp.notify('notifications/initialized');
     for (const mode of requested ? [requested] : ['separate', 'batch', 'batch', 'separate', 'separate', 'batch']) {
-      await runMode(mode, mcp, url, db, expectedState);
+      await runMode(mode, directory, url, db, expectedState);
     }
   } finally {
     server.kill();
-    await Promise.all([serverClosed, mcp?.close()]);
+    await serverClosed;
     rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
   }
 }
