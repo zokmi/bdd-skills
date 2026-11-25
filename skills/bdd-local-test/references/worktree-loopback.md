@@ -10,7 +10,7 @@
 
 原埠可用時沿用，被占用時自動分配臨時埠。`portMappings` 列出每個 `originalPort` 與 `effectivePort`，`effectivePorts` 供本輪啟動與清理，`occupied` 保留原埠占用證據。要求固定埠或已確認沿用本工作區原埠服務時，加 `--keep-original-ports`。同一工作區的測試輪次序列執行。
 
-執行順序：確認資料庫授權與上述啟動契約 → 檢查分配 IP／原 port 占用 → 以臨時參數啟動本輪前後端服務 → 核對實際監聽 IP／port、PID、工作區與版本 → 啟動帶 `chromiumArg` 的獨立 MCP Chrome／Chromium → 導覽本輪 localhost URL，驗證 UI 與真實 API 請求。
+執行順序：確認資料庫授權與上述啟動契約 → 檢查分配 IP／原 port 占用 → 以臨時參數啟動本輪前後端服務 → 核對實際監聽 IP／port、PID、工作區與版本 → 啟動帶 `chromiumArg` 的具名 CLI session 的 Chrome／Chromium → 導覽本輪 localhost URL，驗證 UI 與真實 API 請求。
 
 此處「Chrome 導轉」指獨立瀏覽器程序的 `--host-resolver-rules` localhost 對應；它不會啟動 API、不改寫 port，也不是 HTTP 重新導向或假 API 回應。服務須由上述命令另行啟動；若使用既有啟動／導轉服務，先查證其真實命令、路由與程序歸屬，仍須滿足相同契約，不臆造工具。
 
@@ -18,67 +18,50 @@
 
 前端換埠時使用有效埠導覽，並確認 API 接受本輪前端 Origin。API 換埠時，以本輪程序參數或環境覆寫前端 API URL、dev-server proxy、SSR 與直接 API 測試的目標。無法覆寫硬編碼網址或 Origin 限制時，將相關情境列為阻塞。維持專案設定檔、系統 hosts 及全域代理原狀。
 
-## 臨時 MCP 設定與連線
+## 準備 Playwright CLI 設定
 
-在該 worktree 根目錄執行，埠號取自專案文件：
-
-```powershell
-node "<skill 目錄>/scripts/bdd.mjs" prepare-worktree-mcp --ports "<原埠號，逗號分隔>" --output-dir "<本輪輸出目錄>/mcp"
-```
-
-回傳 preflight、原 ports、portMappings、effectivePorts、唯一 isolationId、configPath 與 stdio MCP 的 server.command／server.args。產生器只寫本輪臨時檔，不啟動瀏覽器、不變更專案或全域 MCP 設定；`status=configuration-only` 不代表已連線或可測。將完整回傳 JSON 保存到本輪輸出目錄，作為唯一對應。若啟動時被其他程序搶占或工具自行換埠，停止本輪已啟動的自有服務，重新準備並更新全部啟動參數與測試網址，最多重試兩次。仍無法綁定時列為阻塞。
-
-多專案主 checkout 在上述命令與 `node bdd.mjs loopback-slot` 加 `--isolate`，同樣綁回傳 IP／有效埠 並使用 MCP resolver。未加時維持原 localhost 解析（可能是 IPv6），不代表已隔離；多專案同 port 不可直接沿用此模式。清理明確隔離的主 checkout 時，`node bdd.mjs stop-slot-services` 也加 `--isolate`，仍只停止路徑歸屬符合的自有程序；未加時一律不停止主 checkout 服務。
-
-服務代理已確認本機 Playwright MCP 的安裝位置時，準備各 worktree 設定時傳入 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`，再把各自的準備結果 JSON 交給測資與實測代理。專用工作階段會直接用 Node.js 啟動該 CLI，省去每輪的 npm 套件查找。未指定時沿用 `npx --offline --no-install @playwright/mcp@latest --config <路徑>`，重用與 Codex 預設 Playwright MCP 相同的 npm 快取鍵。
-
-核對本輪實際目標後，可依 [登入自動化](authentication.md) 選擇已對應的私有狀態檔，再以 `--storage-state <檔案>` 產生設定。回傳的 MCP 參數會帶入 `--storage-state`；每個 session 仍以獨立 context 啟動。未指定時從乾淨狀態開始。
-
-1. 核對 preflight.occupied 的程序歸屬，依下節臨時啟動本輪服務。
-2. 在每個 worktree／同時執行組別啟動下方的 [專用 MCP 工作階段](#啟動專用-mcp-工作階段)，傳入本輪準備結果 JSON。入口以回傳的 `--config` 建立獨立 stdio MCP server，並自動用同一條連線完成路由探測。若客戶端已支援任務範圍的獨立 MCP 連線，也可使用回傳的 command／args 建立，並執行下方的手動探測。
-3. 記錄實際終端 session ID 或客戶端工具前綴、`configPath`、`isolationId` 和探測結果。UI 操作只送到本輪已驗證的連線。
-4. 若啟動或探測失敗，排查命令、MCP 版本、終端權限和本機路由，再以本輪設定重新建立連線。未通過探測時將相關 UI 情境列為阻塞。
-5. 探測通過後，以同一 MCP 的 browser_navigate 開啟`http(s)://localhost:<有效埠>`。使用瀏覽器網路資訊、服務存取紀錄／程序資訊及版本端點等證據，確認前端與 API 的實際請求到達分配 IP、有效埠與該 worktree 版本。不能只看網址或首頁成功。無法確認任一層則阻塞；HTTPS、代理或 Host 檢查問題須排查，不修改專案或全域安全設定繞過。
-   Chromium 的 resolver 僅影響瀏覽器，不影響 dev-server proxy、SSR 或後端程序自己發出的 localhost 請求。須逐一追查這些程序間連線的實際目標與版本；僅可使用該程序支援的本輪臨時環境變數／啟動參數導向所屬 worktree IP／有效埠。無此能力則相關情境阻塞，不修改原設定檔，也不把瀏覽器前端導轉成功當成 API 隔離成功。
-6. 同時測兩個 worktree 前，確認兩個 MCP 瀏覽器的登入／儲存狀態互不影響，前端與 API 版本皆正確。核對專案相關檔案的前後 diff，確認沒有因導轉改動 localhost／埠號。
-7. 符合[服務停止](closeout.md#服務停止)的全部收尾條件後，由管理者向本輪終端入口送出 `{"tool":"close"}`，或關閉本輪客戶端連線。確認 MCP 與瀏覽器關閉後，再停止本輪服務。臨時設定在使用程序停止後清理，不停止其他 worktree 或使用者原服務，也不刪除共用分配鎖檔。
-
-完成本輪獨立 MCP 探測後，若需要把瀏覽器的 localhost HTTP(S) 請求改送到 slot（如硬編碼原埠或 slot HTTPS 憑證），使用內建 `route-snippet.mjs --prepared <本輪準備結果 JSON>`。這個入口從 `.bdd/config.json` 讀取前端／API 埠，套用本輪有效埠。把輸出的片段貼到同一個已驗證 session 的 browser_run_code，然後導覽並核對各服務的實際目標。它只處理瀏覽器 HTTP(S)，WebSocket（HMR）仍由 Chromium resolver 處理，程序間連線仍依上述啟動契約設定。參閱[內建實測工具](test-kit.md)。
-
-共用 session 只能序列測試，切換 worktree 前仍須關閉舊瀏覽器並以新設定重新建立及驗證連線；僅換分頁不會更新 localhost 對應。獨立連線不可得時，可繼續獨立的 API／DB 範圍，不宣稱 UI 通過。
-
-### 啟動專用 MCP 工作階段
-
-在支援持久 stdin 的終端以 Node.js 18.2 以上啟動：
+從受測 worktree 根目錄執行。將原埠清單與本輪輸出目錄換成實際值。PowerShell 範例把完整準備結果保存成 JSON，後續啟動、轉送與清理均以這份對應為準。若從舊版 Playwright MCP 流程升級，請在本輪以新的暫存目錄重新產生 CLI 的 `prepared.json`，再核對服務、session 與路由。
 
 ```powershell
-node "<skill 目錄>/scripts/bdd.mjs" mcp-session "<本輪準備結果 JSON>"
+$bdd = "<skill 目錄>/scripts/bdd.mjs"
+$runDir = ".bdd/.playwright-cli/<本輪-組別>"
+$prepared = node $bdd prepare-worktree-cli --ports "<原埠號，逗號分隔>" --output-dir $runDir
+if ($LASTEXITCODE -ne 0) { throw "瀏覽器隔離設定建立失敗" }
+$manifest = Join-Path $runDir "prepared.json"
+$prepared | Set-Content -Encoding utf8 -LiteralPath $manifest
 ```
 
-在 Codex 使用可寫入 stdin 的終端（`exec_command` 設 `tty: true`，後續用 `write_stdin` 向同一 session ID 送一行 JSON 並按 Enter）。如果終端沙箱拒絕 loopback 或 Chrome 啟動，使用平台提供的本機執行授權後重試。準備結果已記錄 CLI 路徑時直接使用即可。需要為該次啟動指定不同的已安裝 CLI 時，附加 `--mcp-cli "<已安裝的 @playwright/mcp/cli.js>"`。兩種入口都使用本輪瀏覽器設定並執行原有路由探測。
+從回傳的 `preflight` 核對原埠占用與程序歸屬，依 `portMappings` 和 `effectivePorts` 啟動本輪服務。回傳的 `configPath` 指向含 `chromiumArg` 的臨時 CLI 設定，`isolationId` 是本輪的 session 名稱。CLI 自動產生的 snapshot 和日誌存入此組暫存目錄，可能含畫面個資，請與本輪報告、遮罩證據和封存來源分開。`status=configuration-only` 時仍待啟動與探測。若服務啟動時埠被搶占或自行換埠，停止本輪已啟動的自有服務，重新準備並更新全部啟動參數與測試網址，最多重試兩次。仍無法綁定時列為阻塞。
 
-看到 `status=ready` 後才開始操作。保留其中 `probe` 的 `status=matched`、`isolationId`、`ip` 與 `port` 作為路由證據。每次送一行，等相同 `id` 的 `result` 或 `error` 後再送下一個操作：
+多專案主 checkout 在上述指令及 `loopback-slot` 加 `--isolate`，清理時 `stop-slot-services` 也加 `--isolate`。單一主 checkout 使用原 localhost 解析（可能是 IPv6）。若 `playwright-cli` 不在 PATH，可在準備命令加 `--cli-path "<@playwright/cli 的 playwright-cli.js 絕對路徑>"`；後續直接操作瀏覽器時，以 `node "<同一 playwright-cli.js>"` 取代命令中的 `playwright-cli`。需要沿用已驗證的登入時，依[登入自動化](authentication.md)選擇私有狀態檔，並加 `--storage-state "<檔案>"`。
 
-```jsonl
-{"id":1,"tool":"tools/list"}
-{"id":2,"tool":"browser_navigate","args":{"url":"http://localhost:<前端有效埠>/"}}
-{"id":3,"tool":"browser_snapshot"}
-{"tool":"close"}
-```
+### 啟動專用 CLI 工作階段
 
-同一個入口可依序執行多個情境及 MCP 工具呼叫。結束時送出 `close` 並確認程序退出。切換 worktree 或需要重啟瀏覽器時，重新啟動入口，等新一輪探測成功。
-
-### 手動驗證 MCP 的 localhost 路由
-
-用 Node.js 18.2 以上啟動探測器，傳入本輪準備腳本回傳的完整 JSON 檔：
+服務已綁在本輪 IP 與有效埠、已核對監聽程序與版本後，從同一 worktree 執行：
 
 ```powershell
-node "<skill 目錄>/scripts/bdd.mjs" mcp-probe "<本輪準備結果 JSON>"
+node $bdd cli-session $manifest
 ```
 
-探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內用將要執行 UI 測試的 MCP `browser_navigate` 開啟回傳的完整 `url`。保留瀏覽器回應與探測器輸出，兩邊都須有 `status=matched`，且 `isolationId`、`ip`、`port` 與 `ready` 相符。探測器收到符合本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時則以非零狀態退出。
+入口開啟具名瀏覽器，從該 session 導覽探測網址，確認導覽成功，並核對探測器收到本輪請求。指定登入狀態檔時，探測成功後才載入。命令返回時保留已驗證的瀏覽器；記下 `status=ready`、`session`、`probe.status=matched`、`isolationId`、IP 與探測埠。啟動或探測失敗時，核對 CLI 與瀏覽器安裝、執行權限、設定及本機路由，修正後重試。無法驗證路由則將相關 UI 情境列為阻塞，可獨立執行的 API／DB 繼續。
 
-Chrome 的 `chrome://version` 可協助診斷啟動旗標。實際路由以探測器收到的請求為準。MCP 重連、瀏覽器重啟或切換 worktree 後重新探測。
+從同一工作目錄執行後續命令，每次都傳入同一個 session 名稱。若情境需要[瀏覽器 HTTP(S) 轉送](test-kit.md#瀏覽器-localhost-轉送)，先執行該片段，再導覽受測網址。
+
+```powershell
+$uiSession = ($prepared | ConvertFrom-Json).isolationId
+playwright-cli -s=$uiSession goto "http://localhost:<前端有效埠>/"
+playwright-cli -s=$uiSession snapshot
+```
+
+依專案實際協定導覽。以服務存取紀錄、程序資訊、版本端點及瀏覽器網路請求核對前端與 API 到達的 IP、有效埠與版本。Chromium resolver 只作用於瀏覽器，dev-server proxy、SSR 或後端程序發出的請求另以本輪啟動參數／環境覆寫指向所屬服務。任何一層無法核對時，將相關情境列為阻塞。記錄本輪設定檔路徑與驗證結果，並以專案檔案的前後 diff 核對原始設定。
+
+並行 UI 組各自使用具名 session，先驗證彼此的登入與儲存狀態獨立。若多組共用本輪同一個已確認版本的服務與埠對應，可複製本輪 CLI 設定、保留 resolver，將各組 `outputDir` 設為各自暫存目錄的絕對路徑。各組以不同的 `-s=<組別唯一名稱>` 執行 `open --config="<該組設定檔>"`，並為每個實際操作的 session 分別完成下方探測。共用 session 時依序操作；切換 worktree 或重啟瀏覽器後，重新以該 worktree 的設定開啟並探測。
+
+符合[服務停止條件](closeout.md#服務停止)時，由管理者以 `playwright-cli -s=<名稱> close` 關閉本輪具名 session，確認關閉後再停止本輪自有服務。臨時設定在使用程序退出後清理，保留共用分配鎖檔。
+
+### 手動驗證 CLI session 的 localhost 路由
+
+在一個終端執行 `node $bdd cli-probe $manifest`。探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內從同一 worktree 的另一個終端，以即將實測的 `playwright-cli -s=<名稱> goto "<ready.url>"` 導覽。用 `playwright-cli -s=<名稱> snapshot` 核對頁面的 JSON，並比對探測器收到的 `status=matched`、`isolationId`、`ip`、`port`。兩方須與本輪 `ready` 資訊相符。探測器在收到帶有本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時以非零狀態退出。
 
 ## 服務與 slot
 
@@ -92,14 +75,14 @@ slot 分配先取得跨 repo 的共用登記鎖，再取得共用 Git 目錄的�
    ```bash
    node "<skill 目錄>/scripts/bdd.mjs" loopback-slot --ports "<專案用到的埠，逗號分隔>"
    ```
-   保存 JSON 的 `slot`、`ip`、`chromiumArg`、`occupied`。以 MCP 準備腳本回傳的本輪對應為準。
+   保存 JSON 的 `slot`、`ip`、`chromiumArg`、`occupied`。以 CLI 準備腳本回傳的本輪對應為準。
 2. 按 `occupied` 的位址、埠號、PID 確認原埠占用者。另起服務時使用分配的有效埠。指定固定埠且無法沿用服務時列為阻塞。
 3. 服務只綁腳本給的 `ip`，使用本輪有效埠。例如：
    - ASP.NET Core：`ASPNETCORE_ENVIRONMENT=Development dotnet run --project <Api 專案> --no-launch-profile --urls http://<ip>:<有效埠>`。IIS Express 無法綁 `127.0.0.N` 時改用 Kestrel。
    - Angular：`npx ng serve --host <ip> --port <有效埠> [原本的 --ssl／--configuration]`。
    - 其他框架用其指定監聽位址的參數，不修改專案設定檔。
 4. 啟動後用該 `ip` 和有效埠檢查前後端 HTTP 回應與本輪版本；僅有監聽程序或首頁可連不足以證明正在測本輪程式。重建或重啟後再查一次。
-5. `@UI` 使用已套用 `chromiumArg` 的獨立 MCP session，以有效埠導覽並核對 API 的實際目標。MCP 無法提供隔離或無法確認實際目標時，相關 UI 情境列為阻塞。
+5. `@UI` 使用已套用 `chromiumArg` 的具名 CLI session，以有效埠導覽並核對 API 的實際目標。無法驗證 session 隔離或無法確認實際目標時，相關 UI 情境列為阻塞。
 6. `@API`／`curl` 直接打 `http://<ip>:<埠>`。若後端需驗 Origin，帶 `-H "Origin: http://localhost:<前端埠>"`。
 7. 報告〈環境〉記錄 `isWorktree=true`、slot、IP、原埠與有效埠、占用判定、實際 UI／API 網址及受測版本的確認方式。共用資料庫不會因 IP 分流而隔離；測試資料使用 `BDD-<單號>-` 前綴並盡量選不同建案或主檔，避免互相干擾。
 

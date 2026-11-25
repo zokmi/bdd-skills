@@ -40,11 +40,11 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
-          node-version: '18.2.0'
+          node-version: '20.0.0'
           package-manager-cache: false
-      - name: Verify ESM MCP entry points on Node.js 18.2
+      - name: Verify Playwright CLI routing on Node.js 20
         if: runner.os == 'Linux'
-        run: node --test skills/bdd-local-test/tests/Test-McpRouteProbe.mjs
+        run: node --test skills/bdd-local-test/tests/Test-CliRouteProbe.mjs
 
   verify:
     runs-on: windows-latest
@@ -118,11 +118,19 @@ jobs:
           pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-QualityPlan.ps1
           if ($LASTEXITCODE -ne 0) { throw 'BDD quality plan checks failed' }
 
-      - name: Verify concurrent worktree allocation and MCP configuration
+      - name: Verify concurrent worktree allocation and Playwright CLI configuration
         shell: pwsh
         run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-WorktreeMcp.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Worktree MCP checks failed' }
+          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-WorktreeCli.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Worktree CLI checks failed' }
+
+      - name: Verify live worktree routing in six named Playwright CLI sessions
+        shell: pwsh
+        run: |
+          $cliRoot = Join-Path $env:RUNNER_TEMP 'bdd-playwright-cli'
+          npm install --prefix $cliRoot --no-audit --no-fund --ignore-scripts @playwright/cli@0.1.25
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright CLI installation failed' }
+          ./skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -CliPath (Join-Path $cliRoot 'node_modules/@playwright/cli/playwright-cli.js') -ChromePath "${env:ProgramFiles}/Google/Chrome/Application/chrome.exe" -OutputDir (Join-Path $env:RUNNER_TEMP 'bdd-live-results')
 
       - name: Verify automatic BDD ignore rules
         shell: pwsh

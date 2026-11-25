@@ -37,7 +37,7 @@
     "confirmationBasis": "使用者於本任務對話明確回覆：確認上述 App_Test 與本輪資料讀寫範圍，可以測試；詳見 REPORT.md 資料庫環境確認，本輪已核對設定未變"
   },
   "resources": [{"id": "api-5410", "type": "service", "owner": "main", "access": "shared-read"}, {"id": "race-group-ui", "type": "data", "owner": "schedule-ui", "access": "exclusive-write"}],
-  "browser": {"tool": "playwright-mcp", "isolationId": "schedule-ui-browser", "chromiumArg": null},
+  "browser": {"tool": "playwright-cli", "isolationId": "schedule-ui-browser", "chromiumArg": null},
   "account": {"role": "organizer", "credentialRef": "專案指定的本機測試帳密來源"},
   "dataScope": ["race-group-ui"],
   "permissions": {"editablePaths": [], "manageServiceIds": [], "externalActions": []},
@@ -50,7 +50,7 @@
 
 dirtyPaths 非空時，在派工附文列出異動快照／雜湊及取得位置，子代理開始前核對。不同組若無法確認測到同一工作區內容，不以同 HEAD 判定版本相同。
 
-依 [worktree 隔離](worktree-loopback.md) 產生設定並啟動每組專用 MCP。UI 派工附文須列 `browser.isolationId`、臨時 `configPath`、實際終端 session ID 或工具前綴，以及路由探測、前端／API 目的地與版本證據。各組使用分配給本輪的有效埠。
+UI 派工附文列出每組的 `browser.isolationId`、實際 `-s=<名稱>`、臨時 `configPath`、前端／API 目的地與版本證據。隔離工作區另依 [worktree 隔離](worktree-loopback.md) 設定 resolver、核對該 session 的路由探測結果，並使用本輪分配的有效埠。
 
 ## 結果輸出：result.json
 
@@ -64,7 +64,7 @@ dirtyPaths 非空時，在派工附文列出異動快照／雜湊及取得位置
   "attempt": 1,
   "taskStatus": "completed",
   "verification": {"path": "verification.json", "roundIndex": 0},
-  "execution": {"tool": "playwright-mcp", "uiUrl": "http://localhost:4200", "apiUrl": "http://localhost:5000", "serviceVersion": "build-5410-1"},
+  "execution": {"tool": "playwright-cli", "uiUrl": "http://localhost:4200", "apiUrl": "http://localhost:5000", "serviceVersion": "build-5410-1"},
   "scenarios": [{
     "feature": ".bdd/modules/organizer/schedule-settings/list.feature",
     "id": "SS-13",

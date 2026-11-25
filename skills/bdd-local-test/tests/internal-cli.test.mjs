@@ -12,8 +12,8 @@ const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const compatibilityCli = fileURLToPath(new URL('../scripts/bdd.cjs', import.meta.url));
 
 for (const entry of [cli, compatibilityCli]) {
-  test(`${path.basename(entry)} mcp-session reports a blocked preflight in JSON`, () => {
-    const result = spawnSync(process.execPath, [entry, 'mcp-session'], { encoding: 'utf8' });
+  test(`${path.basename(entry)} cli-session reports a blocked preflight in JSON`, () => {
+    const result = spawnSync(process.execPath, [entry, 'cli-session'], { encoding: 'utf8' });
     assert.equal(result.status, 1);
     const { status, error } = JSON.parse(result.stderr);
     assert.equal(status, 'blocked');
@@ -27,8 +27,8 @@ test('standalone ESM commands run through a linked installation directory', t =>
   t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
   fs.symlinkSync(path.dirname(cli), link, 'junction');
   const commands = [
-    ['bdd.mjs', 1], ['route-snippet.mjs', 2], ['probe-mcp-route.mjs', 1],
-    ['worktree-mcp-session.mjs', 1], ['lib/archive-index.mjs', 1],
+    ['bdd.mjs', 1], ['route-snippet.mjs', 2], ['probe-cli-route.mjs', 1],
+    ['worktree-cli-session.mjs', 1], ['lib/archive-index.mjs', 1],
   ];
   for (const [file, expected] of commands) {
     const result = spawnSync(process.execPath, [path.join(link, file)], { encoding: 'utf8' });
@@ -59,7 +59,7 @@ function screenshotFixture(t) {
   return { root, output };
 }
 
-test('MCP evidence capture applies locator masks and saves only the requested lossless WebP', async t => {
+test('CLI evidence capture applies locator masks and saves only the requested WebP', async t => {
   const { root, output } = screenshotFixture(t);
   const filename = '.bdd/run/evidence/IC-05_結帳.webp';
   const rendered = [];
@@ -81,8 +81,8 @@ test('MCP evidence capture applies locator masks and saves only the requested lo
       };
     },
   };
-  const session = { call: async (tool, { code }) => {
-    assert.equal(tool, 'browser_run_code_unsafe');
+  const session = { run: async (command, code) => {
+    assert.equal(command, 'run-code');
     await vm.runInNewContext(`(${code})`)(page);
   } };
   assert.deepEqual(await captureEvidence(session, root, { filename, target: '#summary' }), { filename, type: 'webp' });
@@ -92,14 +92,14 @@ test('MCP evidence capture applies locator masks and saves only the requested lo
   assert.equal(rendered.length, 1);
 });
 
-test('MCP evidence capture leaves no file when masks do not match or capture fails', async t => {
+test('CLI evidence capture leaves no file when masks do not match or capture fails', async t => {
   const { root, output } = screenshotFixture(t);
   const filename = '.bdd/run/evidence/IC-06.png';
   const page = {
     locator: () => ({ count: async () => 0 }),
     screenshot: async () => assert.fail('screenshot taken without a visible mask'),
   };
-  const session = { call: async (_, { code }) => vm.runInNewContext(`(${code})`)(page) };
+  const session = { run: async (_, code) => vm.runInNewContext(`(${code})`)(page) };
   await assert.rejects(captureEvidence(session, root, { filename }), /No configured screenshot mask is visible/);
   page.locator = () => ({ count: async () => 1 });
   page.screenshot = async ({ path: stagedPath, type }) => {

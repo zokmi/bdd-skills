@@ -30,9 +30,9 @@ async function dispatch(command, args) {
       const { loopbackCommand } = await import('./lib/loopback-slot.mjs');
       return loopbackCommand(args);
     }
-    case 'prepare-worktree-mcp': {
-      const { prepareWorktreeMcp } = await import('./lib/prepare-worktree-mcp.mjs');
-      return prepareWorktreeMcp(args);
+    case 'prepare-worktree-cli': {
+      const { prepareWorktreeCli } = await import('./lib/prepare-worktree-cli.mjs');
+      return prepareWorktreeCli(args);
     }
     case 'stop-slot-services': {
       const { stopSlotCommand } = await import('./lib/stop-slot-services.mjs');
@@ -64,18 +64,22 @@ async function dispatch(command, args) {
       console.log(JSON.stringify(result));
       return result.failures.length || result.trackedOutputs.length ? 1 : 0;
     }
-    case 'mcp-session': {
-      const { main } = await import('./worktree-mcp-session.mjs');
+    case 'cli-screenshot': {
+      const { runScreenshotCli } = await import('./lib/evidence-screenshot.mjs');
+      return runScreenshotCli(args);
+    }
+    case 'cli-session': {
+      const { main } = await import('./worktree-cli-session.mjs');
       await main(args);
       return 0;
     }
-    case 'mcp-probe': {
-      const { main } = await import('./probe-mcp-route.mjs');
+    case 'cli-probe': {
+      const { main } = await import('./probe-cli-route.mjs');
       await main(args);
       return 0;
     }
     default:
-      throw new Error('Expected an internal BDD command: modules, quality-plan, verification, parallel-summary, gitignore, loopback-slot, prepare-worktree-mcp, stop-slot-services, mcp-session, mcp-probe, archive, archive-index, recompress, prune, extract, or mask-evidence.');
+      throw new Error('Expected an internal BDD command: modules, quality-plan, verification, parallel-summary, gitignore, loopback-slot, prepare-worktree-cli, stop-slot-services, cli-session, cli-probe, cli-screenshot, archive, archive-index, recompress, prune, extract, or mask-evidence.');
   }
 }
 
@@ -84,7 +88,7 @@ export async function runCli([command, ...args]) {
     process.exitCode = await dispatch(command, args);
   } catch (error) {
     const output = command === 'gitignore' ? console.log : console.error;
-    const payload = command === 'mcp-session' ? { status: 'blocked', error: error.message } : { error: error.message };
+    const payload = command === 'cli-session' ? { status: 'blocked', error: error.message } : { error: error.message };
     output(JSON.stringify(payload));
     process.exitCode = ['gitignore', 'modules', 'verification', 'parallel-summary', 'stop-slot-services'].includes(command) ? 2 : 1;
   }

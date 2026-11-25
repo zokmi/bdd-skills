@@ -10,9 +10,9 @@
 | API port 與啟動契約 | <逐服務：repo/worktree、原 localhost URL、實際監聽 port、設定來源、本輪 IP、啟動命令（遮罩秘密）、啟動後 IP/port/PID 與版本；API port 禁止異動、自動換埠檢查結果> |
 | 多專案同 port 檢查 | <各工作區 isolated、registryPath（須相同）、IP/port、程序歸屬及衝突檢查；主 checkout 是否 --isolate；無安全分配時阻塞；或不適用> |
 | 資料庫環境確認 | <待確認／使用者已明確確認；全部主機／執行個體、埠、庫名、租戶、環境、設定來源、讀寫範圍、回覆摘要及對話位置／時間、適用輪次；未確認不得實測，不填帳密> |
-| UI 測試工具 | <Playwright MCP；無法執行時記錄阻塞原因、排查結果與解除條件；純 API／DB 填不適用> |
-| MCP 隔離與導轉 | <worktree IP、原埠與有效埠對應、isolationId、實際 MCP 連線識別、臨時設定路徑、前端／API 目標與版本證據> |
-| 原始設定保留 | <localhost／埠號未異動的 diff；本輪 MCP 與服務程序停止結果> |
+| UI 測試工具 | <Playwright CLI 版本與具名 session；無法執行時記錄阻塞原因、排查結果與解除條件；純 API／DB 填不適用> |
+| 瀏覽器隔離與導轉 | <worktree IP、原埠與有效埠對應、isolationId、實際 CLI session 名稱與路由探測結果、臨時設定路徑、前端／API 目標與版本證據> |
+| 原始設定保留 | <localhost／埠號未異動的 diff；本輪 CLI session 與服務程序停止結果> |
 | 執行時間 | <YYYY-MM-DD HH:mm> |
 | 測試帳號 | 具備「<權限名稱>」的本機測試帳號（不寫帳密） |
 | 情境審核 | <獨立審核輪次與結果／未經獨立審核的原因> |

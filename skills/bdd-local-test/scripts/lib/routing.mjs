@@ -41,7 +41,7 @@ function routeOptions({ ip, frontendPorts = [], apiPorts = [], portMappings = []
   return { ip, routes };
 }
 
-// Self-contained so the CLI can embed the exact handler in Playwright MCP.
+// Self-contained so the CLI can embed the exact handler in Playwright CLI run-code.
 async function installSlotRoutes(ctx, { ip, routes }) {
   const key = Symbol.for('bdd-local-test.slot-routes');
   const state = ctx[key] ??= { pending: Promise.resolve(), current: null };
@@ -105,7 +105,7 @@ async function routeLocalhostToSlot(ctx, options) {
   await installSlotRoutes(ctx, routeOptions(options));
 }
 
-function buildMcpSnippet(options) {
+function buildCliSnippet(options) {
   const settings = routeOptions(options);
   return 'async (page) => {\n' +
     '  const installSlotRoutes = ' + installSlotRoutes.toString() + ';\n' +
@@ -113,4 +113,4 @@ function buildMcpSnippet(options) {
     '}';
 }
 
-export { assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildMcpSnippet };
+export { assertSlotIp, assertPort, effectivePortMap, routeOptions, routeLocalhostToSlot, buildCliSnippet, buildCliSnippet as buildMcpSnippet };

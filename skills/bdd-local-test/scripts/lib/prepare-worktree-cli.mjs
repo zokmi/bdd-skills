@@ -12,22 +12,22 @@ function existingFile(input, label) {
   return file;
 }
 
-export async function prepareWorktreeMcp(args) {
+export async function prepareWorktreeCli(args) {
   const { values } = parseArgs({ args, options: {
     ports: { type: 'string', multiple: true }, 'output-dir': { type: 'string' },
     isolate: { type: 'boolean' }, 'keep-original-ports': { type: 'boolean' },
-    'storage-state': { type: 'string' }, 'mcp-cli': { type: 'string' },
+    'storage-state': { type: 'string' }, 'cli-path': { type: 'string' },
   } });
   const ports = parsePorts(values.ports ?? []);
   if (!ports.length || !values['output-dir']) throw new Error('Expected --ports and --output-dir.');
   const state = existingFile(values['storage-state'], 'StorageState');
-  const mcpCli = existingFile(values['mcp-cli'], 'McpCli');
+  const cliPath = existingFile(values['cli-path'], 'CliPath');
   const output = path.resolve(values['output-dir']);
   const preflight = await allocateSlot({ ports, isolate: values.isolate, keepOriginalPorts: values['keep-original-ports'] });
-  const isolationId = 'bdd-mcp-' + randomUUID().replaceAll('-', '');
+  const isolationId = 'bdd-cli-' + randomUUID().replaceAll('-', '');
   const configPath = path.join(output, isolationId + '.json');
   const config = {
-    browser: { browserName: 'chromium', isolated: true, launchOptions: { args: preflight.isolated ? [preflight.chromiumArg] : [] } },
+    browser: { browserName: 'chromium', isolated: true, launchOptions: { channel: 'chrome', args: preflight.isolated ? [preflight.chromiumArg] : [] } },
     outputDir: path.join(output, isolationId),
   };
   fs.mkdirSync(output, { recursive: true });
@@ -40,13 +40,12 @@ export async function prepareWorktreeMcp(args) {
     throw error;
   }
   fs.closeSync(fd);
-  const serverArgs = ['--offline', '--no-install', '@playwright/mcp@latest', '--config', configPath];
-  if (state) serverArgs.push('--storage-state', state);
   console.log(JSON.stringify({
     isolationId, configPath, ports, portMappings: preflight.portMappings, effectivePorts: preflight.effectivePorts,
-    preflight, server: { command: 'npx', args: serverArgs }, status: 'configuration-only',
-    verificationRequired: ['獨立 MCP 連線與瀏覽器', '前端及 API 的實際目標 IP、本輪有效埠與受測版本', '帳號及資料範圍隔離'],
-    ...(mcpCli ? { mcpCli } : {}),
+    preflight, status: 'configuration-only',
+    verificationRequired: ['獨立 Playwright CLI 工作階段與瀏覽器', '前端及 API 的實際目標 IP、本輪有效埠與受測版本', '帳號及資料範圍隔離'],
+    ...(state ? { storageState: state } : {}),
+    ...(cliPath ? { cliPath } : {}),
   }));
   return 0;
 }

@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 import { readJson } from './kit-config.mjs';
+import { runPlaywrightCli } from './worktree-cli.mjs';
 
 function validateOptions({ filename, target, fullPage = false, scale = 'css' } = {}) {
   const parts = typeof filename === 'string' ? filename.split('/') : [];
@@ -56,11 +58,11 @@ async function captureEvidence(session, root, args) {
   try {
     const settings = { selectors, target, fullPage, path: image, type, scale, timeout: 15000 };
     if (type === 'webp') settings.quality = 100;
-    await session.call('browser_run_code_unsafe', { code: screenshotCode(settings) });
+    await session.run('run-code', screenshotCode(settings));
     try {
       await fs.copyFile(image, destination, constants.COPYFILE_EXCL);
     } catch (error) {
-      if (error.code === 'ENOENT') throw new Error('Playwright MCP did not save the screenshot to the worktree');
+      if (error.code === 'ENOENT') throw new Error('Playwright CLI did not save the screenshot to the worktree');
       if (error.code === 'EEXIST') throw new Error('Screenshot evidence already exists');
       throw error;
     }
@@ -70,4 +72,19 @@ async function captureEvidence(session, root, args) {
   }
 }
 
-export { captureEvidence };
+async function runScreenshotCli(args) {
+  const { values } = parseArgs({ args, options: {
+    session: { type: 'string' }, filename: { type: 'string' }, target: { type: 'string' },
+    'full-page': { type: 'boolean' }, scale: { type: 'string' }, 'cli-path': { type: 'string' },
+  } });
+  if (!values.session?.trim()) throw new Error('Expected --session with the name of the active browser session');
+  const cwd = process.cwd();
+  const session = { run: (...argv) => runPlaywrightCli(values.session, argv, { cwd, cliPath: values['cli-path'] }) };
+  const result = await captureEvidence(session, cwd, {
+    filename: values.filename, target: values.target, fullPage: values['full-page'], scale: values.scale,
+  });
+  console.log(JSON.stringify(result));
+  return 0;
+}
+
+export { captureEvidence, runScreenshotCli };

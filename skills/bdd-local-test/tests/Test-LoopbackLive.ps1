@@ -1,5 +1,5 @@
 param(
-    [string]$McpCli,
+    [string]$CliPath,
     [Parameter(Mandatory)][string]$ChromePath,
     [Parameter(Mandatory)][string]$OutputDir,
     [switch]$UseDefaultRegistry,
@@ -31,16 +31,18 @@ try {
             $targets += [pscustomobject]@{ id = "$repo-$name"; path = $target; isolate = $false }
         }
     }
-    $cliOptions = if ($McpCli) { @{ McpCli = [IO.Path]::GetFullPath($McpCli) } } else { @{} }
+    $cliOptions = if ($CliPath) { @("--cli-path=$([IO.Path]::GetFullPath($CliPath))") } else { @() }
     $services = foreach ($target in $targets) {
         Push-Location $target.path
         try {
-            $prepared = & "$scripts/prepare-worktree-mcp.ps1" -Ports $UiPort,$ApiPort -KeepOriginalPorts -Isolate:$target.isolate -OutputDir (Join-Path $OutputDir $target.id) @cliOptions | ConvertFrom-Json
+            $prepareArgs = @('prepare-worktree-cli', "--ports=$UiPort", "--ports=$ApiPort", '--keep-original-ports', "--output-dir=$(Join-Path $OutputDir $target.id)") + $cliOptions
+            if ($target.isolate) { $prepareArgs += '--isolate' }
+            $preparedJson = & node (Join-Path $scripts 'bdd.mjs') @prepareArgs
+            if ($LASTEXITCODE -ne 0) { throw "Cannot prepare Playwright CLI session for $($target.id)" }
+            $prepared = $preparedJson | ConvertFrom-Json
             $config = Get-Content $prepared.configPath -Raw | ConvertFrom-Json
-            $config.browser.launchOptions | Add-Member channel 'chrome'
-            $config.browser.launchOptions | Add-Member executablePath $ChromePath
-            $config.browser.launchOptions | Add-Member headless $true
-            $config | ConvertTo-Json -Depth 8 | Set-Content $prepared.configPath -Encoding utf8
+            $config.browser.launchOptions | Add-Member -NotePropertyName executablePath -NotePropertyValue $ChromePath -Force
+            $config | ConvertTo-Json -Depth 8 | Set-Content $prepared.configPath -Encoding utf8NoBOM
             [pscustomobject]@{ id = $target.id; ip = $prepared.preflight.ip; isolationId = $prepared.isolationId; prepared = $prepared }
         } finally { Pop-Location }
     }
@@ -49,11 +51,15 @@ try {
     $manifestData = @{ services = @($services); outputDir = $OutputDir; uiPort = $UiPort; apiPort = $ApiPort }
     $manifestData | ConvertTo-Json -Depth 10 | Set-Content $manifest -Encoding utf8
     & node (Join-Path $PSScriptRoot 'loopback-live.mjs') $manifest
-    if ($LASTEXITCODE -ne 0) { throw 'Live Chrome/MCP verification failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'Live Playwright CLI verification failed' }
 } finally {
     $env:BDD_LOOPBACK_REGISTRY_DIR = $previousRegistry
     $resolved = [IO.Path]::GetFullPath($fixture)
-    if ($resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath())) -and (Test-Path $resolved)) {
+    $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
+    if ((Split-Path -Parent $resolved) -ne $tempRoot -or (Split-Path -Leaf $resolved) -notmatch '^bdd-loopback-live-[0-9a-f-]{36}$') {
+        throw "Unexpected fixture cleanup target: $resolved"
+    }
+    if (Test-Path -LiteralPath $resolved) {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }

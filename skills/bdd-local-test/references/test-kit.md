@@ -1,6 +1,6 @@
 # 內建實測工具
 
-從受測 worktree 根目錄執行，使用插件的 scripts 絕對路徑。Node.js 18.2 以上可使用轉送和 API 工具。參考 [config.schema.json](../schemas/config.schema.json) 的 examples，以實際專案設定填入 .bdd/config.json 的 kit 欄位。既有的封存、遮罩與情境設定可照常使用。只提交埠、欄位名稱、環境變數名稱與可共用的相對路徑。
+從受測 worktree 根目錄執行，使用插件的 scripts 絕對路徑。Node.js 18.2 以上可使用轉送和 API 工具。UI 操作另需 Node.js 20 以上與 `@playwright/cli`。參考 [config.schema.json](../schemas/config.schema.json) 的 examples，以實際專案設定填入 .bdd/config.json 的 kit 欄位。既有的封存、遮罩與情境設定可照常使用。只提交埠、欄位名稱、環境變數名稱與可共用的相對路徑。
 
 `loadKitConfig()` 在回傳設定前依 Schema 驗證整份 JSON；`kit` 內未知欄位、型別錯誤、缺必要欄位及越界值會直接中止，錯誤列出設定檔絕對路徑與 JSON Pointer，不輸出設定值。既有非 `kit` 頂層設定仍可保留。驗證器隨插件附帶，使用者無須安裝 npm 依賴。
 
@@ -11,12 +11,13 @@
 先完成 [worktree 隔離與路由探測](worktree-loopback.md)。從同一 worktree 執行：
 
 ```powershell
-node "<skill>/scripts/route-snippet.mjs" --prepared "<本輪準備結果 JSON>"
+node "<skill>/scripts/route-snippet.mjs" --prepared "<本輪準備結果 JSON>" | Set-Content -Encoding utf8 "<本輪輸出目錄>/route.js"
+playwright-cli -s=<名稱> run-code --filename="<本輪輸出目錄>/route.js"
 ```
 
-將 stdout 當作同一個已驗證 MCP session 的 browser_run_code 的 code，再用 browser_navigate 導覽。原埠與有效埠相同時，也可用 node "<skill>/scripts/route-snippet.mjs" <slot IP>。前端與 API 埠各取自 kit.routing。驗證服務端確實收到了請求，並比對版本。
+從已通過探測的同一個具名 CLI session 執行上述片段，再以 `goto` 導覽。原埠與有效埠相同時，也可用 node "<skill>/scripts/route-snippet.mjs" <slot IP>。前端與 API 埠各取自 kit.routing。驗證服務端確實收到了請求，並比對版本。
 
-自有 Playwright 腳本從 scripts/lib/routing.mjs 匯入 routeLocalhostToSlot，呼叫 await routeLocalhostToSlot(context, { ...kit.routing, ip, portMappings })。ip 和 portMappings 取自本輪準備結果的 preflight.ip 與 portMappings。函式與 MCP 片段使用相同的 context route。重裝時更新同一 handler 的設定，保留註冊順序。空清單只解除安裝工具自己的 handler。若既有 context mock 與轉送匹配同一 URL，可使用 page.route，或在首次安裝轉送後註冊該 context mock 以取得優先序。
+自有 Playwright 腳本從 scripts/lib/routing.mjs 匯入 routeLocalhostToSlot，呼叫 await routeLocalhostToSlot(context, { ...kit.routing, ip, portMappings })。ip 和 portMappings 取自本輪準備結果的 preflight.ip 與 portMappings。函式與 CLI 片段使用相同的 context route。重裝時更新同一 handler 的設定，保留註冊順序。空清單只解除安裝工具自己的 handler。若既有 context mock 與轉送匹配同一 URL，可使用 page.route，或在首次安裝轉送後註冊該 context mock 以取得優先序。
 
 前端直接改寫目的位址，API 由 context.request 代送。HTTPS API 的憑證例外限於該次 slot 請求，代送不跟隨重新導向。轉送涵蓋 HTTP(S)，**不轉送 WebSocket（HMR）**。需要 HMR 時使用已驗證的瀏覽器 resolver。服務工作者攔截的請求也不會經過 Playwright route，受測情境需要時，以 serviceWorkers: 'block' 建立本輪 context 並確認這符合情境需求。
 

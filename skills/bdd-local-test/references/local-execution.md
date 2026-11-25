@@ -31,9 +31,11 @@
 
 範圍審核與環境確認完成後，依[並行準備服務與測資](parallel-bdd.md#並行準備服務與測資)派工。下列環境準備由服務子代理負責，已核對的就緒資訊交給測資代理及適用的實測代理。
 
-**啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `--isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `node bdd.mjs prepare-worktree-mcp --ports <原埠清單> --output-dir <本輪輸出目錄>/mcp`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。
+`@UI` 的前置套件為 Node.js 20 以上與 Microsoft 的 `@playwright/cli`。以 `npm install -g @playwright/cli@latest` 安裝，再用 `playwright-cli --help` 確認命令可用。若 `open` 回報缺少瀏覽器，依錯誤訊息以 `playwright-cli install-browser <瀏覽器>` 安裝本輪設定使用的瀏覽器，再重試。[官方安裝與命令說明](https://github.com/microsoft/playwright-cli)
 
-- 依本輪有效埠啟動服務並設定前端 API／proxy／SSR。隔離輪次使用 [專用 MCP 工作階段](worktree-loopback.md#啟動專用-mcp-工作階段)，看到本輪路由探測通過後，使用同一條連線導覽應用頁面。直接 API 驗證使用本輪 IP 與有效埠。
+**啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `--isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `node bdd.mjs prepare-worktree-cli --ports <原埠清單> --output-dir .bdd/.playwright-cli/<本輪-組別>`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。在本輪暫存目錄建立 CLI 設定 JSON，將 `outputDir` 設為該組暫存目錄的絕對路徑，從受測 checkout 執行 `playwright-cli -s=<名稱> open --config="<設定檔>"`。CLI 會自動保存可能含帳號或畫面內容的 snapshot 與日誌；各組使用 `.bdd/.playwright-cli/<本輪-組別>/` 或私有暫存目錄，與報告、`evidence/` 和封存來源分開。僅保留核准的遮罩證據，測試收尾時清理本輪 CLI 暫存檔。
+
+- 依本輪有效埠啟動服務並設定前端 API／proxy／SSR。隔離輪次使用 [專用 CLI 工作階段](worktree-loopback.md#啟動專用-cli-工作階段)，看到本輪路由探測通過後，以同一個具名 session 導覽應用頁面。直接 API 驗證使用本輪 IP 與有效埠。
 - Node 專案若在 `npm run build` 時報埠號占用，檢查 `package.json` 的 `prebuild`、`build`、`postbuild` 及它們啟動的子程序。純建置可並行。啟動 dev server、preview 或 SSR 的命令須使用本輪有效埠；若流程可拆開，先完成 build，再以有效埠啟動提供建置產物的服務。建置時若會連到 API 或把 API URL 寫入產物，也要在建置程序中套用本輪 API 目標。
 - 核對前端及 API 的實際監聽位址、程序歸屬、版本及 HTTP 回應。UI 也須確認實際 API 請求進入本輪版本。若需要另起服務，從包含本輪待測異動的工作區建置，避免測到舊版本。缺少上述證據時，相關情境列為阻塞。
 - 報告記錄原 URL、原埠與有效埠、占用判定、實際 UI／API 網址及版本證據。清理時使用同一輪記錄的有效埠。
@@ -47,17 +49,17 @@
 
 | 標籤 | 手段 | 證據 |
 |------|------|------|
-| `@UI` | 必須使用 Playwright MCP：以 `browser_navigate` 開啟受測網址，用 `browser_snapshot` 找元素、`browser_click`／輸入等工具走真實流程；如需視覺確認可暫存截圖。MCP 不可用、無法連到受測服務或無法滿足 worktree 隔離時，先排查並修復；仍無法執行則列「阻塞」，不得改用 Node Playwright、CLI 或其他瀏覽器工具替代。共用 session 的 UI 情境序列執行 | 以真實操作及可判定斷言記在報告；依核准的驗證清單保留截圖 |
+| `@UI` | 在受測工作區用同一個 `playwright-cli -s=<名稱>` 執行 `goto <受測網址>`、`snapshot`，再依最新畫面的元素 ref 執行 `fill`、`click` 等真實操作。用新的 `snapshot` 或 `run-code` 的 locator 斷言核對結果。共用 session 的操作依序執行 | 記錄實際操作、預期與觀察結果，依核准的清單保留截圖 |
 | `@API` | `curl` 帶登入取得的 token 直接呼叫端點 | 請求與回應摘要存 `evidence/<編號>_<描述>.json` 或寫進報告 |
 | `@DB` | 專案的查詢工具（如 `sqlcmd`、`psql`），**只下查詢**驗證結果 | 查詢語句與結果摘要寫進報告 |
 
 - 核准的驗證截圖使用 `evidence/<情境編號>_<簡短中文描述>.webp` 或 `.png`，檔名對應情境。其他供代理目視確認的截圖用暫存位置，記錄必要的實際畫面結果後立即刪除，不加入持久 evidence 清單。通過的 UI 情境可用 `REPORT.md#<情境編號>` 記錄操作及觀察到的實際結果作為文字證據。
-- **截圖當下就遮蓋個資**：在已驗證的 Playwright MCP 工作階段使用 `bdd/screenshot`，從受測 worktree 的 `.bdd/config.json` 套用 `mask.selectors`。確認帳號名稱、頭像、Email、電話等均已遮蓋後，以 `node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --mark --pattern <截圖檔名> --method css` 登記。畫面本來就沒有個資的用 `--method exempt --note <理由>`。
+- **截圖當下就遮蓋個資**：從受測 worktree 對已驗證的 CLI session 執行 `node "<skill 目錄>/scripts/bdd.mjs" cli-screenshot --session <名稱> --filename ".bdd/<本輪>/evidence/<檔名>.png"`，套用 `.bdd/config.json` 的 `mask.selectors`。確認帳號名稱、頭像、Email、電話等均已遮蓋後，以 `node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --mark --pattern <截圖檔名> --method css` 登記。個別頁面缺少適用 selector 時，依[截圖遮罩範例](archive.md#遮罩在截圖當下處理)使用同一 session 的 `run-code` 在截圖當下遮蓋實際欄位。確認整張畫面沒有個資時，用 `playwright-cli -s=<名稱> screenshot --filename="<本輪證據絕對路徑>.png"` 另存新檔，再以 `--method exempt --note <理由>` 登記。
   未遮罩的原圖不要留下，事後補救用 `-Apply` 套座標規則。保留的驗證截圖須有有效遮罩登記；暫存截圖若畫面含個資也必須先遮罩再查看，讀取完成後立即刪除。封存時沒有有效遮罩登記的圖片會被拒絕。
   做法見 [BDD 封存、遮罩與清理](archive.md)〈遮罩〉。
 - 前置資料盡量透過 UI 或 API 建立，走真實路徑；只有真的做不到才直接寫資料庫，並在報告註明。
 - 序列執行時依 [提前準備測資](parallel-bdd.md#序列執行時提前準備測資) 集中建立互不影響的前置資料，並在各情境使用前核對狀態。
-- `@UI` 須逐一執行情境的操作與結果確認，登入前置條件可依上述規則重用。Playwright MCP 的 `browser_navigate` 若無法連到 localhost，先查服務、埠號、HTTPS 與 MCP 所在主機；可修復就修復後重試，仍無法讓 MCP 連本機時，相關 UI 情境列「阻塞」，記錄錯誤、排查結果與解除條件，不得改用其他工具宣稱通過。
+- `@UI` 須逐一執行情境的操作與結果確認，登入前置條件可依上述規則重用。若 `goto` 無法連到 localhost，檢查服務、有效埠、HTTPS 與 CLI 瀏覽器所在主機，確認使用本輪 session 與 `configPath` 後重新探測。仍無法執行時，將受影響的 UI 情境記為「阻塞」，列出錯誤、排查結果與解除條件。
 - 每個情境的結果只有四種：**通過**、**失敗**、**阻塞**（環境或前置條件不足而無法判定）、**未執行**。
   失敗要寫「預期 vs 實際」，並盡量指出可疑的程式位置（`檔案:行號`）。
 - **「通過」只給走真實路徑驗到的結果。** 如果為了讓畫面跑起來而攔截 API 回應、塞假 token 或假權限，
@@ -74,7 +76,7 @@
 第一輪先完成真實操作、記錄「預期 vs 實際」及必要斷言；若截圖只為代理判讀失敗畫面，判讀後立即刪除。依核准的清單保留本輪截圖與對應結果。issue 交付取最終驗證輪。依步驟 7 記錄該輪報告及 `verification.json`。接著對每個失敗判斷根因：產品程式缺陷、情境誤解、服務／測試資料問題，或需要使用者提供權限的阻塞。**產品缺陷在本次任務內主動修正，不等使用者再次下令。**
 
 1. 根據需求與實際證據定位最小根因，修正受測範圍內的程式；保留原有需求與驗收標準，不刪除失敗情境、不改成假回應、不繞過登入或權限，也不改動無關功能。已知缺陷修好後移除不再適用的 `@已知缺陷`，記下修正檔案與原因。
-2. 執行受影響的單元／整合測試，從**包含本輪修正的工作區**重新建置或重啟獨立受測服務，確認新程式已由本輪測試網址提供，不動使用者原本的服務。用本輪的 Playwright MCP 重新導覽／重載頁面，避免把舊服務或快取畫面當作修正結果。
+2. 執行受影響的單元／整合測試，從**包含本輪修正的工作區**重新建置或重啟獨立受測服務，確認新程式已由本輪測試網址提供，不動使用者原本的服務。在本輪 CLI session 用 `goto` 或 `reload` 重新載入頁面，避免把舊服務或快取畫面當作修正結果。
 3. 開發中複測失敗情境與受影響的相關回歸。合併模式在最新 develop 整合後、推送前完整驗證。feature 模式在功能工作區完整執行本次全部情境與必要回歸，通過後才轉換正式分支。明確只要報告的限定任務依指定範圍驗證。分支模式未定時依[收尾模式](closeout.md#7-0-確認收尾模式)處理已授權的 issue 交付與詢問時機。局部通過記「相關情境通過」。每輪更新 `REPORT.md`、`verification.json`，以 `R<輪次>_` 保存新證據與先前的失敗紀錄。新問題回到步驟 1，持續修正與複測。
 4. 合併模式的相關情境通過即可準備整合，完整 all pass 是推送閘門。只有失敗、阻塞、未執行皆為 0，且每個情境都走真實路徑驗證，才記「all pass」。已授權回寫的任務接續完成[共用 issue 交付](closeout.md)，再依收尾條件回報。遇到無法取得的帳號／權限、非測試資料庫、無法連線的必要服務，或修正需要超出本次需求範圍的產品決策時，保留已完成的修正與證據，將剩餘情境如實列為阻塞或失敗並說明解除條件。
 
