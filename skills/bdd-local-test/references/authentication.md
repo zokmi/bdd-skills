@@ -1,6 +1,6 @@
 # BDD 測試登入
 
-通過資料庫環境確認並核對實際 UI、API 與受測版本後，按情境需要的測試帳號與角色準備登入。登入、登出、匿名存取或切換身分本身是驗收目標時，依情境要求從乾淨的隔離 session 開始並實際執行該步驟。平行組仍遵守各自的帳號、CLI session 與資料範圍。
+通過資料庫環境確認並核對受測服務的位址與版本後，按情境指定的身分操作。純 API 組可經[真實 API 登入](test-kit.md#api)取得並核對該角色的身分，匿名請求使用匿名用戶端。只有前置或驗收需要瀏覽器時才準備以下 UI 工作階段。登入、登出或切換身分本身是驗收目標時，從情境要求的初始狀態實際執行該步驟。各組維持帳號與測資隔離。
 
 1. **先重用登入。** 同一組在已連線的 CLI session 中可沿用已確認的身分。新 session 優先找專案指定的 Playwright storage state。專案未指定位置時，在 Windows 使用目前使用者的 `%LOCALAPPDATA%/bdd-skills/auth/<識別鍵>.json`。以 UTF-8 JSON 陣列的 SHA-256 作為識別鍵，固定順序放入 Git common directory 的絕對路徑、前端有效 origin、API 有效基底 URL、已確認的環境及資料庫目標、租戶、角色、測試帳號別名。各欄位須能明確對應，否則只沿用本輪 session。主機或有效埠改變就重新準備登入，不改寫快取內的 origin 或 cookie。不同 worktree 即使命中同一份檔案，也要獨立匯入，且並行時須先確認同帳號不會互踢或共享可變伺服器狀態。
 2. **匯入並驗證。** 在同一個具名 session 執行 `playwright-cli -s=<名稱> state-load "<私有狀態檔>"`，再以 `goto` 開啟受保護頁面或查詢身分端點，確認帳號、角色及租戶。隔離 worktree 也可在 `prepare-worktree-cli` 指定 `--storage-state <私有狀態檔>`，由 `cli-session` 在路由探測通過後載入。看到登入頁、401、權限或身分不符時，關閉該 session，重新開啟乾淨 session。在 worktree 重新通過探測後再登入。

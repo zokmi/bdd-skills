@@ -32,6 +32,7 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 ## 特色
 
 - 依模組維護繁體中文 Gherkin，涵蓋 UI、外部 API、事件與排程。
+- 小型單模組 TARGETED 變更由一名規劃者一次選取情境並列出各斷言的驗證手段，再由獨立審核者核對計畫後實測。[範圍選取與審核](skills/bdd-local-test/references/scenario-review.md)
 - 在本機驗證真實 UI、API 與資料庫行為，隔離 worktree，並保存可追溯的報告與遮罩後的證據。
 - 獨立審核情境範圍、可判定性、需求覆蓋與格式。
 
