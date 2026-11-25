@@ -24,30 +24,6 @@ Describe 'BDD ZIP extraction' {
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('original')))
     }
 
-    It 'rejects oversized output including aliases before publishing files' {
-        Import-Module (Join-Path $PSScriptRoot '../scripts/lib/BddExtract.psm1') -Force
-        New-ExtractFixture $zip @{ 'topic/data.txt' = 'original' } @{
-            topic = 'topic'
-            aliases = @{ 'copy.txt' = 'data.txt' }
-        }
-        { Expand-BddArchive -Archive $zip -To $to -MaxOutputBytes 12 } | Should -Throw '*位元組上限*'
-        Test-Path -LiteralPath $to | Should -BeFalse
-    }
-
-    It 'rejects a ZIP with too many entries before publishing files' {
-        Import-Module (Join-Path $PSScriptRoot '../scripts/lib/BddExtract.psm1') -Force
-        New-ExtractFixture $zip @{ 'first.txt' = 'original'; 'second.txt' = 'original' } $null
-        { Expand-BddArchive -Archive $zip -To $to -MaxEntries 1 } | Should -Throw '*項目數上限*'
-        Test-Path -LiteralPath $to | Should -BeFalse
-    }
-
-    It 'rejects unsafe names in old evidence.zip before restoring any screenshot' {
-        Import-Module (Join-Path $PSScriptRoot '../scripts/lib/BddExtract.psm1') -Force
-        New-ExtractFixture $zip ([ordered]@{ 'valid.png' = 'original'; 'nested/file.png:alternate' = 'bad' }) $null
-        { Expand-BddArchive -Archive $zip -To $to -EvidenceZip } | Should -Throw '*不安全的路徑*'
-        Test-Path -LiteralPath $to | Should -BeFalse
-    }
-
     It 'rejects unsafe manifest <field> without writing any payload' -ForEach @(
         @{ field = 'topic'; value = '../outside' }
         @{ field = 'alias destination'; value = '../outside.txt' }

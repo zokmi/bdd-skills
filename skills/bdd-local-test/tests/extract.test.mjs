@@ -45,7 +45,15 @@ test('limits count both payloads and aliases before publishing', async t => {
   const opts = fixture(t);
   await writeZip(opts.archive, archiveEntries());
   await assert.rejects(expandArchive({ ...opts, maxOutputBytes: data.length }), /位元組上限/);
-  await assert.rejects(expandArchive({ ...opts, maxEntries: 1 }));
+  assert.equal(fs.existsSync(opts.to), false);
+  await assert.rejects(expandArchive({ ...opts, maxEntries: 1 }), /ZIP 項目數上限/);
+  assert.equal(fs.existsSync(opts.to), false);
+});
+
+test('rejects unsafe legacy evidence names before publishing earlier files', async t => {
+  const opts = fixture(t);
+  await writeZip(opts.archive, [{ name: 'valid.png', data }, { name: 'nested/file.png:alternate', data }]);
+  await assert.rejects(expandArchive({ ...opts, evidenceZip: true }), /不安全的路徑/);
   assert.equal(fs.existsSync(opts.to), false);
 });
 

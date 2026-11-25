@@ -1,10 +1,6 @@
 <#
 .SYNOPSIS
-  BDD 封存相關腳本共用的函式：路徑判斷、git worktree 清單、設定檔、封存位置、封存索引與遮罩紀錄。
-
-.DESCRIPTION
-  由 archive-bdd.ps1、extract-bdd.ps1、bdd-archive-index.ps1、prune-bdd.ps1、mask-evidence.ps1 匯入。
-  只放純粹的查詢與檔案讀寫，不做任何刪除。
+  封存測試使用的 PowerShell 輔助函式，處理路徑、worktree、設定與索引。
 #>
 
 Set-StrictMode -Version 3.0
@@ -103,28 +99,6 @@ function Get-RepoTopLevel([Parameter(Mandatory)][string]$AnyPath) {
 
 <#
 .SYNOPSIS
-  把 git blob 的內容以二進位原樣寫到 Destination（不經 PowerShell 管線，避免換行與編碼被改動）。失敗時丟例外且不留檔。
-#>
-function Save-GitBlob([Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$Blob, [Parameter(Mandatory)][string]$Destination) {
-    [IO.Directory]::CreateDirectory((Split-Path $Destination -Parent)) | Out-Null
-    $psi = [Diagnostics.ProcessStartInfo]::new('git')
-    foreach ($a in @('-C', $Repo, 'cat-file', 'blob', $Blob)) { $psi.ArgumentList.Add($a) }
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.UseShellExecute = $false
-    $process = [Diagnostics.Process]::Start($psi)
-    $out = [IO.File]::Create($Destination)
-    try { $process.StandardOutput.BaseStream.CopyTo($out) } finally { $out.Dispose() }
-    $err = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
-    if ($process.ExitCode -ne 0) {
-        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
-        throw "無法取出 git blob $Blob：$err"
-    }
-}
-
-<#
-.SYNOPSIS
   讀取 BDD 設定檔 .bdd/config.json。
   先找輸出目錄上一層（也就是本 worktree 的 .bdd/），沒有再找主 checkout 的 .bdd/。
   回傳 @{ path = 設定檔路徑或 $null; data = 設定內容（PSCustomObject，可能為空物件） }。
@@ -179,35 +153,6 @@ function Resolve-ArchiveRoot {
 
 <#
 .SYNOPSIS
-  確認目標路徑不在受測 repo 的任何 worktree（含主 checkout）之內；違反時丟例外。
-  若位於其他 git 工作區且未被該 repo 忽略，回傳警告字串陣列（不阻擋）。
-#>
-function Assert-OutsideRepoWorktrees {
-    param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$RepoPath)
-    $worktrees = @(Get-RepoWorktrees $RepoPath)
-    if (-not $worktrees.Count) { throw "無法取得 worktree 清單：$RepoPath" }
-    foreach ($w in $worktrees) {
-        if (Test-PathUnder $Target $w) {
-            throw "封存位置不可在受測 repo 的 worktree 內（$w）；刪除或清理該 worktree 會連封存檔一起移除：$Target"
-        }
-    }
-    $warnings = @()
-    $probe = Get-NormalizedPath $Target
-    while ($probe -and -not (Test-Path -LiteralPath $probe)) { $probe = Split-Path $probe -Parent }
-    if ($probe) {
-        $other = git -C $probe rev-parse --show-toplevel 2>$null
-        if ($LASTEXITCODE -eq 0 -and $other) {
-            $null = git -C $probe check-ignore -q -- $Target 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                $warnings += "封存位置位於另一個 git 工作區 $(($other | Select-Object -First 1).Trim())，且未被忽略；請確認它不會被提交或清理"
-            }
-        }
-    }
-    $warnings
-}
-
-<#
-.SYNOPSIS
   讀取封存索引 index.jsonl 的所有事件（每行一個 JSON）。檔案不存在時回傳空陣列。
 #>
 function Read-ArchiveIndex([Parameter(Mandatory)][string]$Root) {
@@ -226,19 +171,6 @@ function Add-ArchiveIndexEvent([Parameter(Mandatory)][string]$Root, [Parameter(M
     $line = $Event | ConvertTo-Json -Depth 6 -Compress
     $output = $line | & node (Join-Path $PSScriptRoot 'archive-index.mjs') (Get-NormalizedPath $Root) 2>&1
     if ($LASTEXITCODE -ne 0) { throw ($output -join [Environment]::NewLine) }
-}
-
-<#
-.SYNOPSIS
-  從封存檔所在目錄往上最多 4 層尋找 index.jsonl，回傳封存庫根目錄；找不到丟例外。
-#>
-function Find-ArchiveIndexRoot([Parameter(Mandatory)][string]$ArchivePath) {
-    $dir = Split-Path (Get-NormalizedPath $ArchivePath) -Parent
-    for ($i = 0; $i -lt 4 -and $dir; $i++) {
-        if (Test-Path -LiteralPath (Join-Path $dir 'index.jsonl')) { return $dir }
-        $dir = Split-Path $dir -Parent
-    }
-    throw "找不到封存索引 index.jsonl（從 $ArchivePath 往上 4 層），請以 -ArchiveRoot 指定"
 }
 
 <#
@@ -273,88 +205,6 @@ function Get-ArchiveStates([Parameter(Mandatory)][string]$Root) {
         }
     }
     @($states.Values | ForEach-Object { [pscustomobject]$_ })
-}
-
-<#
-.SYNOPSIS
-  讀取 BDD 輸出目錄的遮罩紀錄 masking.json。
-  格式：{ "files": { "evidence/R1_x.png": { "method": "css|rect|exempt", "sha256": "...", "note": "...", "at": "..." } } }。
-#>
-function Read-MaskLedger([Parameter(Mandatory)][string]$BddDir) {
-    $file = Join-Path $BddDir 'masking.json'
-    $files = [ordered]@{}
-    if (Test-Path -LiteralPath $file) {
-        $data = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json
-        if ($data.PSObject.Properties['files']) {
-            foreach ($p in $data.files.PSObject.Properties) { $files[$p.Name] = $p.Value }
-        }
-    }
-    $files
-}
-
-<#
-.SYNOPSIS
-  寫回遮罩紀錄 masking.json（鍵依序排序，方便比對差異）。
-#>
-function Save-MaskLedger([Parameter(Mandatory)][string]$BddDir, [Parameter(Mandatory)]$Files) {
-    $sorted = [ordered]@{}
-    foreach ($k in @($Files.Keys | Sort-Object { $_ } -CaseSensitive)) { $sorted[$k] = $Files[$k] }
-    $json = [ordered]@{ files = $sorted } | ConvertTo-Json -Depth 6
-    [IO.File]::WriteAllText((Join-Path $BddDir 'masking.json'), $json + "`n", $script:Utf8NoBom)
-}
-
-<#
-.SYNOPSIS
-  取得遮罩設定：required（預設 true，未遮罩的圖片不得封存）、selectors（截圖前要遮的 CSS 選擇器）、rects（事後依座標塗色的規則）。
-#>
-function Get-MaskConfig($ConfigData) {
-    $mask = Get-ConfigValue $ConfigData 'mask'
-    [pscustomobject]@{
-        required = [bool](Get-ConfigValue $mask 'required' $true)
-        selectors = @(Get-ConfigValue $mask 'selectors' @())
-        rects = @(Get-ConfigValue $mask 'rects' @())
-    }
-}
-
-<#
-.SYNOPSIS
-  取得 .bdd/config.json 的 webp 設定：auto（預設，有 Pillow 就轉無損 WebP）或 off（不轉）。其他值丟例外。
-#>
-function Get-WebpSetting($ConfigData) {
-    $value = "$(Get-ConfigValue $ConfigData 'webp' 'auto')".ToLowerInvariant()
-    if ($value -notin 'auto', 'off') { throw ".bdd/config.json 的 webp 只能是 auto 或 off：$value" }
-    $value
-}
-
-<#
-.SYNOPSIS
-  列出 BDD 輸出目錄下 evidence/ 的檔案，回傳相對於輸出目錄、以 / 分隔的路徑與 FileInfo。
-#>
-function Get-EvidenceFiles([Parameter(Mandatory)][string]$BddDir) {
-    $evidence = Join-Path $BddDir 'evidence'
-    if (-not (Test-Path -LiteralPath $evidence -PathType Container)) { return @() }
-    @(Get-ChildItem -LiteralPath $evidence -Recurse -File -Force | ForEach-Object {
-        [pscustomobject]@{ relative = [IO.Path]::GetRelativePath($BddDir, $_.FullName).Replace('\', '/'); file = $_ }
-    })
-}
-
-<#
-.SYNOPSIS
-  判斷檔名是否為需要遮罩檢查的圖片。
-#>
-function Test-ImageFile([Parameter(Mandatory)][string]$Path) {
-    $script:ImageExtensions -contains [IO.Path]::GetExtension($Path).ToLowerInvariant()
-}
-
-<#
-.SYNOPSIS
-  把 evidence.zip 裡的項目名稱轉成相對於輸出目錄的路徑（補上 evidence/ 前綴），並拒絕跳脫目錄的名稱。
-#>
-function ConvertTo-EvidenceEntryPath([Parameter(Mandatory)][string]$EntryName) {
-    $name = $EntryName.Replace('\', '/').TrimStart('/')
-    if ($name -match '(^|/)\.\.(/|$)' -or $name -match '^[A-Za-z]:') { throw "evidence.zip 含不安全的路徑：$EntryName" }
-    if (-not $name.StartsWith('evidence/', $script:IgnoreCase)) { $name = "evidence/$name" }
-    $name
 }
 
 Export-ModuleMember -Function * -Variable ImageExtensions, PrecompressedExtensions, ArchiveStatuses

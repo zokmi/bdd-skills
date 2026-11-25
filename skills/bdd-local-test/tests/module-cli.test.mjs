@@ -20,17 +20,22 @@ test('ESM lint reports manifest, orphan, prefix and scenario tag errors', t => {
   write('api/orders/MODULE.md', manifest);
   write('other/MODULE.md', manifest);
   write('broken/MODULE.md', 'no front matter');
+  write('bad-prefix/MODULE.md', manifest.replace('prefix: OR', 'prefix: or'));
+  write('no-paths/MODULE.md', '---\nprefix: NP\npaths:\n---');
   write('orphan/example.feature', 'Feature: orphan');
   write('api/orders/test.feature', [
     '@#1 @UI', 'Feature: resets feature tags',
     '@AB-02', 'Scenario: incorrect prefix and missing tags',
     '@AB-02 @#1 @UI', 'Scenario: duplicate',
     '@OR-01 @OR-02', 'Scenario: ambiguous',
+    '@OR-1 @#1 @UI', 'Scenario: single-digit ID',
+    '@#1 @UI', 'Scenario: missing ID',
   ].join('\n'));
   const rules = lint(moduleIndex(root)).map(p => p.rule).sort();
   assert.deepEqual(rules, [
-    'module-format', 'duplicate-prefix', 'orphan-feature', 'unknown-prefix', 'missing-issue-tag',
-    'missing-method-tag', 'unknown-prefix', 'duplicate-id', 'scenario-id',
+    'module-format', 'module-format', 'module-format', 'duplicate-prefix', 'orphan-feature',
+    'unknown-prefix', 'missing-issue-tag', 'missing-method-tag', 'unknown-prefix', 'duplicate-id',
+    'scenario-id', 'scenario-id', 'scenario-id',
   ].sort());
 });
 
@@ -46,8 +51,8 @@ test('native module queries and quality plans share the same scenario index', t 
   ].join('\n'));
   const feature = path.join(dir, 'read.feature');
   fs.writeFileSync(feature, [
-    '功能：查詢', '@OR-01 @#8 @API', '場景：訂單', '@OR-02 @#1 @core @DB',
-    'Scenario Outline: core', '@OR-03 @#80 @UI', 'Scenario: unrelated',
+    '@OR', '功能：查詢', '@OR-01 @#8 @API', '場景：訂單', '@OR-02 @#1 @core @DB @UI',
+    '場景大綱：core', '@OR-03 @#80 @UI', 'Scenario Outline: unrelated',
   ].join('\r\n'));
   git('add', '.');
   git('-c', 'user.name=fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
@@ -64,8 +69,12 @@ test('native module queries and quality plans share the same scenario index', t 
   fs.writeFileSync(path.join(repo, 'src/訂單1.js'), 'test');
   const plan = (...extra) => run(0, 'quality-plan', '--base', 'HEAD', '--review-risk', 'MEDIUM',
     '--review-reason', 'reviewed', '--static-passed', '--impact-complete', '--issue', '8', ...extra);
-  assert.equal(plan().level, 'TARGETED');
-  assert.deepEqual(plan().selected[0].scenarios.map(s => s.ids[0]), ['OR-01', 'OR-02']);
+  const targeted = plan();
+  assert.equal(targeted.level, 'TARGETED');
+  assert.deepEqual(targeted.selected[0].scenarios, [
+    { line: 4, title: '訂單', tags: ['@OR-01', '@#8', '@API'], ids: ['OR-01'], methods: ['API'] },
+    { line: 6, title: 'core', tags: ['@OR-02', '@#1', '@core', '@DB', '@UI'], ids: ['OR-02'], methods: ['DB', 'UI'] },
+  ]);
   assert.equal(plan('--full').selected[0].scenarios.length, 3);
   fs.appendFileSync(feature, '\n@OR-09 @#8 @API\n場景：已移除');
   assert.deepEqual(run(1, 'modules', '--lint').problems.map(p => p.rule), ['reused-id']);

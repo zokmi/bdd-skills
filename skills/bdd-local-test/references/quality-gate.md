@@ -25,48 +25,12 @@ loopback HTTP 服務及臨時 SQLite 讀取同一筆訂單，分開呼叫及批�
 
 2026-11-25 在 Windows 以 Node.js 24.22.1、Playwright CLI 0.1.25 與 Chrome 實測。兩種策略各三輪，每輪六項斷言皆通過。分開呼叫每輪五次，中位數 11,538 ms；批次每輪三次，中位數 7,464 ms。兩者皆計入 `open` 與 `close`。另以錯誤的 UI 預期值執行批次測試，回報 `FAILED` 並以狀態碼 1 結束。
 
-以下為切換至 Playwright CLI 之前，以 Playwright MCP 0.0.84 在 Windows 取得的歷史基準。2026-11-03 實測六輪均通過。分開呼叫耗時 2959、2945、2826 ms，
-批次呼叫耗時 2328、2531、2152 ms。中位數由 2945 降至 2328 ms（20.95%）。
-每輪 Playwright MCP 呼叫（含關閉瀏覽器）由 4 降至 2。每輪均執行
-UI 標題和狀態、API HTTP 狀態與 JSON 內容類型和欄位、DB 唯讀查詢。
-API 與 DB 各執行一次。計時不含服務與 MCP 初始化。
-此基準由確定性腳本驅動，沒有模型 Token 遙測。
-量測範圍為同集呼叫策略，完整 Skill 的 Agent 與 Hook 尚需另行驗收。
+## Claude Code Hook 驗證
 
-## Claude Hook 同集驗收（歷史 MCP 量測）
+變更技能的批次操作指引後，可從插件 repo 根目錄執行下列命令。測試需要已登入的 Claude Code CLI 與上述基準測試環境。`UserPromptSubmit` Hook 會載入目前工作區的技能，讓代理選擇操作方式，並回傳該輪的斷言結果、耗時及 Token 用量。
 
-驗收用 UserPromptSubmit Hook 載入指定版本的 Skill，由 Agent 依 Skill
-選擇分步或批次。每版三輪，所有六項 fixture 斷言均通過，且沒有工具權限拒絕。
-候選版另以錯誤 UI 預期值注入故障，回傳 FAILED，測試腳本以非零結束碼停止。
+```powershell
+pwsh -NoProfile -File skills/bdd-local-test/tests/Test-QualityAgent.ps1 -Version candidate
+```
 
-| 指標（中位數） | 1.5.12 | 候選版 |
-| --- | ---: | ---: |
-| Agent 耗時（ms） | 18692 | 15252 |
-| Fixture 耗時（ms） | 2745 | 2103 |
-| MCP 呼叫數 | 4 | 2 |
-| 一般輸入 Token | 6 | 6 |
-| 輸出 Token | 425 | 413 |
-| 快取寫入 Token | 8901 | 9167 |
-| 快取讀取 Token | 91194 | 91444 |
-
-Fixture 耗時降低 23.39%，Agent 耗時降低 18.40%，輸出 Token 降低
-2.82%。端到端耗時及 Token 尚未達 20% 目標。此 Hook 用於驗收，
-產品端任務完成 Hook 另需整合驗證。
-
-## 專案 Hook 發布驗收（歷史 MCP 量測）
-
-Claude Code 由隔離專案的 .claude/settings.json 載入驗收 Hook。
-固定策略比較與自主策略驗收各版本各三輪，十二輪均通過同一組六項斷言。
-兩組均注入錯誤 UI 預期值並驗證 FAILED。候選版自主故障首測重跑，
-強化故障輪指示後重測，只執行一次並回報 FAILED。
-
-| 固定策略中位數 | 1.5.12 | 1.5.13 |
-| --- | ---: | ---: |
-| Agent 耗時（ms） | 20001 | 17524 |
-| Fixture 耗時（ms） | 2950 | 2029 |
-| MCP 呼叫 | 4 | 2 |
-| Token 合計 | 98973 | 63927 |
-
-Token 合計按輪加總一般輸入、輸出、快取讀取與快取寫入，再取中位數。
-固定策略 Agent 耗時降低 12.38%，Token 約降低 35.4%。
-自主策略用於核對選擇及覆蓋，候選版三輪均選批次。
+加上 `-InjectFailure` 可確認代理在錯誤預期下只執行一次，並回報 `FAILED`。

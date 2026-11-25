@@ -1,11 +1,6 @@
 <#
 .SYNOPSIS
-  BDD 封存的打包管線：建立封存項目、依內容去重、寫入 ZIP 並逐檔驗證。
-  後續任務在此加入情境快照、WebP 轉檔、改寫 Markdown 連結與遮罩紀錄。
-
-.DESCRIPTION
-  由 archive-bdd.ps1 與 recompress-bdd.ps1 匯入。封存項目（PackEntry）把「封存內的相對路徑」與「實體檔位置」分開，
-  讓轉檔或改寫後的檔案可以先放在暫存目錄，再以原本的相對路徑收進 ZIP。
+  封存測試使用的 PowerShell 工具，建立封存項目、轉換圖片、依內容去重及驗證 ZIP。
 #>
 
 Set-StrictMode -Version 3.0
@@ -40,30 +35,6 @@ function New-PackEntry {
         size = $item.Length
         lastWrite = $item.LastWriteTime
         extra = $copy
-    }
-}
-
-<#
-.SYNOPSIS
-  依 verification.json 的 scenarios，取出受測 commit 當時的模組情境檔放進暫存目錄，回傳對應的封存項目。
-  封存內路徑為 features/<去掉 .bdd/modules/ 的路徑>；extra 記錄 scenarioPath、blob、role。
-  紀錄的 blob 為 null（受測時未提交）或與 <Commit>:<path> 不同時丟例外。
-#>
-function Get-ScenarioSnapshotEntries {
-    param(
-        [Parameter(Mandatory)][string]$RepoRoot,
-        [Parameter(Mandatory)][string]$Commit,
-        [object[]]$Scenarios = @(),
-        [Parameter(Mandatory)][string]$Staging
-    )
-    foreach ($s in $Scenarios) {
-        if (-not $s.blob) { throw "情境檔受測時尚未提交，無法取出受測版本：$($s.path)；請 commit 後重新以 node bdd.mjs verification --record 記錄" }
-        $actual = git -C $RepoRoot rev-parse --verify --quiet "${Commit}:$($s.path)"
-        if (-not $actual -or "$actual".Trim() -ne $s.blob) { throw "情境檔在受測 commit $Commit 的版本與紀錄不符：$($s.path)" }
-        $relative = 'features/' + ($s.path.Replace('\', '/') -replace '^\.bdd/modules/', '')
-        $destination = Join-Path $Staging $relative
-        Save-GitBlob -Repo $RepoRoot -Blob $s.blob -Destination $destination
-        New-PackEntry -Relative $relative -Path $destination -Extra ([ordered]@{ scenarioPath = $s.path; blob = $s.blob; role = $s.role })
     }
 }
 
@@ -126,86 +97,6 @@ function Convert-PackEntriesToWebp {
         if ($batch) { Stop-WebpBatch $batch }
     }
     [pscustomobject]@{ entries = @($result); converted = @($converted); skipped = @($skipped) }
-}
-
-<#
-.SYNOPSIS
-  把相對路徑逐段做 URL 編碼（Markdown 連結常見的中文檔名寫法）。
-#>
-function ConvertTo-UrlPath([Parameter(Mandatory)][string]$Relative) {
-    ($Relative -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
-}
-
-<#
-.SYNOPSIS
-  把封存內 .md 檔裡指向已轉檔截圖的連結改成 .webp（原字串與 URL 編碼的字串都換）；改寫後的檔放暫存目錄，工作區不動。
-  回傳 entries 與 rewritten（md 檔 → 取代次數）。
-#>
-function Update-PackMarkdownLinks {
-    param([Parameter(Mandatory)][object[]]$Entries, [object[]]$Converted = @(), [Parameter(Mandatory)][string]$Staging)
-    $rewritten = [ordered]@{}
-    if (-not $Converted.Count) { return [pscustomobject]@{ entries = $Entries; rewritten = $rewritten } }
-    $pairs = [Collections.Generic.List[object]]::new()
-    foreach ($c in $Converted) {
-        $pairs.Add(@($c.from, $c.to))
-        $encodedFrom = ConvertTo-UrlPath $c.from
-        if ($encodedFrom -ne $c.from) { $pairs.Add(@($encodedFrom, (ConvertTo-UrlPath $c.to))) }
-    }
-    $out = foreach ($e in $Entries) {
-        if ([IO.Path]::GetExtension($e.relative) -ine '.md') { $e; continue }
-        $text = [IO.File]::ReadAllText($e.path, [Text.Encoding]::UTF8)
-        $count = 0
-        foreach ($p in $pairs) {
-            $n = [regex]::Matches($text, [regex]::Escape($p[0])).Count
-            if ($n) { $text = $text.Replace($p[0], $p[1]); $count += $n }
-        }
-        if (-not $count) { $e; continue }
-        $destination = Join-Path $Staging "md/$($e.relative)"
-        [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
-        [IO.File]::WriteAllText($destination, $text, [Text.UTF8Encoding]::new($false))
-        $rewritten[$e.relative] = $count
-        $new = New-PackEntry -Relative $e.relative -Path $destination -Extra $e.extra
-        $new.lastWrite = $e.lastWrite
-        $new
-    }
-    [pscustomobject]@{ entries = @($out); rewritten = $rewritten }
-}
-
-<#
-.SYNOPSIS
-  把封存內 masking.json 的遮罩登記改到轉檔後的 .webp：鍵改名、sha256 改成 WebP 的雜湊、加 derivedFrom（原檔名與原雜湊）。
-  沒有 masking.json 或沒有轉檔時原樣回傳。
-#>
-function Update-PackMaskLedger {
-    param([Parameter(Mandatory)][object[]]$Entries, [object[]]$Converted = @(), [Parameter(Mandatory)][string]$Staging)
-    $ledgerEntry = $Entries | Where-Object { $_.relative -eq 'masking.json' } | Select-Object -First 1
-    if (-not $ledgerEntry -or -not $Converted.Count) { return $Entries }
-    $data = [IO.File]::ReadAllText($ledgerEntry.path, [Text.Encoding]::UTF8) | ConvertFrom-Json -AsHashtable
-    $files = if ($data.ContainsKey('files') -and $data.files) { $data.files } else { [ordered]@{} }
-    $byName = @{}
-    foreach ($e in $Entries) { $byName[$e.relative] = $e }
-    foreach ($c in $Converted) {
-        if (-not $files.Contains($c.from)) { continue }
-        $old = $files[$c.from]
-        if ($old -isnot [Collections.IDictionary] -or $old['sha256'] -ine $byName[$c.to].extra.originalSha256) { continue }
-        $record = [ordered]@{}
-        foreach ($k in $old.Keys) { $record[$k] = $old[$k] }
-        $record.sha256 = $byName[$c.to].sha256
-        $record.derivedFrom = [ordered]@{ name = $c.from; sha256 = $old.sha256 }
-        $files.Remove($c.from)
-        $files[$c.to] = $record
-    }
-    $sorted = [ordered]@{}
-    foreach ($k in @($files.Keys | Sort-Object { $_ } -CaseSensitive)) { $sorted[$k] = $files[$k] }
-    $destination = Join-Path $Staging 'mask/masking.json'
-    [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
-    [IO.File]::WriteAllText($destination, (([ordered]@{ files = $sorted }) | ConvertTo-Json -Depth 8) + "`n", [Text.UTF8Encoding]::new($false))
-    @($Entries | ForEach-Object {
-        if ($_.relative -ne 'masking.json') { $_; return }
-        $n = New-PackEntry -Relative 'masking.json' -Path $destination -Extra $_.extra
-        $n.lastWrite = $_.lastWrite
-        $n
-    })
 }
 
 <#
