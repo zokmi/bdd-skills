@@ -49,17 +49,36 @@ async function patchIds(root, shas) {
   return map;
 }
 
+function* readCommitBatches(root, args, shas) {
+  if (!shas.length) return;
+  try {
+    yield git(root, [...args, '--stdin', '--no-walk=unsorted', '--'], [0], shas.join('\n') + '\n');
+  } catch (error) {
+    // Keep the per-process output limit even when the combined history exceeds it.
+    if (error.code !== 'ENOBUFS' || shas.length === 1) throw error;
+    const middle = Math.floor(shas.length / 2);
+    yield* readCommitBatches(root, args, shas.slice(0, middle));
+    yield* readCommitBatches(root, args, shas.slice(middle));
+  }
+}
+
 export async function commitInfo(root, shas) {
   const patchMap = await patchIds(root, shas);
-  return shas.map(sha => ({
-    sha, patchId: patchMap.get(sha) || '', subject: git(root, ['log', '-1', '--format=%s', sha, '--']).trim(),
-  }));
+  const subjects = new Map();
+  for (const output of readCommitBatches(root, ['log', '--format=%H%x00%s', '-z'], shas)) {
+    const fields = output.split('\0');
+    for (let i = 0; i + 1 < fields.length; i += 2) subjects.set(fields[i], fields[i + 1].trim());
+  }
+  return shas.map(sha => {
+    if (!subjects.has(sha)) throw new Error('git log did not return commit ' + sha);
+    return { sha, patchId: patchMap.get(sha) || '', subject: subjects.get(sha) };
+  });
 }
 
 export function changedPaths(root, shas) {
   const files = new Set();
-  for (const sha of shas) {
-    for (const p of git(root, ['show', '--format=', '--name-only', '-z', sha, '--']).split('\0')) {
+  for (const output of readCommitBatches(root, ['show', '--format=', '--name-only', '-z'], shas)) {
+    for (const p of output.split('\0')) {
       if (p && !p.startsWith('.bdd/')) files.add(p);
     }
   }

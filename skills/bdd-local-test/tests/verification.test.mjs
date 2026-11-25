@@ -111,3 +111,42 @@ test('empty-range records do not validate diverged histories, including reposito
   git('commit', '-qm', 'diverged change');
   assert.equal(run(1, '--check').verdict, 'rerun');
 });
+
+test('records touched paths and ordered subjects with one Git query each across explicit commits', t => {
+  const { repo, output, git, args } = fixture(t);
+  git('switch', '-qc', 'side');
+  fs.writeFileSync(path.join(repo, 'only-on-side'), 'side');
+  git('add', '.');
+  git('commit', '-qm', 'side');
+  git('switch', 'main');
+
+  const name = process.platform === 'win32' ? '[暫存] file' : '[暫存]\nfile';
+  fs.writeFileSync(path.join(repo, name), 'temporary');
+  fs.mkdirSync(path.join(repo, '.bdd'));
+  fs.writeFileSync(path.join(repo, '.bdd', 'note'), 'internal');
+  git('add', '-f', '.');
+  git('commit', '-qm', '加入暫存檔');
+  const add = git('rev-parse', 'HEAD');
+  fs.unlinkSync(path.join(repo, name));
+  git('add', '-u');
+  git('commit', '-qm', 'remove');
+  const remove = git('rev-parse', 'HEAD');
+  git('merge', '--no-ff', '-qm', 'merge side', 'side');
+  const merge = git('rev-parse', 'HEAD');
+
+  const selected = [remove, merge, add, remove];
+  const trace = path.join(output, 'git-trace.ndjson');
+  const res = spawnSync(process.execPath, args('--record', '--commits', selected.join(',')), {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  assert.equal(res.status, 0, res.stderr + res.stdout);
+  const round = JSON.parse(res.stdout);
+  assert.deepEqual(round.commits.map(c => c.sha), selected);
+  assert.deepEqual(round.commits.map(c => c.subject), ['remove', 'merge side', '加入暫存檔', 'remove']);
+  assert.deepEqual(round.files, { [name]: null });
+
+  const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start').map(event => event.argv);
+  assert.equal(queries.filter(argv => argv.includes('show') && argv.includes('--name-only')).length, 1);
+  assert.equal(queries.filter(argv => argv.includes('log')).length, 1);
+});

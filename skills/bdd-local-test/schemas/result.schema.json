@@ -12,6 +12,10 @@
       "type": "string",
       "minLength": 1
     },
+    "approvedPlanSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "groupId": {
       "type": "string",
       "minLength": 1

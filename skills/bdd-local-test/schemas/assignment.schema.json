@@ -12,6 +12,15 @@
       "type": "string",
       "minLength": 1
     },
+    "approvedPlan": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "pattern": "\\S" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["path", "sha256"],
+      "additionalProperties": false
+    },
     "groupId": {
       "type": "string",
       "minLength": 1
@@ -64,6 +73,22 @@
           "id": {
             "type": "string",
             "minLength": 1
+          },
+          "assertions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "requirement": { "$ref": "#/$defs/assertionText" },
+                "action": { "$ref": "#/$defs/assertionText" },
+                "expected": { "$ref": "#/$defs/assertionText" },
+                "method": { "$ref": "#/$defs/assertionText" },
+                "evidence": { "$ref": "#/$defs/assertionText" }
+              },
+              "required": ["requirement", "action", "expected", "method", "evidence"],
+              "additionalProperties": false
+            }
           },
           "kind": {
             "type": "string",
@@ -331,5 +356,11 @@
     "dependsOn",
     "outputDir"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "assertionText": { "type": "string", "pattern": "\\S" }
+  },
+  "if": { "required": ["approvedPlan"] },
+  "then": { "properties": { "scenarios": { "minItems": 1, "items": { "required": ["assertions"] } } } },
+  "else": { "properties": { "scenarios": { "items": { "not": { "required": ["assertions"] } } } } }
 }

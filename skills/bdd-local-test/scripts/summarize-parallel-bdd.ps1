@@ -6,13 +6,15 @@
   eligibleForReview 不代表已審核證據或已取得 issue 更新授權。
 #>
 param(
-    [Parameter(Mandatory)][string[]]$AssignmentFiles,
-    [Parameter(Mandatory)][string]$OutputDir
+    [string[]]$AssignmentFiles = @(),
+    [Parameter(Mandatory)][string]$OutputDir,
+    [string]$PlanFile
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $cliArgs = @('parallel-summary', "--output-dir=$OutputDir")
+if ($PlanFile) { $cliArgs += "--plan=$PlanFile" }
 foreach ($file in $AssignmentFiles) { $cliArgs += "--assignment=$file" }
 & node (Join-Path $PSScriptRoot 'bdd.mjs') @cliArgs
 exit $LASTEXITCODE
