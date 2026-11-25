@@ -39,5 +39,8 @@ emit('config-validator.mjs', standalone(ajv, ajv.compile(readSchema('config'))))
 // The result schema declares the array types outside its conditional minItems rules.
 const assignment = readSchema('assignment');
 const result = readSchema('result');
-const contracts = new Ajv({ schemas: [assignment, result], strictTypes: false, code });
-emit('parallel-validators.mjs', standalone(contracts, { assignment: assignment.$id, result: result.$id }));
+const approvedPlan = readSchema('approved-plan');
+const contracts = new Ajv({ schemas: [assignment, result, approvedPlan], strictTypes: false, code });
+emit('parallel-validators.mjs', standalone(contracts, {
+  assignment: assignment.$id, result: result.$id, approvedPlan: approvedPlan.$id,
+}));

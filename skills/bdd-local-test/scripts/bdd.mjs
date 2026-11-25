@@ -42,6 +42,10 @@ async function dispatch(command, args) {
       const { verificationCommand } = await import('./lib/verification.mjs');
       return verificationCommand(args);
     }
+    case 'parallel-plan': {
+      const { parallelPlan } = await import('./lib/parallel-plan.mjs');
+      return parallelPlan(args);
+    }
     case 'parallel-summary': {
       const { parallelSummary } = await import('./lib/parallel-summary.mjs');
       return parallelSummary(args);
@@ -79,7 +83,7 @@ async function dispatch(command, args) {
       return 0;
     }
     default:
-      throw new Error('Expected an internal BDD command: modules, quality-plan, verification, parallel-summary, gitignore, loopback-slot, prepare-worktree-cli, stop-slot-services, cli-session, cli-probe, cli-screenshot, archive, archive-index, recompress, prune, extract, or mask-evidence.');
+      throw new Error('Expected an internal BDD command: modules, quality-plan, verification, parallel-plan, parallel-summary, gitignore, loopback-slot, prepare-worktree-cli, stop-slot-services, cli-session, cli-probe, cli-screenshot, archive, archive-index, recompress, prune, extract, or mask-evidence.');
   }
 }
 
@@ -90,7 +94,7 @@ export async function runCli([command, ...args]) {
     const output = command === 'gitignore' ? console.log : console.error;
     const payload = command === 'cli-session' ? { status: 'blocked', error: error.message } : { error: error.message };
     output(JSON.stringify(payload));
-    process.exitCode = ['gitignore', 'modules', 'verification', 'parallel-summary', 'stop-slot-services'].includes(command) ? 2 : 1;
+    process.exitCode = ['gitignore', 'modules', 'verification', 'parallel-plan', 'parallel-summary', 'stop-slot-services'].includes(command) ? 2 : 1;
   }
 }
 

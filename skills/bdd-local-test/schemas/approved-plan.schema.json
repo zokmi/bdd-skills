@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bdd-local-test.local/schemas/approved-plan.schema.json",
+  "title": "Approved parallel BDD plan",
+  "type": "object",
+  "properties": {
+    "contractVersion": { "const": 1 },
+    "runId": { "type": "string", "pattern": "\\S" },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "groupId": { "type": "string", "pattern": "\\S" },
+          "repo": { "type": "string", "pattern": "\\S" },
+          "scenarios": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "https://bdd-local-test.local/schemas/assignment.schema.json#/properties/scenarios/items",
+              "properties": {
+                "feature": { "pattern": "\\S" },
+                "id": { "pattern": "\\S" }
+              },
+              "required": ["assertions"]
+            }
+          }
+        },
+        "required": ["groupId", "repo", "scenarios"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["contractVersion", "runId", "groups"],
+  "additionalProperties": false
+}

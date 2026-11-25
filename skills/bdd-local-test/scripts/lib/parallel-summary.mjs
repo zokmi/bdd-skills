@@ -5,12 +5,15 @@ import { parseArgs } from 'node:util';
 import { commit, repoRoot } from './git-changes.mjs';
 import { git, repoIdentity } from './verification-git.mjs';
 import { readContract } from './parallel-contracts.mjs';
+import {
+  approvedRepoKey, approvedScenarioKey as scenarioKey, compareApprovedPlan,
+  loadApprovedPlan, matchesPlanReference, sameApprovedScenario,
+} from './parallel-plan.mjs';
 import { artifact, checkModifiedPaths, checkSeparateDirectories, evidenceChecker, pathKey, readJson } from './summary-evidence.mjs';
 
 const statusFields = { passed: 'passed', failed: 'failed', blocked: 'blocked', 'not-run': 'notRun' };
 const counts = () => ({ passed: 0, failed: 0, blocked: 0, 'not-run': 0 });
 const key = (...parts) => JSON.stringify(parts.map(s => s.toLowerCase()));
-const scenarioKey = s => JSON.stringify([pathKey(s.feature), s.id.toLowerCase()]);
 const roundKey = (feature, id, role) => JSON.stringify([pathKey(feature), id.toLowerCase(), role]);
 const label = s => s.feature + '|' + s.id;
 
@@ -86,6 +89,7 @@ function groupResults(root, a, group, issues, versions, repo, repoId) {
     for (const field of ['runId', 'groupId', 'attempt']) {
       if (result[field] !== a[field]) throw new Error('Result identity mismatch: ' + field);
     }
+    if (result.approvedPlanSha256 !== a.approvedPlan?.sha256) throw new Error('Result approved plan digest differs from assignment');
     group.result = resultPath;
   } catch (err) {
     issues.push(a.groupId + ': ' + err.message);
@@ -103,18 +107,35 @@ function groupResults(root, a, group, issues, versions, repo, repoId) {
   }
 }
 
-export function summarize(assignments, destination) {
-  const issues = [];
+export function summarize(assignments, destination, planFile) {
+  const records = assignments.map(file => readContract(file, 'assignment'));
+  const selectedPlan = planFile ?? records.find(a => a.approvedPlan)?.approvedPlan.path;
+  const plan = selectedPlan ? loadApprovedPlan(selectedPlan) : null;
+  const issues = plan ? compareApprovedPlan(plan, records) : [];
   const groups = [];
   const scenarios = [];
+  const approvedGroups = new Map();
+  for (const group of plan?.groups ?? []) {
+    const rows = new Map();
+    for (const s of group.scenarios) {
+      const row = { groupId: group.groupId, repo: group.repo, ...s, status: 'not-run' };
+      scenarios.push(row);
+      rows.set(scenarioKey(s), row);
+    }
+    approvedGroups.set(group.groupId, { repo: approvedRepoKey(group.repo), rows, submissions: 0 });
+  }
+  for (const a of records) {
+    const group = approvedGroups.get(a.groupId);
+    if (group) group.submissions++;
+  }
   const seen = new Set();
   const versions = new Set();
   const identities = new Set();
   const repos = new Map();
   const total = counts();
-  let runId;
-  for (const file of assignments) {
-    const a = readContract(file, 'assignment');
+  let runId = plan?.runId;
+  for (const [index, file] of assignments.entries()) {
+    const a = records[index];
     const root = path.resolve(a.outputDir);
     checkSeparateDirectories(root, destination);
     runId ??= a.runId;
@@ -137,6 +158,9 @@ export function summarize(assignments, destination) {
     const { repo, repoId } = repos.get(target);
     const results = groupResults(root, a, group, issues, versions, repo, repoId);
     const assigned = new Set();
+    const approved = approvedGroups.get(a.groupId);
+    const bound = approved?.submissions === 1 && a.runId === runId && matchesPlanReference(plan, a) &&
+      approved.repo === approvedRepoKey(a.target.repo);
     for (const s of a.scenarios) {
       const id = scenarioKey(s);
       if (assigned.has(id)) issues.push('Duplicate assigned scenario: ' + label(s));
@@ -144,7 +168,8 @@ export function summarize(assignments, destination) {
       const globalId = JSON.stringify([repoId, id]);
       if (seen.has(globalId)) {
         issues.push('Repeated cross-group scenario requires manual review: ' + label(s));
-        continue;
+        // A stray submission cannot reserve a scenario owned by an approved group.
+        if (!plan) continue;
       }
       seen.add(globalId);
       let status = 'not-run';
@@ -152,15 +177,20 @@ export function summarize(assignments, destination) {
       if (!actual) issues.push('Missing or unacceptable scenario result: ' + a.groupId + '/' + label(s));
       else if (actual.kind !== s.kind) issues.push('Scenario kind mismatch: ' + label(s));
       else status = actual.status;
-      scenarios.push({ groupId: a.groupId, repo: a.target.repo, ...s, status });
-      total[status]++;
+      if (!plan) {
+        scenarios.push({ groupId: a.groupId, repo: a.target.repo, ...s, status });
+      } else if (bound) {
+        const row = approved.rows.get(id);
+        if (row && sameApprovedScenario(row, s)) row.status = status;
+      }
     }
     for (const [id, s] of results) if (!assigned.has(id)) issues.push('Unexpected result scenario: ' + label(s));
   }
   if (versions.size > 1) issues.push('Multiple tested versions: keep separate; no combined pass eligibility.');
+  for (const s of scenarios) total[s.status]++;
   return {
     contractVersion: 1, runId, eligibleForReview: scenarios.length > 0 && !issues.length && total.passed === scenarios.length,
-    counts: total, issues, groups, scenarios,
+    ...(plan && { approvedPlan: plan.reference }), counts: total, issues, groups, scenarios,
     limitation: 'Structural acceptance only: main agent must review evidence content, environment, dependencies and final integration. Resource release is not inferred.',
   };
 }
@@ -195,14 +225,14 @@ function writeSummary(dir, summary) {
 export function parallelSummary(args) {
   try {
     const { values } = parseArgs({ args, options: {
-      assignment: { type: 'string', multiple: true }, 'output-dir': { type: 'string' },
+      assignment: { type: 'string', multiple: true, default: [] }, plan: { type: 'string' }, 'output-dir': { type: 'string' },
     } });
-    if (!values.assignment?.length || values.assignment.some(file => !file) || !values['output-dir']) {
-      throw new Error('Expected --assignment and --output-dir.');
+    if ((!values.assignment.length && !values.plan) || values.assignment.some(file => !file) || values.plan === '' || !values['output-dir']) {
+      throw new Error('Expected --assignment or --plan, and --output-dir.');
     }
     const dir = path.resolve(values['output-dir']);
     if (fs.lstatSync(dir, { throwIfNoEntry: false })) throw new Error('OutputDir must be a new directory; existing summaries are never overwritten.');
-    const summary = summarize(values.assignment, dir);
+    const summary = summarize(values.assignment, dir, values.plan);
     console.log(writeSummary(dir, summary));
     return summary.issues.length ? 1 : 0;
   } catch (err) {
