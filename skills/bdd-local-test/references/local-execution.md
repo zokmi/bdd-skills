@@ -31,13 +31,15 @@
 
 範圍審核與環境確認完成後，依[並行準備服務與測資](parallel-bdd.md#並行準備服務與測資)派工。下列環境準備由服務子代理負責，已核對的就緒資訊交給測資代理及適用的實測代理。
 
+依核准清單查出所需服務的原始 URL、設定來源、啟動命令及適用的 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `--isolate`。各組共用本輪服務管理者交付的 IP 與有效埠。整輪只需 API 時，管理者可用 `node bdd.mjs loopback-slot --ports <API 原埠>` 取得對應。純 API 組直接核對服務版本、真實身分及資料範圍；瀏覽器及路由探測僅在操作或必要前置需要 UI 時準備。
+
 `@UI` 的前置套件為 Node.js 20 以上與 Microsoft 的 `@playwright/cli`。以 `npm install -g @playwright/cli@latest` 安裝，再用 `playwright-cli --help` 確認命令可用。若 `open` 回報缺少瀏覽器，依錯誤訊息以 `playwright-cli install-browser <瀏覽器>` 安裝本輪設定使用的瀏覽器，再重試。[官方安裝與命令說明](https://github.com/microsoft/playwright-cli)
 
-**啟動前確認服務網址與埠號**：查證前端／API 原始 URL、設定來源、啟動命令及 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `--isolate`。依 [worktree 隔離](worktree-loopback.md) 執行 `node bdd.mjs prepare-worktree-cli --ports <原埠清單> --output-dir .bdd/.playwright-cli/<本輪-組別>`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。在本輪暫存目錄建立 CLI 設定 JSON，將 `outputDir` 設為該組暫存目錄的絕對路徑，從受測 checkout 執行 `playwright-cli -s=<名稱> open --config="<設定檔>"`。CLI 會自動保存可能含帳號或畫面內容的 snapshot 與日誌；各組使用 `.bdd/.playwright-cli/<本輪-組別>/` 或私有暫存目錄，與報告、`evidence/` 和封存來源分開。僅保留核准的遮罩證據，測試收尾時清理本輪 CLI 暫存檔。
+**本輪需要 UI 時**，依 [worktree 隔離](worktree-loopback.md) 執行 `node bdd.mjs prepare-worktree-cli --ports <原埠清單> --output-dir .bdd/.playwright-cli/<本輪-組別>`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。在本輪暫存目錄建立 CLI 設定 JSON，將 `outputDir` 設為該組暫存目錄的絕對路徑，從受測 checkout 執行 `playwright-cli -s=<名稱> open --config="<設定檔>"`。CLI 會自動保存可能含帳號或畫面內容的 snapshot 與日誌；各組使用 `.bdd/.playwright-cli/<本輪-組別>/` 或私有暫存目錄，與報告、`evidence/` 和封存來源分開。僅保留核准的遮罩證據，測試收尾時清理本輪 CLI 暫存檔。
 
-- 依本輪有效埠啟動服務並設定前端 API／proxy／SSR。隔離輪次使用 [專用 CLI 工作階段](worktree-loopback.md#啟動專用-cli-工作階段)，看到本輪路由探測通過後，以同一個具名 session 導覽應用頁面。直接 API 驗證使用本輪 IP 與有效埠。
+- 依本輪有效埠啟動服務。需要前端時設定 API／proxy／SSR。隔離工作區的 UI 組使用[專用 CLI 工作階段](worktree-loopback.md#啟動專用-cli-工作階段)，在路由探測通過後以同一個具名 session 導覽應用頁面。
 - Node 專案若在 `npm run build` 時報埠號占用，檢查 `package.json` 的 `prebuild`、`build`、`postbuild` 及它們啟動的子程序。純建置可並行。啟動 dev server、preview 或 SSR 的命令須使用本輪有效埠；若流程可拆開，先完成 build，再以有效埠啟動提供建置產物的服務。建置時若會連到 API 或把 API URL 寫入產物，也要在建置程序中套用本輪 API 目標。
-- 核對前端及 API 的實際監聽位址、程序歸屬、版本及 HTTP 回應。UI 也須確認實際 API 請求進入本輪版本。若需要另起服務，從包含本輪待測異動的工作區建置，避免測到舊版本。缺少上述證據時，相關情境列為阻塞。
+- 核對受測服務的實際監聽位址、程序歸屬、版本及 HTTP 回應。UI 有呼叫 API 時也須確認請求進入本輪版本。若需要另起服務，從包含本輪待測異動的工作區建置，避免測到舊版本。缺少上述證據時，相關情境列為阻塞。
 - 報告記錄原 URL、原埠與有效埠、占用判定、實際 UI／API 網址及版本證據。清理時使用同一輪記錄的有效埠。
 - 啟動失敗、缺帳號、缺資料庫權限 → 相關情境標「阻塞」並寫明原因，其餘能跑的照跑，不要整批放棄。
 
@@ -45,12 +47,12 @@
 
 需要已登入身分的情境，先走 [登入自動化](authentication.md) 並確認真實帳號與角色。登入、登出及權限本身是驗收目標時，依情境明確建立初始狀態並實際操作要驗證的步驟。
 
-依情境的標籤選手段：
+依核准清單中[各斷言的手段](feature-guide.md#逐項選擇驗證手段)執行。混合情境由同一組完成原訂操作，依各列取證。API 可驗的服務端邊界可直接呼叫真實端點；要求實際點擊或觀察畫面的列使用 Playwright CLI。
 
 | 標籤 | 手段 | 證據 |
 |------|------|------|
 | `@UI` | 在受測工作區用同一個 `playwright-cli -s=<名稱>` 執行 `goto <受測網址>`、`snapshot`，再依最新畫面的元素 ref 執行 `fill`、`click` 等真實操作。用新的 `snapshot` 或 `run-code` 的 locator 斷言核對結果。共用 session 的操作依序執行 | 記錄實際操作、預期與觀察結果，依核准的清單保留截圖 |
-| `@API` | `curl` 帶登入取得的 token 直接呼叫端點 | 請求與回應摘要存 `evidence/<編號>_<描述>.json` 或寫進報告 |
+| `@API` | 使用內建 `createApi` 或專案的真實 API 工具，以情境指定身分直接呼叫端點 | 記錄經篩選的請求與回應摘要，必要時依同筆 ID 查回業務結果 |
 | `@DB` | 專案的查詢工具（如 `sqlcmd`、`psql`），**只下查詢**驗證結果 | 查詢語句與結果摘要寫進報告 |
 
 - 核准的驗證截圖使用 `evidence/<情境編號>_<簡短中文描述>.webp` 或 `.png`，檔名對應情境。其他供代理目視確認的截圖用暫存位置，記錄必要的實際畫面結果後立即刪除，不加入持久 evidence 清單。通過的 UI 情境可用 `REPORT.md#<情境編號>` 記錄操作及觀察到的實際結果作為文字證據。

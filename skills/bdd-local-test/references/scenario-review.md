@@ -4,12 +4,19 @@
 
 新增、修改、刪除、改名或整併情境文件，以及修改影響情境歸屬／規則的 `MODULE.md` 後，自動依 [bdd-scenario-audit](../../bdd-scenario-audit/SKILL.md) 執行獨立子代理合規檢查。可與本節審核合併同一次派工，交付本 skill 路徑及原始材料，分別記錄文件合規與情境審核結論；合規檢查本身不啟動選測準備或實測。必修修正後複審受影響範圍，無代理時列阻塞。這是代理工作流程關卡，不是外部編輯的即時檔案監聽。
 
-## 送審前依序派兩次唯讀準備任務
+## 送審前選取範圍與編製清單
 
-1. **選取本輪 BDD 情境範圍**：主代理先派子代理讀 issue 原文或原始需求、驗收條件、實際 diff、模組情境及本輪驗證階段。依 [情境等級與必測範圍](scenario-priority.md) 判定變更類型及適用必測項，交回選入情境的編號、等級、檔案與理由，並列必要回歸、略過理由及覆蓋缺口。主代理依缺口補寫情境並 lint，再固定送審範圍。
-2. **產出預計驗證項目清單**：主代理再派子代理依確認後的範圍與情境逐項整理清單。依 [實測順序](execution-workflow.md#issue-優先驗證與回寫) 標出核心異動、必要前置與排序依據。每項列出需求或驗收條件、情境編號（工程驗證填「不適用」）、前置條件與操作、可判定的預期結果、驗證手段及預計保留的證據。對外業務行為採 UI／API／DB 手段；工程調整列適合的技術檢查。UI 寫明截圖時點與應呈現的結果。純 API／DB 寫明請求回應或查詢結果。
+主代理先依[品質閘門](quality-gate.md)確認本輪模式與影響範圍，再決定準備派工方式。
 
-主代理在送審前把兩份輸出寫入本輪 `REPORT.md`〈預計驗證項目〉，並記錄各步的子代理。準備代理只做靜態分析。獨立審核者須未參與選取、清單編寫、情境撰寫或實測。任一步無法派出子代理，記錄阻塞並保留已完成的材料。
+- **小型 TARGETED** 適用於靜態檢查通過、只有一個受影響模組、已核對共用程式與外溢影響且相依關係明確的變更。候選清單須有品質計畫採用的本單標籤選取或完整的「變更檔案 → 情境」對應。無單號時可採用後者。符合條件時，派一名唯讀規劃者在同一次任務完成下列兩項，直接交獨立審核。
+- **其餘需要實測的輪次** 依序派兩次唯讀準備任務，包括選測器回退整個模組的 TARGETED。先由子代理完成選取，再依固定的範圍派子代理編製清單。規劃中若發現其他受影響模組、缺漏映射或未明依賴，重新判定品質閘門與派工方式。
+
+兩種派工都要交付以下內容。
+
+1. **範圍與依據**。讀 issue 或原始需求、驗收條件、實際 diff、模組情境與驗證階段，依[情境等級與必測範圍](scenario-priority.md)列出選入情境的編號、等級、檔案與理由，以及必要回歸、略過理由和覆蓋缺口。需要補寫情境時先由主代理處理並 lint，再依更新的內容完成清單。
+2. **逐項驗證清單**。每個斷言對應需求、情境編號（工程驗證填「不適用」）、必要前置與操作、可判定的預期結果，以及能直接驗證該結果的手段和證據。[逐項選擇驗證手段](feature-guide.md#逐項選擇驗證手段)說明何時採 UI、API 或 DB。UI 寫明可觀察結果，需要留圖時列出截圖時點。API／DB 寫明請求回應或查詢結果。工程調整列技術檢查。依[實測順序](execution-workflow.md#issue-優先驗證與回寫)標出核心異動、必要前置與排序依據。
+
+主代理在本輪 `REPORT.md`〈預計驗證項目〉記錄派工方式、規劃者、選取依據與逐項清單。獨立審核者須未參與選取、清單編寫、情境撰寫或實測。必要的派工不可用時記錄阻塞，保留已完成的材料。
 
 ## 什麼時候要審
 
@@ -48,7 +55,7 @@ Authoring rules: <skill directory>/references/feature-guide.md.
 Read the requirements and the actual code changes independently. Check the following.
 1. Cover externally observable business requirements with success and applicable failure scenarios. List engineering changes separately as technical checks. Follow the requirement in each Then step (「那麼」). Tag known mismatches with @已知缺陷 and record the reason.
 2. Check applicable branches against feature-guide.md, including validation, error messages, permissions, states, empty values, duplicates, and missing records. Report missing business branches with file:line locations. Treat SQL-only constraints and data migrations as engineering checks.
-3. Verify that expected outcomes are observable and determinate, exact message text is correct, and each @UI, @API, or @DB method can verify the expected outcome.
+3. For each assertion, verify that its expected outcome is observable and determinate and that the assigned method and evidence prove that outcome. Require UI observation for presentation or interaction, and check real API responses or database results for the assertions assigned to those methods. Include exact message text where required.
 4. Map each planned check to a requirement. Use scenarios for external business behavior and technical checks with evidence for engineering changes. Use 「不適用（工程驗證）」 as the scenario ID for engineering checks. Verify that actions and expectations are testable and that the screenshot timing and API or database evidence can support the assertions.
 5. Check the file header, numbering, issue and verification-method tags, and BDD- prefix. Each scenario should verify one behavior. Keep credentials and connection strings out of the files.
 

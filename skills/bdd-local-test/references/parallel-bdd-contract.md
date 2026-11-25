@@ -12,6 +12,8 @@
 
 主代理在啟動子代理前寫入。`scenarios` 必須列出每個編號，不用「全部」等不明確值；`kind` 僅可為 `changed` 或 `regression`。路徑 `feature` 相對於該 repo，以 `/` 分隔；workDir／outputDir／instructions 使用絕對路徑。`dependsOn` 是本輪前置 groupId，依賴尚未解除不能執行受影響情境。
 
+在 `instructions` 附上含核准〈預計驗證項目〉的報告絕對路徑。執行者按情境編號讀取全部斷言、手段及證據要求。混合情境仍只派給一組，結果以一筆情境引用各列的證據；所有必要斷言都有通過證據才可填 `passed`。純 API 組沒有 UI 前置時，`environment.uiUrl`、`browser` 物件內各欄及結果的 `execution.uiUrl` 填 `null`。
+
 ```json
 {
   "contractVersion": 1,
@@ -19,7 +21,7 @@
   "groupId": "schedule-ui",
   "attempt": 1,
   "agent": "bdd_schedule_ui",
-  "instructions": ["C:/skills/bdd-local-test/SKILL.md"],
+  "instructions": ["C:/skills/bdd-local-test/SKILL.md", "C:/repos/app/.bdd/5410-schedule/REPORT.md"],
   "requirements": [{"source": "issue:5410", "text": "列表顯示需求指定的賽制名稱"}],
   "scenarios": [{"feature": ".bdd/modules/organizer/schedule-settings/list.feature", "id": "SS-13", "kind": "changed"}],
   "target": {

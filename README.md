@@ -31,6 +31,7 @@ codex plugin add bdd-skills@zokmi-bdd-skills
 ## Features
 
 - Maintain Traditional Chinese Gherkin scenarios by module for UI, external APIs, events, and scheduled jobs.
+- For small single-module TARGETED changes, one planner selects scenarios and records how each assertion will be verified. An independent reviewer checks the plan before testing. [Scope selection and review](skills/bdd-local-test/references/scenario-review.md)
 - Verify real UI, API, and database behavior locally. Isolate worktrees and retain traceable reports and redacted evidence.
 - Independently audit scenario scope, verifiability, requirements coverage, and format.
 

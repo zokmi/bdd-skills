@@ -10,7 +10,7 @@
 
 原埠可用時沿用，被占用時自動分配臨時埠。`portMappings` 列出每個 `originalPort` 與 `effectivePort`，`effectivePorts` 供本輪啟動與清理，`occupied` 保留原埠占用證據。要求固定埠或已確認沿用本工作區原埠服務時，加 `--keep-original-ports`。同一工作區的測試輪次序列執行。
 
-執行順序：確認資料庫授權與上述啟動契約 → 檢查分配 IP／原 port 占用 → 以臨時參數啟動本輪前後端服務 → 核對實際監聽 IP／port、PID、工作區與版本 → 啟動帶 `chromiumArg` 的具名 CLI session 的 Chrome／Chromium → 導覽本輪 localhost URL，驗證 UI 與真實 API 請求。
+確認資料庫授權與上述啟動契約後，先檢查分配 IP 與原埠占用，以臨時參數啟動本輪所需服務，再核對實際監聽 IP、埠、PID、工作區及版本。純 API 組直接呼叫該 IP 與有效埠，保存實際請求結果。需要 UI 操作的組另外啟動帶 `chromiumArg` 的具名 CLI session，完成路由探測後導覽應用頁面，驗證 UI 與真實 API 請求。
 
 此處「Chrome 導轉」指獨立瀏覽器程序的 `--host-resolver-rules` localhost 對應；它不會啟動 API、不改寫 port，也不是 HTTP 重新導向或假 API 回應。服務須由上述命令另行啟動；若使用既有啟動／導轉服務，先查證其真實命令、路由與程序歸屬，仍須滿足相同契約，不臆造工具。
 

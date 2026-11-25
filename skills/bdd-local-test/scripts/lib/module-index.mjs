@@ -31,26 +31,46 @@ function metadata(file) {
 function readFeature(file, root, hashFeatures) {
   const bytes = fs.readFileSync(file);
   const scenarios = [];
+  const unindexedScenarios = [];
+  const scenarioIds = tags => tags.filter(t => /^@[A-Z]{2,3}-\d{2,}$/.test(t)).map(t => t.slice(1));
   let tags = [];
+  let lastTagLine;
+  let docString;
   const lines = bytes.toString('utf8').split(/\r\n?|\n/);
   for (const [i, raw] of lines.entries()) {
     const line = raw.trim();
+    const delimiter = line.slice(0, 3);
+    if (docString) {
+      if (delimiter === docString) docString = undefined;
+      continue;
+    }
+    if (delimiter === '"""' || delimiter === '```') {
+      docString = delimiter;
+      continue;
+    }
     if (!line || line.startsWith('#')) continue;
     if (line.startsWith('@')) {
       tags.push(...line.split(/\s+/).filter(tag => tag.startsWith('@')));
+      lastTagLine = i + 1;
       continue;
     }
-    const title = line.match(/^(?:場景大綱|場景|劇本大綱|劇本|Scenario Outline|Scenario)\s*[:：]\s*(.*)$/i);
+    const title = line.match(/^(?:場景大綱|場景|劇本大綱|劇本|Scenario Outline|Scenario Template|Scenario|Example)\s*[:：]\s*(.*)$/i);
+    const ids = scenarioIds(tags);
     if (title) {
       scenarios.push({
-        line: i + 1, title: title[1], tags,
-        ids: tags.filter(t => /^@[A-Z]{2,3}-\d{2,}$/.test(t)).map(t => t.slice(1)),
+        line: i + 1, title: title[1], tags, ids,
         methods: tags.filter(t => ['@UI', '@API', '@DB'].includes(t)).map(t => t.slice(1)),
       });
+    } else if (ids.length) {
+      unindexedScenarios.push({ line: i + 1, ids });
     }
     tags = [];
   }
   const result = { feature: relative(root, file), scenarios };
+  const trailingIds = scenarioIds(tags);
+  if (trailingIds.length) unindexedScenarios.push({ line: lastTagLine, ids: trailingIds });
+  if (unindexedScenarios.length) result.unindexedScenarios = unindexedScenarios;
+  if (unindexedScenarios.length || !scenarios.length || docString) result.requiresFullFeature = true;
   if (hashFeatures) result.sha256 = createHash('sha256').update(bytes).digest('hex').toUpperCase();
   return result;
 }
@@ -95,7 +115,9 @@ function nextId(m) {
     if (match && match[1] === m.prefix && BigInt(match[2]) > max) max = BigInt(match[2]);
   }
   for (const id of m.removed) consider(id);
-  for (const f of m.features()) for (const s of f.scenarios) for (const id of s.ids) consider(id);
+  for (const f of m.features()) {
+    for (const s of f.scenarios.concat(f.unindexedScenarios || [])) for (const id of s.ids) consider(id);
+  }
   return m.prefix + '-' + String(max + 1n).padStart(2, '0');
 }
 
