@@ -34,8 +34,117 @@ function fixture(t) {
   return { repo, output, git, base, run, args };
 }
 
+test('recorded worktrees retain rollback, untracked and scenario deltas across same-HEAD feedback', t => {
+  const { repo, git, base } = fixture(t);
+  git('config', 'core.autocrlf', 'false');
+  const write = (file, value) => {
+    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+    fs.writeFileSync(path.join(repo, file), value);
+  };
+  const feature = '.bdd/modules/shop/price.FEATURE';
+  const original = 'Feature: Shop\n@OR-01 @#42 @API\nScenario: Refund\nThen refund is pending\n' +
+    '@OR-02 @#42 @API\nScenario: Invoice\nThen invoice is open\n';
+  write(feature, original);
+  write('.bdd/modules/shop/MODULE.md', '---\nprefix: OR\npaths:\n  - src/**\n---\n');
+  write('src/prior.js', 'at HEAD\n');
+  write('src/current.js', 'at HEAD\n');
+  write('src/obsolete.js', 'removed before testing\n');
+  write('.bdd/old-result/REPORT.md', 'old output accidentally tracked\n');
+  write('.bdd/old-result/notes.txt', 'staged deletion of old output\n');
+  write('.gitignore', 'private.env\ntracked-fixture.tmp\n');
+  git('add', '.');
+  git('commit', '-qm', 'issue baseline');
+  const branchHead = git('rev-parse', 'HEAD');
+  git('switch', '--detach', '-q', branchHead);
+  git('commit', '--allow-empty', '-qm', 'tested detached checkout');
+  const head = git('rev-parse', 'HEAD');
+
+  write('src/prior.js', 'staged only\n');
+  git('add', 'src/prior.js');
+  write('src/prior.js', 'actually tested\n');
+  write('src/retained.bin', Buffer.from([0, 1, 9, 255]));
+  write('src/removed.js', 'exists only in first feedback\n');
+  git('rm', '-q', '.bdd/old-result/notes.txt');
+  fs.unlinkSync(path.join(repo, 'src/obsolete.js'));
+  write('tracked-fixture.tmp', 'staged fixture\n');
+  git('add', '-f', 'tracked-fixture.tmp');
+  write('tracked-fixture.tmp', 'working fixture\n');
+  write('private.env', 'ignored fixture\n');
+  write('.bdd/42-topic/evidence/private.txt', 'test evidence\n');
+  write(feature, original.replace('pending', 'sent'));
+  const command = (...args) => spawnSync(process.execPath, [cli, ...args], { cwd: repo, encoding: 'utf8' });
+  const ok = (...args) => {
+    const result = command(...args);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const record = 'src/verification.json'; // Output may share a directory with application files.
+  const stat = () => git('rev-parse', ':src/prior.js');
+  const staged = stat();
+  const round = ok('verification', '--record', '--dir', 'src', '--issue', '42', '--base', base);
+  const snapshot = round.worktreeSnapshot;
+  assert.equal(snapshot.head, head);
+  assert.equal(git('rev-parse', snapshot.ref), snapshot.tree);
+  assert.equal(git('show', snapshot.tree + ':src/prior.js'), 'actually tested');
+  assert.equal(git('show', snapshot.tree + ':tracked-fixture.tmp'), 'working fixture');
+  assert.deepEqual(execFileSync('git', ['cat-file', 'blob', snapshot.tree + ':src/retained.bin'], { cwd: repo }),
+    Buffer.from([0, 1, 9, 255]));
+  for (const name of ['private.env', '.bdd/42-topic/evidence/private.txt', '.bdd/old-result', record, 'src/obsolete.js']) {
+    assert.equal(git('ls-tree', '-r', '--name-only', snapshot.tree, '--', name), '');
+  }
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(stat(), staged);
+  git('update-index', '--assume-unchanged', 'src/current.js');
+  assert.match(command('verification', '--record', '--dir', 'src', '--base', head).stderr, /assume-unchanged/);
+  git('update-index', '--no-assume-unchanged', 'src/current.js');
+  const args = ['quality-plan', '--issue', '42', '--previous-verification', record,
+    '--review-reason', 'batch change', '--impact-complete', '--static-passed'];
+  assert.deepEqual(ok(...args).paths, []); // Unchanged untracked and staged-only versions are excluded.
+
+  write('src/prior.js', 'at HEAD\n');
+  write('src/current.js', 'second batch\n');
+  fs.unlinkSync(path.join(repo, 'src/removed.js'));
+  write(feature, original.replace('open', 'paid')); // restore OR-01, update OR-02
+  git('gc', '--prune=now', '--quiet');
+  const noMappings = ok(...args);
+  assert.deepEqual(noMappings.paths, [feature, 'src/current.js', 'src/prior.js', 'src/removed.js']);
+  assert.deepEqual([noMappings.base, noMappings.baseHead, noMappings.head], [snapshot.tree, head, head]);
+  assert.equal(noMappings.bddStatus, 'BLOCKED');
+  assert.deepEqual(noMappings.selected.flatMap(f => f.scenarios.flatMap(s => s.ids)).sort(), ['OR-01', 'OR-02']);
+  const selected = ok(...args, '--impact-scenario', 'src/prior.js=OR-01',
+    '--impact-scenario', 'src/removed.js=OR-01', '--impact-scenario', 'src/current.js=OR-02');
+  assert.equal(selected.bddStatus, 'PENDING');
+  assert.equal(stat(), staged);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+
+  assert.match(command(...args, '--base', head).stderr, /--base/);
+  const wrongIssue = args.map(v => v === '42' ? '41' : v);
+  assert.match(command(...wrongIssue).stderr, /單號/);
+  const other = path.join(path.dirname(repo), 'other');
+  git('clone', '-q', repo, other);
+  assert.notEqual(command(...args, '--repo', other).status, 0);
+  const rounds = fs.readFileSync(path.join(repo, record), 'utf8');
+  fs.writeFileSync(path.join(repo, record), JSON.stringify({ rounds: [round, { head }] }));
+  assert.match(command(...args).stderr, /快照/);
+  fs.writeFileSync(path.join(repo, record), rounds);
+  git('switch', '--detach', '-q', branchHead);
+  git('reflog', 'expire', '--expire=now', '--all');
+  git('gc', '--prune=now', '--quiet');
+  const next = ok(...args);
+  assert.equal(next.baseHead, head);
+  assert.equal(next.head, branchHead);
+  assert.equal(ok('verification', '--record', '--dir', 'src', '--base', next.baseHead).base, head);
+  fs.writeFileSync(path.join(repo, record), rounds);
+  const headRef = snapshot.ref.replace(/\/tree$/, '/head');
+  git('update-ref', '-d', headRef);
+  assert.match(command(...args).stderr, /快照/);
+  git('update-ref', headRef, head);
+  git('update-ref', '-d', snapshot.ref);
+  assert.match(command(...args).stderr, /快照/);
+});
+
 test('records concurrent rounds without losing BOM-prefixed legacy data or top-level fields', async t => {
-  const { repo, output, run, base, args } = fixture(t);
+  const { repo, output, run, base, args, git } = fixture(t);
   const file = path.join(output, 'verification.json');
   assert.equal(run(2, '--check').verdict, 'no-record');
   fs.writeFileSync(file, '\uFEFF' + JSON.stringify({ source: 'legacy', rounds: [{ note: 'preserve' }] }));
@@ -50,7 +159,11 @@ test('records concurrent rounds without losing BOM-prefixed legacy data or top-l
   assert.equal(run(0, '--check').verdict, 'current');
   const malformed = '{"rounds":{}}';
   fs.writeFileSync(file, malformed);
+  fs.writeFileSync(path.join(repo, 'new.js'), 'a different candidate');
+  const snapshotRefs = () => git('for-each-ref', '--format=%(refname)', 'refs/bdd/worktree-snapshots');
+  const refsBefore = snapshotRefs();
   run(2, '--record', '--base', base);
+  assert.equal(snapshotRefs(), refsBefore);
   assert.equal(fs.readFileSync(file, 'utf8'), malformed);
   assert.deepEqual(fs.readdirSync(output), ['verification.json']);
 });
@@ -89,6 +202,56 @@ test('records stable Git patch IDs, detects cherry-picks, rewrites, missing comm
   git('add', '.');
   git('commit', '--amend', '--no-edit', '-q');
   assert.equal(run(1, '--check').commits[0].status, 'subject');
+});
+
+test('records scoped scenario IDs and tracks dirty, new and changed features from any repository directory', t => {
+  const { git, repo, base, output, run, args } = fixture(t);
+  const module = '.bdd/modules/orders';
+  const first = module + '/read.feature';
+  const second = module + '/write.feature';
+  const third = module + '/new.feature';
+  fs.mkdirSync(path.join(repo, module), { recursive: true });
+  fs.writeFileSync(path.join(repo, first), '功能: list\n@OR-01 @#1 @UI\n場景: 一\n@OR-02 @#1 @UI\n場景: 二\n');
+  fs.writeFileSync(path.join(repo, second), 'Feature: write\n@OR-05 @#1 @API\nScenario: saved\n@OR-06 @#1 @API\nScenario: rejected\n');
+  git('add', '.');
+  git('commit', '-qm', 'features');
+  const record = () => run(0, '--record', '--base', base, '--changed-scenarios', first,
+    '--regression-scenarios', second + '::OR-05', '--passed', '3');
+  const initial = record();
+  assert.deepEqual(initial.scenarios, [
+    { path: first, role: 'changed', ids: ['OR-01', 'OR-02'], blob: git('rev-parse', 'HEAD:' + first) },
+    { path: second, role: 'regression', ids: ['OR-05'], blob: git('rev-parse', 'HEAD:' + second) },
+  ]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'verification.json'))).rounds[0].scenarios, initial.scenarios);
+  git('commit', '--allow-empty', '-qm', 'unrelated change');
+  assert.equal(run(0, '--check').verdict, 'still-valid');
+  fs.appendFileSync(path.join(repo, first), 'Then check new value\n');
+  const nested = spawnSync(process.execPath, args('--check'), { cwd: path.join(repo, module), encoding: 'utf8' });
+  assert.equal(nested.status, 1, nested.stderr);
+  assert.deepEqual(JSON.parse(nested.stdout).dirtyPaths, [first]);
+  const dirty = record();
+  assert.deepEqual(dirty.dirtyPaths, [first]);
+  assert.equal(dirty.scenarios[0].blob, initial.scenarios[0].blob);
+  git('commit', '-qam', 'change selected scenario');
+  const changed = run(1, '--check');
+  assert.equal(changed.verdict, 'rerun');
+  assert.deepEqual(changed.changedScenarios, [first]);
+  fs.writeFileSync(path.join(repo, third), 'Feature: new\n@OR-09 @#2 @API\nScenario: nine\n');
+  const fresh = run(0, '--record', '--base', base, '--changed-scenarios', third);
+  assert.deepEqual(fresh.scenarios[0], { path: third, role: 'changed', ids: ['OR-09'], blob: null });
+  run(2, '--record', '--base', base, '--changed-scenarios', module + '/missing.feature');
+});
+
+test('captured out-of-scope working changes still require a rerun after cleanup', t => {
+  const { repo, base, run } = fixture(t);
+  const extra = path.join(repo, 'local-settings.json');
+  fs.writeFileSync(extra, '{}');
+  const round = run(0, '--record', '--capture-revision', '--base', base);
+  assert.equal(round.revision.head, base);
+  assert.match(round.revision.dirtySha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(round.dirtyPaths, []);
+  fs.unlinkSync(extra);
+  assert.equal(run(1, '--check').verdict, 'rerun');
 });
 
 test('empty-range records do not validate diverged histories, including repositories with the same remote', t => {

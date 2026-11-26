@@ -13,14 +13,14 @@
 
 這一節保留舊版的封存、索引及還原規格，供辨識歷史資料。截圖遮罩仍適用於目前的 Redmine 交付流程。腳本位於 `<skill 目錄>/scripts/`，輸出為 JSON。
 
-| 用途 | Node.js 入口 | 相容的 PowerShell 入口 |
-|---|---|---|
-| 登記、檢查及補套截圖遮罩 | `bdd.mjs mask-evidence` | `mask-evidence.ps1` |
-| 建立封存並登記索引 | `bdd.mjs archive` | `archive-bdd.ps1` |
-| 還原封存及別名 | `bdd.mjs extract` | `extract-bdd.ps1` |
-| 查詢、匯入及標記封存 | `bdd.mjs archive-index` | `bdd-archive-index.ps1` |
-| 重新壓縮既有封存 | `bdd.mjs recompress` | `recompress-bdd.ps1` |
-| 預覽或執行證據清理 | `bdd.mjs prune` | `prune-bdd.ps1` |
+| 用途 | Node.js 入口 |
+|---|---|
+| 登記、檢查及補套截圖遮罩 | `bdd.mjs mask-evidence` |
+| 建立封存並登記索引 | `bdd.mjs archive` |
+| 還原封存及別名 | `bdd.mjs extract` |
+| 查詢、匯入及標記封存 | `bdd.mjs archive-index` |
+| 重新壓縮既有封存 | `bdd.mjs recompress` |
+| 預覽或執行證據清理 | `bdd.mjs prune` |
 
 ## 三層儲存
 
@@ -68,13 +68,13 @@
 
 1. **截圖時套用遮罩**。先建立本輪 `evidence/`，並在受測 worktree 的 `.bdd/config.json` 設定 `mask.selectors`。從該 worktree 使用實際操作畫面的具名 CLI session。隔離測試先完成[路由探測](worktree-loopback.md#啟動專用-cli-工作階段)。
 
-   ```powershell
+   ```sh
    node "<skill 目錄>/scripts/bdd.mjs" cli-screenshot --session "<本輪 session 名稱>" --filename ".bdd/123-結帳/evidence/R2_IC-05_結帳結果.png" --target "#checkout-result"
    ```
 
    至少一個遮罩 selector 匹配可見元素才會存檔。以 `--target <CSS 選擇器>` 截取指定區塊，省略時截取 viewport，或加 `--full-page` 截取整頁。預設使用 CSS 像素，可用 `--scale device` 保存裝置解析度。若 CLI 不在 PATH，可指定 `--cli-path "<playwright-cli.js 絕對路徑>"`。支援的格式為 PNG 及 WebP，座標補遮罩時使用 PNG，每份證據使用新的檔名。若特定頁面缺少適用的共用 selector，可在本輪已驗證的 session 用原生 `run-code` 於截圖當下套用遮罩。以下 CSS 須換成該頁所有需遮蓋的欄位，檔名換成本輪尚不存在的證據絕對路徑（Windows 使用 `/`）。
 
-   ```powershell
+   ```sh
    playwright-cli -s="<本輪 session 名稱>" run-code "async page => {
      const fields = page.locator('.account-email:visible, .contact-phone:visible');
      if (await fields.count() === 0) throw Error('找不到可見的遮罩欄位');
@@ -197,5 +197,5 @@ node "<skill 目錄>/scripts/bdd.mjs" prune --repo <worktree 或主 checkout> --
 ## 測試
 
 ```bash
-pwsh -NoProfile -Command "Invoke-Pester -Path <skill 目錄>/tests -Output Detailed"
+node --test "<skill 目錄>/tests/archive-esm.test.mjs" "<skill 目錄>/tests/archive-index.test.mjs" "<skill 目錄>/tests/archive-images.test.mjs" "<skill 目錄>/tests/extract.test.mjs" "<skill 目錄>/tests/prune.test.mjs" "<skill 目錄>/tests/recompress.test.mjs"
 ```

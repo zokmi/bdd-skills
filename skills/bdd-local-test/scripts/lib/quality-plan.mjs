@@ -1,10 +1,15 @@
 import { parseArgs } from 'node:util';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { captureApprovedRevision } from './approved-revision.mjs';
 import { changedPaths, commit, repoRoot } from './git-changes.mjs';
+import { isIgnoredPath } from './gitignore.mjs';
 import { lint } from './module-lint.mjs';
 import { moduleIndex, findImpact, parseFeature } from './module-index.mjs';
 import { git, treeEntriesAt } from './verification-git.mjs';
+import { previousWorktreeChanges } from './worktree-snapshot.mjs';
+import { writeNewFile } from './write-new-file.mjs';
 
 const string = { type: 'string' };
 const boolean = { type: 'boolean' };
@@ -12,11 +17,44 @@ const repoOption = { type: 'string', default: '.' };
 
 export function qualityPlan(args) {
   const { values: v } = parseArgs({ args, options: {
-    repo: repoOption, base: string, 'review-risk': string, 'issue-scope': string,
+    repo: repoOption, base: string, 'previous-verification': string, 'review-risk': string, 'issue-scope': string,
+    output: string, 'run-id': string,
     'review-reason': string, 'static-passed': boolean, 'impact-complete': boolean, issue: string, full: boolean,
     'impact-scenario': { type: 'string', multiple: true }, 'batch-path': { type: 'string', multiple: true },
   } });
-  console.log(JSON.stringify(buildQualityPlan(v)));
+  if (v.output === undefined && v['run-id'] === undefined) {
+    console.log(JSON.stringify(buildQualityPlan(v)));
+    return 0;
+  }
+  if (!v.output?.trim() || !v['run-id']?.trim() || !v.issue || (v['issue-scope'] ?? 'batch') !== 'batch') {
+    throw new Error('批次選測存檔須搭配 --issue、--run-id 與 --output');
+  }
+  const repo = fs.realpathSync.native(repoRoot(v.repo));
+  const output = path.join(fs.realpathSync.native(path.dirname(path.resolve(v.output))), path.basename(v.output));
+  const relative = path.relative(repo, output);
+  if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep) &&
+      !isIgnoredPath(repo, relative)) {
+    throw new Error('--output 請使用被 Git 忽略的輸出目錄或工作區外的新檔案');
+  }
+  const revision = captureApprovedRevision(repo);
+  const plan = buildQualityPlan(v);
+  if (plan.bddStatus !== 'PENDING') {
+    throw new Error('無法建立派工選測檔：' + plan.bddStatus + ' ' + [...(plan.blockers ?? []), ...plan.lint.map(p => p.message)].join('；'));
+  }
+  for (const feature of plan.selected.filter(f => f.requiresFullFeature)) {
+    if (feature.unterminatedDocString || !feature.unindexedScenarios?.length ||
+        feature.unindexedScenarios.some(row => row.unattached || row.ids.length !== 1)) {
+      throw new Error('請先確認可派工的完整情境編號：' + feature.feature);
+    }
+    feature.scenarios = reviewableScenarios(repo, feature);
+  }
+  const after = captureApprovedRevision(repo);
+  if (revision.head !== plan.head || revision.head !== after.head || revision.dirtySha256 !== after.dirtySha256) {
+    throw new Error('建立選測檔期間候選版本已變更，請重新選測');
+  }
+  const content = JSON.stringify({ ...plan, repo, runId: v['run-id'], revision }, null, 2) + '\n';
+  writeNewFile(output, content, 0o600);
+  console.log(JSON.stringify({ path: output, sha256: createHash('sha256').update(content).digest('hex') }));
   return 0;
 }
 
@@ -189,13 +227,18 @@ export function buildQualityPlan(v) {
   if (v['batch-path'] && issueScope !== 'batch') throw new Error('--batch-path 適用於 --issue 的本批選測');
   const risk = (v['review-risk'] ?? (issueScope ? 'MEDIUM' : 'HIGH')).toUpperCase();
   const staticPassed = Boolean(v['static-passed']);
-  if (!v.base || !v['review-reason']) throw new Error('--base 與 --review-reason 為必填');
+  const previous = v['previous-verification'];
+  if (previous && issueScope !== 'batch') throw new Error('--previous-verification 適用於同單的本批選測');
+  if (Boolean(v.base) === Boolean(previous) || !v['review-reason']) {
+    throw new Error('請擇一提供 --base 或 --previous-verification，並提供 --review-reason');
+  }
   if (!['HIGH', 'MEDIUM', 'LOW'].includes(risk)) throw new Error('無效的 --review-risk');
   if (v.issue !== undefined && !/^\d+$/.test(v.issue)) throw new Error('--issue 須為數字');
   const repo = repoRoot(v.repo);
   const head = commit(repo, 'HEAD');
-  const base = commit(repo, v.base);
-  const allPaths = issueScope === 'batch' ? batchChangedPaths(repo, base, head) : changedPaths(repo, base, head);
+  const snapshot = previous ? previousWorktreeChanges(repo, head, previous, v.issue) : null;
+  const base = snapshot?.base ?? commit(repo, v.base);
+  const allPaths = snapshot?.paths ?? (issueScope === 'batch' ? batchChangedPaths(repo, base, head) : changedPaths(repo, base, head));
   let batchPaths;
   if (v['batch-path']) {
     const requested = new Set(v['batch-path'].map(p => p.replaceAll('\\', '/').replace(/^\.\//, '')));
@@ -208,7 +251,7 @@ export function buildQualityPlan(v) {
   const index = moduleIndex(repo, { hashFeatures: true });
   const problems = lint(index);
   const impact = findImpact(index.modules, paths);
-  const result = { head, base, paths, risk: v['review-risk'] ?? risk, reviewReason: v['review-reason'],
+  const result = { head, base, ...(snapshot && { baseHead: snapshot.baseHead }), paths, risk: v['review-risk'] ?? risk, reviewReason: v['review-reason'],
     staticPassed, unmatched: impact.unmatched, lint: problems, ...(issueScope && { issue: v.issue, issueScope }),
     ...(batchPaths && { batchPaths, allChangedPaths: allPaths }) };
   const docsOnly = paths.every(isDocumentation);

@@ -20,15 +20,10 @@
 
 ## 準備 Playwright CLI 設定
 
-從受測 worktree 根目錄執行。將原埠清單與本輪輸出目錄換成實際值。PowerShell 範例把完整準備結果保存成 JSON，後續啟動、轉送與清理均以這份對應為準。若從舊版 Playwright MCP 流程升級，請在本輪以新的暫存目錄重新產生 CLI 的 `prepared.json`，再核對服務、session 與路由。
+從受測 worktree 根目錄執行。將原埠清單與本輪輸出目錄換成實際值。使用新的 prepared.json 保存這次準備結果，後續啟動、轉送與清理均以這份對應為準。若從舊版 Playwright MCP 流程升級，請在本輪以新的暫存目錄重新產生 CLI 的 `prepared.json`，再核對服務、session 與路由。
 
-```powershell
-$bdd = "<skill 目錄>/scripts/bdd.mjs"
-$runDir = ".bdd/.playwright-cli/<本輪-組別>"
-$prepared = node $bdd prepare-worktree-cli --ports "<原埠號，逗號分隔>" --output-dir $runDir
-if ($LASTEXITCODE -ne 0) { throw "瀏覽器隔離設定建立失敗" }
-$manifest = Join-Path $runDir "prepared.json"
-$prepared | Set-Content -Encoding utf8 -LiteralPath $manifest
+```sh
+node "<skill 目錄>/scripts/bdd.mjs" prepare-worktree-cli --ports "<原埠號，逗號分隔>" --output-dir ".bdd/.playwright-cli/<本輪-組別>" --manifest ".bdd/.playwright-cli/<本輪-組別>/prepared.json"
 ```
 
 從回傳的 `preflight` 核對原埠占用與程序歸屬，依 `portMappings` 和 `effectivePorts` 啟動本輪服務。回傳的 `configPath` 指向含 `chromiumArg` 的臨時 CLI 設定，`isolationId` 是本輪的 session 名稱。CLI 自動產生的 snapshot 和日誌存入此組暫存目錄，可能含畫面個資，請與本輪報告、遮罩證據和封存來源分開。`status=configuration-only` 時仍待啟動與探測。若服務啟動時埠被搶占或自行換埠，停止本輪已啟動的自有服務，重新準備並更新全部啟動參數與測試網址，最多重試兩次。仍無法綁定時列為阻塞。
@@ -39,18 +34,17 @@ $prepared | Set-Content -Encoding utf8 -LiteralPath $manifest
 
 服務已綁在本輪 IP 與有效埠、已核對監聽程序與版本後，從同一 worktree 執行：
 
-```powershell
-node $bdd cli-session $manifest
+```sh
+node "<skill 目錄>/scripts/bdd.mjs" cli-session ".bdd/.playwright-cli/<本輪-組別>/prepared.json"
 ```
 
 入口開啟具名瀏覽器，從該 session 導覽探測網址，確認導覽成功，並核對探測器收到本輪請求。指定登入狀態檔時，探測成功後才載入。命令返回時保留已驗證的瀏覽器；記下 `status=ready`、`session`、`probe.status=matched`、`isolationId`、IP 與探測埠。啟動或探測失敗時，核對 CLI 與瀏覽器安裝、執行權限、設定及本機路由，修正後重試。無法驗證路由則將相關 UI 情境列為阻塞，可獨立執行的 API／DB 繼續。
 
 從同一工作目錄執行後續命令，每次都傳入同一個 session 名稱。若情境需要[瀏覽器 HTTP(S) 轉送](test-kit.md#瀏覽器-localhost-轉送)，先執行該片段，再導覽受測網址。
 
-```powershell
-$uiSession = ($prepared | ConvertFrom-Json).isolationId
-playwright-cli -s=$uiSession goto "http://localhost:<前端有效埠>/"
-playwright-cli -s=$uiSession snapshot
+```sh
+playwright-cli -s="<isolationId>" goto "http://localhost:<前端有效埠>/"
+playwright-cli -s="<isolationId>" snapshot
 ```
 
 依專案實際協定導覽。以服務存取紀錄、程序資訊、版本端點及瀏覽器網路請求核對前端與 API 到達的 IP、有效埠與版本。Chromium resolver 只作用於瀏覽器，dev-server proxy、SSR 或後端程序發出的請求另以本輪啟動參數／環境覆寫指向所屬服務。任何一層無法核對時，將相關情境列為阻塞。記錄本輪設定檔路徑與驗證結果，並以專案檔案的前後 diff 核對原始設定。
@@ -61,7 +55,7 @@ playwright-cli -s=$uiSession snapshot
 
 ### 手動驗證 CLI session 的 localhost 路由
 
-在一個終端執行 `node $bdd cli-probe $manifest`。探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內從同一 worktree 的另一個終端，以即將實測的 `playwright-cli -s=<名稱> goto "<ready.url>"` 導覽。用 `playwright-cli -s=<名稱> snapshot` 核對頁面的 JSON，並比對探測器收到的 `status=matched`、`isolationId`、`ip`、`port`。兩方須與本輪 `ready` 資訊相符。探測器在收到帶有本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時以非零狀態退出。
+在一個終端執行 `node "<skill 目錄>/scripts/bdd.mjs" cli-probe ".bdd/.playwright-cli/<本輪-組別>/prepared.json"`。探測器只綁本輪分配的 IP，由系統選擇臨時埠。看到 `status=ready` 後，在 60 秒內從同一 worktree 的另一個終端，以即將實測的 `playwright-cli -s=<名稱> goto "<ready.url>"` 導覽。用 `playwright-cli -s=<名稱> snapshot` 核對頁面的 JSON，並比對探測器收到的 `status=matched`、`isolationId`、`ip`、`port`。兩方須與本輪 `ready` 資訊相符。探測器在收到帶有本輪隨機路徑及 localhost Host 的 GET 後關閉，逾時以非零狀態退出。
 
 ## 服務與 slot
 

@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { stopSlotServices } from '../scripts/lib/stop-slot-services.mjs';
+import { worktreeFixture } from './worktree-fixture.mjs';
 
 function fixture(t) {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-stop-')));
@@ -53,6 +56,47 @@ function fixture(t) {
   }
   return { stop, checkout, calls, host, slot, processes, listeners };
 }
+
+test('the CLI previews and stops only the owned Windows listener', { skip: process.platform !== 'win32' }, async () => {
+  const fixture = worktreeFixture();
+  let child;
+  let closed;
+  try {
+    const checkout = fixture.init('test checkout');
+    const stop = (...args) => fixture.bdd(checkout, 'stop-slot-services', ...args);
+    const main = await stop('--ports', '12345');
+    assert.equal(main.isWorktree, false);
+    assert.deepEqual(main.stopped, []);
+    const marker = path.join(checkout, '.git', 'bdd-loopback-slot');
+    fs.writeFileSync(marker, '1');
+    await assert.rejects(stop('--isolate', '--dry-run'), /slot/);
+    fs.writeFileSync(marker, '244');
+    const script = path.join(checkout, 'fixture.mjs');
+    fs.writeFileSync(script, "import net from 'node:net'; const server = net.createServer(); " +
+      "server.listen(0, '127.0.0.244', () => process.send(server.address().port));\n");
+    child = spawn(process.execPath, [script], { cwd: checkout, stdio: ['ignore', 'ignore', 'inherit', 'ipc'], windowsHide: true });
+    closed = once(child, 'close');
+    const port = await Promise.race([
+      once(child, 'message', { signal: AbortSignal.timeout(15000) }).then(([value]) => String(value)),
+      closed.then(() => { throw new Error('Fixture listener exited before publishing its port'); }),
+    ]);
+    const preview = await stop('--isolate', '--ports', port, '--dry-run');
+    assert.deepEqual(preview.stopped.map(s => s.killedRootPid), [child.pid]);
+    assert.deepEqual(preview.browsers, []);
+    assert.equal(child.exitCode, null);
+    const actual = await stop('--isolate', '--ports', port);
+    assert.deepEqual(actual.stopped.map(s => s.killedRootPid), [child.pid]);
+    assert.deepEqual(actual.remaining, []);
+    assert.deepEqual(actual.remainingPids, []);
+    if (child.exitCode === null && child.signalCode === null) {
+      await once(child, 'exit', { signal: AbortSignal.timeout(5000) });
+    }
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
+    if (closed) await closed;
+    await fixture.clean();
+  }
+});
 
 test('requires exact listener ownership and selects the worktree browser profile independently', async t => {
   const { stop, calls } = fixture(t);

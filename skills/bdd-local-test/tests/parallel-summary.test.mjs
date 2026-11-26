@@ -55,6 +55,37 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
     }
   }
   assert.equal(run('valid', 0).eligibleForReview, true);
+  const resultPath = path.join(coord, 'result.json');
+  const roundFile = path.join(group, 'verification.json');
+  for (const [name, overrides] of [
+    ['interrupted', { taskStatus: 'interrupted' }],
+    ['stale-attempt', { attempt: a.attempt + 1 }],
+    ['wrong-version', { execution: { ...r.execution, serviceVersion: 'old-build' } }],
+    ['invalid-status', { scenarios: [{ ...r.scenarios[0], status: 'green' }] }],
+    ['duplicate-scenario', { scenarios: [...r.scenarios, r.scenarios[0]] }],
+    ['outside-evidence', { scenarios: [{ ...r.scenarios[0], evidence: ['../outside.json'] }] }],
+    ['missing-evidence', { scenarios: [{ ...r.scenarios[0], evidence: ['missing.json'] }] }],
+  ]) {
+    json(resultPath, { ...r, ...overrides });
+    assert.equal(run(name, 1).eligibleForReview, false, name);
+  }
+  fs.unlinkSync(resultPath);
+  assert.equal(run('missing-result', 1).counts['not-run'], 1);
+  json(resultPath, r);
+  for (const [name, overrides] of [
+    ['dirty-version', { dirtyPaths: ['src/login.cs'] }],
+    ['missing-dirty-paths', { dirtyPaths: undefined }],
+    ['wrong-count', { result: { ...round.result, passed: 2 } }],
+  ]) {
+    json(roundFile, { rounds: [{ ...round, ...overrides }] });
+    assert.equal(run(name, 1).eligibleForReview, false, name);
+  }
+  const nonexistent = '1'.repeat(head.length);
+  json(assignment, { ...a, target: { ...a.target, head: nonexistent } });
+  json(roundFile, { rounds: [{ ...round, head: nonexistent }] });
+  assert.equal(run('nonexistent-revision', 1).eligibleForReview, false);
+  json(assignment, a);
+  json(roundFile, { rounds: [round] });
   run('valid', 2);
   assert.equal(run('duplicate', 1, ['--assignment', assignment]).counts.passed, 1);
   const secondCoord = path.join(group, 'coordination/second');
@@ -149,7 +180,7 @@ test('approved assignments account for the entire plan even when the caller omit
   const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
   const planFile = path.join(temp, 'approved.json');
   const plan = {
-    contractVersion: 2, runId: 'approved-run',
+    contractVersion: 3, scope: 'non-batch', runId: 'approved-run',
     groups: ['A', 'B'].map(groupId => ({
       groupId, repo, revision: { head, dirtySha256: null }, scenarios: [{
         feature: 'list.feature', id: groupId.repeat(2) + '-01', kind: 'changed',

@@ -2,7 +2,7 @@
 
 每組相關變更完成後先執行專案靜態檢查，再閱讀同一份 Diff，檢查錯誤路徑、權限、資料完整性、依賴和回歸。將 findings、嚴重度、檔案行號及風險依據寫入本輪報告。確認工作區沒有漂移後，傳入已核對的基準及 Review 結論。
 
-```powershell
+```sh
 node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <基準> --review-risk MEDIUM --review-reason "<依據>" --static-passed --impact-complete
 ```
 
@@ -12,16 +12,17 @@ node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <�
 
 ### 同一張單的本次回饋
 
-提供 `--issue <單號>` 時，預設採 `--issue-scope batch`。將 `--base` 設為本次回饋修改前的 commit，如上一輪已驗證的版本。批次直接比較指定 commit 的內容與候選工作區，並納入相較基準有差異的暫存變更以及未被 Git 忽略的未追蹤檔。先前受測快照在另一分支時，可直接傳入其 commit；例如本次回饋還原了該快照修改的斷言，仍會選到該情境。
+提供 `--issue <單號>` 時，預設採 `--issue-scope batch`。同單下一批優先傳入 `--previous-verification <上批 verification.json>`，用上批最後一輪實測時保存的工作樹逐檔比對目前工作樹。即使兩批 HEAD 相同，還原到 HEAD 的檔案也會進入差異。首次規劃或前批測的是明確的 commit 時，可用 `--base <回饋前的 commit>`。二者擇一。舊紀錄只有雜湊或本機快照已不可取得時，請先找到實際受測內容，再決定基準。
 
-```powershell
-node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <回饋前的commit> --issue 5410 --review-reason "核對金額修正及匯出呼叫端" --static-passed --impact-complete --impact-scenario "src/orders/calc.ts=OR-07" --impact-scenario "src/orders/calc.ts=EX-03"
+```sh
+node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --previous-verification "<上批>/verification.json" --issue 5410 --run-id "5410-R2" --output "<本批>/quality-plan.json" --review-reason "核對金額修正及匯出呼叫端" --static-passed --impact-complete --impact-scenario "src/orders/calc.ts=OR-07" --impact-scenario "src/orders/calc.ts=EX-03"
 ```
 
 - 計畫依編號比對基準版本與目前 Feature 的情境、標籤、步驟及範例列，選出新增或改動的情境。新增 Feature 可選出其中已索引的情境。改動共用前置條件、刪除情境或無法可靠辨識範圍時，檢閱全文，以 `--impact-scenario "異動路徑=現行情境編號"` 列出所有受影響的現行情境。
-- 兩批回饋都在同一個未提交工作區時，先對照上一輪保存的快照或差異，確認本批路徑與情境。逐一傳入 `--batch-path "src/orders/calc.ts"` 和本批的 `--impact-scenario`。同一個 Feature 同時有前一批和本批編輯時，將該 Feature 列為 `--batch-path`，再以 `--impact-scenario "<Feature路徑>=本批編號"` 指定每個應測情境。這種方式依人工核對的映射選取，僅接受 Git 確認有變更的路徑，PowerShell 使用 `-BatchPath @(...)`。輸出在 `batchPaths` 列出指定範圍，`allChangedPaths` 保留 Git 可見的全部差異；缺少足以辨識兩批的舊快照時，先確認範圍再派工。
+- 將選測檔寫入已存在、由 Git 忽略的本輪輸出目錄，或 checkout 以外的新檔。命令回傳可直接放進核准清單 `selections` 的絕對路徑與 SHA-256。選測檔保存 `runId`、單號、基準、候選版本與選出的情境。補入回歸時更新來源映射、另存選測檔，再交審核。
+- 若同一差異還混入其他批次，可用已核對的 `--batch-path` 限定路徑，對每個選入的行為檔和 Feature 明列 `--impact-scenario`。使用上批快照可直接辨識同一 Feature 內本批改動的情境。
 - 程式、設定及其他行為異動，以同一參數逐項連到直接影響及必要回歸。相依情境可來自其他模組；上例只選取計算與匯出這兩個已核對的情境。同單歷史情境、`@core` 或 `@P0` 依本批實際依賴加入映射。輸出的 `batchMappings` 保留人工核對的映射。
-- 缺少影響映射、尚未確認外溢範圍或靜態檢查未通過時，`bddStatus` 為 `BLOCKED`，依 `blockers` 補正後重新產生清單。批次預設風險為 MEDIUM。確認高風險時明確傳入 `--review-risk HIGH` 並在 `--review-reason` 說明，或依使用者要求傳入 `--full` 執行完整驗證。PowerShell 對應參數為 `-Issue`、`-IssueScope batch|issue` 及可傳多筆的 `-ImpactScenario`。
+- 缺少影響映射、尚未確認外溢範圍或靜態檢查未通過時，`bddStatus` 為 `BLOCKED`，依 `blockers` 補正後重新產生清單。批次預設風險為 MEDIUM。確認高風險時明確傳入 `--review-risk HIGH` 並在 `--review-reason` 說明，或依使用者要求傳入 `--full` 執行完整驗證。
 
 ### 整單檢查與無單號的模組選測
 
@@ -46,8 +47,8 @@ loopback HTTP 服務及臨時 SQLite 讀取同一筆訂單，分開呼叫及批�
 
 變更技能的批次操作指引後，可從插件 repo 根目錄執行下列命令。測試需要已登入的 Claude Code CLI 與上述基準測試環境。`UserPromptSubmit` Hook 會載入目前工作區的技能，讓代理選擇操作方式，並回傳該輪的斷言結果、耗時及 Token 用量。
 
-```powershell
-pwsh -NoProfile -File skills/bdd-local-test/tests/Test-QualityAgent.ps1 -Version candidate
+```sh
+node skills/bdd-local-test/tests/Test-QualityAgent.mjs --version candidate
 ```
 
-加上 `-InjectFailure` 可確認代理在錯誤預期下只執行一次，並回報 `FAILED`。
+加上 `--inject-failure` 可確認代理在錯誤預期下只執行一次，並回報 `FAILED`。

@@ -1,20 +1,23 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { readContract } from './parallel-contracts.mjs';
 import { approvedPlan, assignment } from './parallel-validators.mjs';
 import { captureApprovedRevision } from './approved-revision.mjs';
+import { validateBatchScope } from './approved-batch.mjs';
 import { repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, readFeature } from './module-index.mjs';
 import { pathKey } from './summary-evidence.mjs';
 import { git } from './verification-git.mjs';
+import { writeNewFile } from './write-new-file.mjs';
 
 export const approvedScenarioKey = s => JSON.stringify([pathKey(s.feature), s.id.toLowerCase()]);
 const label = s => s.feature + '|' + s.id;
 
-export function sameApprovedScenario(planned, actual) {
+export function sameApprovedScenario(planned, actual, exact = false) {
   return approvedScenarioKey(planned) === approvedScenarioKey(actual) &&
+    (!exact || (planned.feature === actual.feature && planned.id === actual.id)) &&
     planned.kind === actual.kind && isDeepStrictEqual(planned.assertions, actual.assertions);
 }
 
@@ -48,17 +51,20 @@ function validate(validateSchema, value, description) {
   }
 }
 
-function validateScope(groups) {
-  const groupIds = new Set();
-  const owners = new Map();
+function checkoutFamilies() {
   const commonDirs = new Map();
-  function commonDir(repo) {
+  return repo => {
     if (!commonDirs.has(repo)) {
       const metadata = git(repo, ['rev-parse', '--git-common-dir'], [0, 128]);
       commonDirs.set(repo, metadata ? approvedRepoKey(path.resolve(repo, metadata.trimEnd())) : repo);
     }
     return commonDirs.get(repo);
-  }
+  };
+}
+
+function validateScope(groups, commonDir) {
+  const groupIds = new Set();
+  const owners = new Map();
   for (const group of groups) {
     const groupKey = group.groupId.toLowerCase();
     if (groupIds.has(groupKey)) throw new Error('Duplicate approved group: ' + group.groupId);
@@ -86,8 +92,10 @@ export function loadApprovedPlan(file) {
   const bytes = fs.readFileSync(file);
   const plan = parseJson(bytes, file);
   validate(approvedPlan, plan, 'approved plan schema');
-  validateScope(plan.groups);
-  return { ...plan, reference: { path: path.resolve(file), sha256: createHash('sha256').update(bytes).digest('hex') } };
+  const commonDir = checkoutFamilies();
+  validateScope(plan.groups, commonDir);
+  const batchEvidence = plan.scope === 'batch' ? validateBatchScope(plan, commonDir) : undefined;
+  return { ...plan, batchEvidence, reference: { path: path.resolve(file), sha256: createHash('sha256').update(bytes).digest('hex') } };
 }
 
 function compareGroup(plan, group, actual, issues) {
@@ -105,8 +113,8 @@ function compareGroup(plan, group, actual, issues) {
     const key = approvedScenarioKey(scenario);
     const planned = remaining.get(key);
     if (!planned) issues.push('Unexpected or duplicate assigned scenario: ' + group.groupId + '/' + label(scenario));
-    else if (!sameApprovedScenario(planned, scenario)) {
-      issues.push('Approved scenario kind or assertions differ: ' + group.groupId + '/' + label(scenario));
+    else if (!sameApprovedScenario(planned, scenario, plan.scope === 'batch')) {
+      issues.push('Approved scenario path, ID, kind or assertions differ: ' + group.groupId + '/' + label(scenario));
     }
     remaining.delete(key);
   }
@@ -172,20 +180,10 @@ function generateAssignment(plan, file) {
   if (!group) throw new Error('Group absent from approved plan: ' + template.groupId);
   const result = { ...template, scenarios: group.scenarios, approvedPlan: plan.reference };
   validate(assignment, result, 'assignment schema');
-  const issues = liveRevisionIssues([group], [result]);
+  const issues = liveRevisionIssues(plan.scope === 'batch' ? plan.groups : [group], [result]);
   compareGroup(plan, group, result, issues);
   if (issues.length) throw new Error(issues.join('\n'));
   return result;
-}
-
-function writeNewAssignment(file, content) {
-  const staged = path.join(path.dirname(file), '.bdd-assignment-' + randomUUID());
-  const fd = fs.openSync(staged, 'wx');
-  try {
-    try { fs.writeFileSync(fd, content); } finally { fs.closeSync(fd); }
-    // Publish the completed file without replacing an earlier dispatch, even under a race.
-    fs.linkSync(staged, file);
-  } finally { fs.unlinkSync(staged); }
 }
 
 function markdownCell(value) {
@@ -195,6 +193,9 @@ function markdownCell(value) {
 function report(plan) {
   const rows = [
     '核准清單 SHA-256 `' + plan.reference.sha256 + '`', '',
+    '選測範圍：' + (plan.scope === 'batch' ? '回饋批次' : '非回饋批次'), '',
+    ...(plan.batchEvidence ?? []).map(s => '- 本批 issue #' + s.issue + '，基準 `' + s.base +
+      '`，選測結果 ' + markdownCell(s.path) + '，SHA-256 `' + s.sha256 + '`'),
     ...plan.groups.map(g => '- ' + markdownCell(g.groupId) + '（' + markdownCell(g.repo) + '） ' +
       '受審 commit `' + g.revision.head + '`，' +
       (g.revision.dirtySha256 === null ? '工作區乾淨' : '未提交內容 SHA-256 `' + g.revision.dirtySha256 + '`')),
@@ -230,11 +231,14 @@ export function parallelPlan(args) {
     if (values.output !== undefined && (!values.output || !values.template)) throw new Error('--output requires --template and a new file path');
     const plan = loadApprovedPlan(values.plan);
     if (plan.contractVersion === 1) {
-      throw new Error('Historical plan v1 lacks a reviewed candidate revision. Capture --revision for each checkout and submit a v2 plan for review.');
+      throw new Error('Historical plan v1 lacks a reviewed candidate revision. Capture --revision and submit a v3 plan for review.');
+    }
+    if (plan.contractVersion === 2) {
+      throw new Error('Historical plan v2 does not bind the batch selection. Submit a v3 plan with an explicit scope before dispatch.');
     }
     if (values.template) {
       const json = JSON.stringify(generateAssignment(plan, values.template), null, 2);
-      if (values.output) writeNewAssignment(values.output, json + '\n');
+      if (values.output) writeNewFile(values.output, json + '\n');
       else console.log(json);
     } else if (values.report) {
       const issues = liveRevisionIssues(plan.groups);

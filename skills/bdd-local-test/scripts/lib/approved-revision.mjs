@@ -6,7 +6,7 @@ import { git } from './verification-git.mjs';
 
 const changedWhileReading = () => new Error('Checkout changed while capturing the approved revision; retry.');
 
-function readStatus(repo) {
+export function readStatus(repo) {
   const raw = execFileSync('git', ['-C', repo, '--no-optional-locks', '-c', 'core.fsmonitor=false',
     'status', '--porcelain=v2', '-z', '--branch', '--no-ahead-behind', '--no-renames',
     '--ignore-submodules=none', '--untracked-files=all'], {

@@ -34,7 +34,7 @@ function fixture(t) {
       assertions: [{ requirement: '列表', action: '按下儲存', expected: 'A|B\n<C>', method: 'UI', evidence: '狀態截圖' }],
     }],
   }));
-  const plan = { contractVersion: 2, runId: example.runId, groups };
+  const plan = { contractVersion: 3, scope: 'non-batch', runId: example.runId, groups };
   writeJson(file, plan);
   const template = structuredClone(example);
   delete template.scenarios;
@@ -154,4 +154,102 @@ test('same scenario cannot be dispatched twice through linked worktrees', t => {
   plan.groups[1].repo = other;
   writeJson(file, plan);
   assert.equal(loadApprovedPlan(file).groups.length, 2);
+});
+
+test('batch dispatch rejects a real but stale ID at review, template, preflight and summary', t => {
+  const { dir, repo, git, file, plan, template, run } = fixture(t);
+  const [prior, current] = plan.groups.map(g => g.scenarios[0]);
+  const featureFile = path.join(repo, current.feature);
+  fs.writeFileSync(featureFile, 'Feature: Orders\n@OR-01 @#42 @API\nScenario: First feedback\n@OR-02 @#42 @API\nScenario: Second feedback\n');
+  fs.writeFileSync(path.join(path.dirname(featureFile), 'MODULE.md'), '---\nprefix: OR\npaths:\n  - receipt.txt\n---\n');
+  fs.writeFileSync(path.join(repo, 'receipt.txt'), 'old amount\n');
+  const commit = () => git('-c', 'user.name=Test', '-c', 'user.email=bdd@example.invalid', '-c', 'commit.gpgsign=false',
+    'commit', '--quiet', '-m', 'feedback');
+  git('add', '-f', '--', '.bdd', 'receipt.txt');
+  commit();
+  const base = git('rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(repo, 'receipt.txt'), 'correct amount\n');
+  git('add', '--', 'receipt.txt');
+  commit();
+  template.target.head = git('rev-parse', 'HEAD');
+  plan.groups[0].revision.head = template.target.head;
+  const source = path.join(dir, 'quality-plan.json');
+  const saved = JSON.parse(execFileSync(process.execPath, [cli, 'quality-plan', '--repo', repo, '--issue', '42',
+    '--base', base, '--review-reason', 'correct amount for second feedback', '--impact-scenario', 'receipt.txt=' + current.id,
+    '--static-passed', '--impact-complete', '--run-id', plan.runId, '--output', source], { encoding: 'utf8' }));
+  const candidate = JSON.parse(fs.readFileSync(source, 'utf8'));
+  function reference(selection) {
+    writeJson(source, selection);
+    return { path: source, sha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex') };
+  }
+  plan.scope = 'batch';
+  plan.groups = [plan.groups[0]];
+  plan.groups[0].scenarios = [current];
+  plan.selections = [saved];
+  writeJson(file, plan);
+  const templateFile = path.join(dir, 'template.json');
+  const dispatched = path.join(dir, 'assignment.json');
+  writeJson(templateFile, template);
+  assert.equal(run('--template', templateFile, '--output', dispatched).status, 0);
+  assert.equal(run('--assignment', dispatched).status, 0);
+  const changed = JSON.parse(fs.readFileSync(dispatched, 'utf8'));
+  changed.scenarios[0].id = current.id.toLowerCase();
+  writeJson(dispatched, changed);
+  assert.equal(run('--assignment', dispatched).status, 1);
+  plan.groups[0].scenarios = [prior];
+  writeJson(file, plan);
+  const output = path.join(dir, 'must-not-exist.json');
+  for (const args of [['--report'], ['--template', templateFile, '--output', output], ['--assignment', dispatched]]) {
+    const failed = run(...args);
+    assert.equal(failed.status, 2);
+    assert.match(failed.stderr, /Missing selected scenario: .*OR-02/);
+    assert.match(failed.stderr, /Unexpected approved scenario: .*OR-01/);
+  }
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(spawnSync(process.execPath, [cli, 'parallel-summary', '--assignment', dispatched,
+    '--output-dir', path.join(dir, 'summary')]).status, 2);
+  plan.groups[0].scenarios = [current];
+  writeJson(file, plan);
+  fs.appendFileSync(source, '\n');
+  assert.match(run('--report').stderr, /SHA-256 mismatch/);
+
+  for (const [edit, error] of [
+    [p => { p.runId = 'previous-round'; }, /runId/],
+    [p => { p.bddStatus = 'BLOCKED'; }, /ready/],
+    [p => { p.bddStatus = 'SKIPPED'; }, /ready/],
+    [p => { p.revision.dirtySha256 = 'a'.repeat(64); }, /checkout and revision/],
+    [p => { p.selected[0].feature = 'wrong.feature'; }, /Missing selected scenario: wrong.feature/],
+  ]) {
+    const changed = structuredClone(candidate);
+    edit(changed);
+    plan.selections = [reference(changed)];
+    writeJson(file, plan);
+    assert.throws(() => loadApprovedPlan(file), error);
+  }
+  delete plan.selections;
+  writeJson(file, plan);
+  assert.match(run('--report').stderr, /approved plan schema/);
+});
+
+test('one batch selection covers the union of assignments in linked worktrees at the same revision', t => {
+  const { dir, repo, head, git, file, plan, run } = fixture(t);
+  const linked = path.join(dir, 'linked');
+  git('worktree', 'add', '--quiet', '--detach', linked, head);
+  plan.groups[1].repo = linked;
+  const source = path.join(dir, 'selection.json');
+  const candidate = {
+    runId: plan.runId, repo, base: head, head, revision: plan.groups[0].revision, issue: '42', issueScope: 'batch',
+    level: 'TARGETED', staticPassed: true, bddStatus: 'PENDING',
+    selected: [{ feature: plan.groups[0].scenarios[0].feature, scenarios: [{ ids: ['OR-01'] }, { ids: ['OR-02'] }] }],
+  };
+  writeJson(source, candidate);
+  plan.scope = 'batch';
+  plan.selections = [{ path: source, sha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex') }];
+  writeJson(file, plan);
+  const report = run('--report');
+  assert.equal(report.status, 0, report.stderr);
+  assert.match(report.stdout, /issue #42/);
+  plan.groups.pop();
+  writeJson(file, plan);
+  assert.match(run('--report').stderr, /Missing selected scenario: .*OR-02/);
 });

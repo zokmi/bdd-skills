@@ -1,6 +1,6 @@
 # 並行 BDD 結構化輸入輸出
 
-派工、結果及停止確認使用 v1 UTF-8 JSON，新核准清單使用 v2。每輪另保留 `REPORT.md`、`verification.json` 及適用的 `masking.json`。無資料的集合用 `[]`，未知或不適用的值用 `null` 並在相關原因欄位說明。不得記錄密碼、token、完整連線字串或個資；帳密僅提供專案允許的取得位置。
+派工、結果及停止確認使用 v1 UTF-8 JSON，新核准清單使用 v3。每輪另保留 `REPORT.md`、`verification.json` 及適用的 `masking.json`。無資料的集合用 `[]`，未知或不適用的值用 `null` 並在相關原因欄位說明。不得記錄密碼、token、完整連線字串或個資；帳密僅提供專案允許的取得位置。
 
 `runId` 識別本次測試任務，`groupId` 識別組別，`attempt` 是從 1 起算的派工／複測次數。複測增加 attempt 並保留前次檔案。檔案存於各組輸出目錄的 `coordination/attempt-<N>/`，只有負責者寫入。這些 JSON 是本機執行產物，依既有版控分工不新增到 Git。
 
@@ -60,7 +60,7 @@ UI 派工附文列出每組的 `browser.isolationId`、實際 `-s=<名稱>`、�
 
 收到含 `approvedPlan` 的派工時，子代理在執行時記下 `assignment.approvedPlan.sha256`，並將同一值填入結果的 `approvedPlanSha256`。彙總時會連同 runId、groupId 及 attempt 核對。下方範例使用原有 v1 結果欄位。
 
-使用 v2 核准清單時，子代理在實測工作區完成該輪測試後執行 `verification --record --capture-revision`，其餘參數見[報告與驗證紀錄](reporting.md)。工具從實際 checkout 擷取該輪的 `revision`。彙總會逐組比對受審與實測的 HEAD 及未提交內容雜湊。若實測版不同或缺少當時的快照，該輪無法採納。
+使用 v3 核准清單時，子代理在實測工作區完成該輪測試後執行 `verification --record --capture-revision`，其餘參數見[報告與驗證紀錄](reporting.md)。工具從實際 checkout 擷取該輪的 `revision`。彙總會逐組比對受審與實測的 HEAD 及未提交內容雜湊。若實測版不同或缺少當時的快照，該輪無法採納。
 
 子代理在完成或停止本次 attempt 時寫入。`taskStatus` 為 `completed`、`blocked` 或 `interrupted`，僅表示派工狀態，completed 可以包含測試失敗。`scenarios[].status` 僅為 `passed`、`failed`、`blocked`、`not-run`，分別對應通過、失敗、阻塞、未執行。
 
@@ -125,11 +125,16 @@ blockers 每項使用 `{ "reason": "缺少指定角色帳號", "scenarioIds": ["
 
 送審、建立派工與派工前檢查都會從受測工作區核對 `feature` 與情境編號。`verification --record` 也會核對明列的 `<檔案>::<編號>`；使用歷史 `--head` 時讀取該 commit 的情境檔。請使用標在情境標題上的編號。若工具無法辨識標題，請依情境格式核對並修正；只出現在註解、步驟或文件字串的文字不能當作情境。
 
-規劃時將本輪所有實測組、情境及逐項斷言寫入本機 `approved-plan.json`。每個情境指定一個負責組，`repo` 填該組受測工作區的絕對路徑。對同一情境採用多種驗證手段時，每個可判定的結果各寫一筆斷言。以下是一組單一斷言的完整清單。
+規劃時將本輪所有實測組、情境及逐項斷言寫入本機 `approved-plan.json`。每個情境指定一個負責組，`repo` 填該組受測工作區的絕對路徑。對同一情境採用多種驗證手段時，每個可判定的結果各寫一筆斷言。同單回饋使用 `scope: "batch"`，將本批 `quality-plan --run-id … --output …` 回傳的引用原樣放入 `selections`。各組共用同一個 `runId`，每個受測候選提供對應的選測檔。整單驗收或無單號的獨立任務使用 `scope: "non-batch"` 並省略 `selections`。以下為單組示例，實際值取自本輪產物。
 
 ```json
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
+  "scope": "batch",
+  "selections": [{
+    "path": "C:/reports/5410/R1/quality-plan.json",
+    "sha256": "abababababababababababababababababababababababababababababababab"
+  }],
   "runId": "5410-schedule-R1",
   "groups": [{
     "groupId": "schedule-ui",
@@ -155,8 +160,8 @@ blockers 每項使用 `{ "reason": "缺少指定角色帳號", "scenarioIds": ["
 ```
 
 1. 對每個受測 checkout 根目錄執行 `--revision`，將回傳的完整物件填入對應組別的 `revision`。`head` 為實際 commit，乾淨工作區的 `dirtySha256` 為 `null`；有異動時，此值涵蓋 Git 暫存區、工作樹變更與未被忽略的未追蹤檔。將本輪清單、派工檔及報告放在既有 Git 忽略的執行輸出目錄或 checkout 外，避免這些檔案本身改變受審內容。
-2. 以 `--report` 核對實際工作區並產生清單 SHA-256、候選版本與情境斷言表，放入 `REPORT.md` 的〈預計驗證項目〉，連同清單原檔、選取理由及適用的工程檢查送獨立審核。把 PASS 與該次審核的路徑及 SHA-256 一起記錄。候選版本、未提交內容或範圍變更時，重新擷取版本、另存新清單並複審。
-3. 依上方派工輸入範例準備各組的 `template.json`，填入實際環境、版本、資源、權限與 attempt，省略 `scenarios` 及 `approvedPlan`。建立各組本次 attempt 的目錄後，用 `--template` 產生派工檔。產生器核對該組候選版本並寫入核准的斷言、清單絕對路徑及 SHA-256。
+2. 以 `--report` 核對選測檔內容的 SHA-256、批次、受測版本，以及各組合計的 Feature 路徑與情境 ID。漏列、多列或錯用上一批的 ID 時，先修正清單再送審。通過後產生清單 SHA-256、候選版本與情境斷言表，放入 `REPORT.md` 的〈預計驗證項目〉，連同清單原檔、選取理由及適用的工程檢查送獨立審核。把 PASS 與該次審核的路徑及 SHA-256 一起記錄。候選版本、未提交內容或範圍變更時，重新擷取版本、另存新清單並複審。
+3. 依上方派工輸入範例準備各組的 `template.json`，填入實際環境、版本、資源、權限與 attempt，省略 `scenarios` 及 `approvedPlan`。建立各組本次 attempt 的目錄後，用 `--template` 產生派工檔。產生器先核對整批情境及該組候選版本，再寫入核准的斷言、清單絕對路徑及 SHA-256。
 4. 開始派工前，將本輪所有組的派工檔逐一以 `--assignment` 傳給 `parallel-plan`。此時再次核對工作區版本。清單雜湊與審核紀錄一致且整輪核對通過後，再按原先的依賴與批次交付派工。複測時選定每組採用的 attempt。
 
 ```sh
@@ -174,7 +179,7 @@ node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-pl
 
 ## Schema 與唯讀彙整
 
-三份自包含 draft 2020-12 Schema： [assignment](../schemas/assignment.schema.json)、[result](../schemas/result.schema.json)、[resource-release](../schemas/resource-release.schema.json)。PowerShell 7.4 以上可用 `Test-Json -Json (Get-Content <檔案> -Raw) -SchemaFile <對應 Schema>` 驗證。
+三份自包含 draft 2020-12 Schema： [assignment](../schemas/assignment.schema.json)、[result](../schemas/result.schema.json)、[resource-release](../schemas/resource-release.schema.json)。
 
 彙整需要 Node.js 與 Git。[核准清單 Schema](../schemas/approved-plan.schema.json) 共用派工的情境欄位，`parallel-plan` 與 `parallel-summary` 透過插件內附的驗證器檢查。
 
@@ -186,10 +191,10 @@ node "<skill 目錄>/scripts/bdd.mjs" parallel-summary --plan "<本輪>/approved
 
 新派工即使省略 `--plan`，彙總也會讀取派工綁定的清單。漏交整組時，摘要點出組名、將缺少的情境列為未執行，並將 `eligibleForReview` 設為 `false`。全部派工都缺少時，可只傳 `--plan` 與 `--output-dir` 產生本輪缺項摘要。歷史 v1 派工可沿用原指令，該模式只能核對所列的派工檔。
 
-已完成輪次的彙總使用當時的清單、派工與驗證紀錄。v1 核准清單可回讀既有結果，其資料只足以確認當時派出的清單內容。若要再次派工，先依目前受測版本建立 v2 清單並重新送審。未提交異動的結果維持人工核對快照。
+歷史彙總可讀取既有 v1、v2 核准清單與當時的紀錄；重新派工使用 v3 清單並送審。v3 批次彙總須一併保留並提供受審的選測檔。
 
 檢查包含 Schema、派工身分、情境缺漏／重複／多出、kind、證據檔存在與路徑隔離、圖片遮罩雜湊紀錄、修改權、驗證輪次的 repo／HEAD／情境／統計、派工與實際服務版本和網址。缺少或不可採納的結果保守列未執行。多版本、重複跨組情境或 dirty 工作區需人工處理，工具不自動採納；重複情境統計去重且留下問題。
 
 eligibleForReview=true 僅表示全部情境回傳通過且上述檢查無問題，供主代理審閱證據，不能直接當作 all pass 或 issue 更新授權。工具無法判斷證據內容是否支持需求、資料庫是否真的安全、依賴是否解除、服務是否仍是受測版本或是否已完成最終整合。resource-release Schema 只驗格式，requestId、停止要求及實際程序釋放仍依上節由主代理核對；彙整不宣稱停止確認完成。
 
-獨立整合測試：`pwsh -NoProfile -File "<skill 目錄>/tests/Test-ParallelBdd.ps1"`。會建立與清除唯一暫存 Git fixture，不操作受測產品或實際服務。
+獨立整合測試：`node --test "<skill 目錄>/tests/parallel-contracts.test.mjs" "<skill 目錄>/tests/parallel-summary.test.mjs"`。會建立與清除唯一暫存 Git fixture，不操作受測產品或實際服務。

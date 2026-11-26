@@ -9,7 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { previousArchives, readArchiveStates } from '../scripts/lib/archive-index.mjs';
+import { appendIndexEvents, previousArchives, readArchiveStates, withIndexLock } from '../scripts/lib/archive-index.mjs';
 import { archiveIndexCommand } from '../scripts/lib/archive-manager.mjs';
 
 const exec = promisify(execFile);
@@ -67,6 +67,32 @@ test('resolves literal home paths for an archive root and a repository', async t
   await writeFile(path.join(repo, '.bdd', 'config.json'), JSON.stringify({ archiveRoot: '~/store' }));
   assert.equal((await run('--list', '--archive-root', '~/store')).archiveRoot, root);
   assert.equal((await run('--list', '--repo', '~/repo')).archiveRoot, root);
+});
+
+test('the shared writer lock protects existing JSONL including an unterminated last line', async t => {
+  const { root, index } = await fixture(t);
+  await mkdir(root);
+  const a = { event: 'created', archive: path.join(root, 'one.zip'), topic: '第一' };
+  const b = { event: 'created', archive: path.join(root, 'two.zip'), topic: '第二' };
+  await writeFile(index, JSON.stringify(a));
+  await writeFile(index + '.lock', 'other writer');
+  const add = () => withIndexLock(index, stat => appendIndexEvents(index, stat, [b]));
+  await assert.rejects(add(), /其他程序/);
+  assert.equal(await readFile(index, 'utf8'), JSON.stringify(a));
+  await rm(index + '.lock');
+  await add();
+  assert.deepEqual((await readFile(index, 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line)), [a, b]);
+});
+
+test('an upload needs an attachment identifier and marking never certifies a changed ZIP', async t => {
+  const { importArgs, run, index } = await fixture(t);
+  const { archive } = await run(...importArgs);
+  const mark = ['--mark', '--archive', archive, '--status', 'uploaded-verified'];
+  const before = await readFile(index);
+  await assert.rejects(run(...mark), /附件/);
+  await writeFile(archive, 'modified');
+  await assert.rejects(run(...mark, '--attachment', '42'), /SHA-256/);
+  assert.deepEqual(await readFile(index), before);
 });
 
 test('replays only proven cross-issue automatic replacements without changing the index', async t => {

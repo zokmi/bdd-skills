@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -61,86 +65,27 @@ jobs:
           python-version: '3.13'
 
       - name: Check plugin versions
-        shell: pwsh
-        run: |
-          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).version
-          if ($version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw "Invalid plugin version: $version"
-          }
-          foreach ($path in @('.claude-plugin/plugin.json', '.codex-plugin/plugin.json')) {
-            $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-            if ($manifest.version -cne $version) { throw "$path version must match plugin.json" }
-          }
+        run: node tools/check-release.mjs
 
       - name: Check tag and main ancestry
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: |
-          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).version
-          if ($env:GITHUB_REF_NAME -cne "v$version") {
-            throw "Release tag must match plugin.json: expected v$version, got $env:GITHUB_REF_NAME"
-          }
+        run: node tools/check-release.mjs --tag "$GITHUB_REF_NAME"
 
-          git merge-base --is-ancestor HEAD refs/remotes/origin/main
-          if ($LASTEXITCODE -ne 0) { throw 'Release tag must point to a commit on main' }
-
-      - name: Run Pester tests
-        shell: pwsh
+      - name: Install and verify the pinned WebP encoder
         run: |
           python -m pip install --only-binary=:all: --require-hashes -r .github/requirements-webp.txt
-          if ($LASTEXITCODE -ne 0) { throw 'Pillow installation failed' }
-          $webp = python skills/bdd-local-test/scripts/lib/bdd_webp.py check | ConvertFrom-Json
-          if (-not $webp.ok) { throw 'Pillow WebP encoder is unavailable' }
-          Install-Module Pester -RequiredVersion 5.6.1 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
-          Import-Module Pester -RequiredVersion 5.6.1 -ErrorAction Stop
-          Invoke-Pester -Path skills/bdd-local-test/tests -CI
+          node -e "const {execFileSync} = require('node:child_process'); if (!JSON.parse(execFileSync('python', ['skills/bdd-local-test/scripts/lib/bdd_webp.py', 'check'])).ok) throw Error('Pillow WebP encoder is unavailable')"
 
-      - name: Verify concurrent recompression with the pinned Pillow encoder
-        run: node --test skills/bdd-local-test/tests/recompress.test.mjs
-
-      - name: Run parallel BDD contract and summary checks
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-ParallelBdd.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Parallel BDD checks failed' }
-
-      - name: Verify issue-scoped BDD selection
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-QualityPlan.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'BDD quality plan checks failed' }
-
-      - name: Verify concurrent worktree allocation and Playwright CLI configuration
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-WorktreeCli.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Worktree CLI checks failed' }
+      - name: Verify archive and image operations with the pinned encoder
+        run: node --test skills/bdd-local-test/tests/archive-images.test.mjs skills/bdd-local-test/tests/archive-esm.test.mjs skills/bdd-local-test/tests/recompress.test.mjs
 
       - name: Verify live worktree routing in six named Playwright CLI sessions
-        shell: pwsh
         run: |
-          $cliRoot = Join-Path $env:RUNNER_TEMP 'bdd-playwright-cli'
-          npm install --prefix $cliRoot --no-audit --no-fund --ignore-scripts @playwright/cli@0.1.25
-          if ($LASTEXITCODE -ne 0) { throw 'Playwright CLI installation failed' }
-          ./skills/bdd-local-test/tests/Test-LoopbackLive.ps1 -CliPath (Join-Path $cliRoot 'node_modules/@playwright/cli/playwright-cli.js') -ChromePath "${env:ProgramFiles}/Google/Chrome/Application/chrome.exe" -OutputDir (Join-Path $env:RUNNER_TEMP 'bdd-live-results')
-
-      - name: Verify automatic BDD ignore rules
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-BddGitignore.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'BDD ignore checks failed' }
-
-      - name: Verify cross-project loopback allocation
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-CrossRepoSlot.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Cross-project loopback checks failed' }
-
-      - name: Verify test browser cleanup
-        shell: pwsh
-        run: |
-          pwsh -NoProfile -File ./skills/bdd-local-test/tests/Test-StopSlotServices.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Test browser cleanup checks failed' }
+          npm install --prefix "$RUNNER_TEMP/bdd-playwright-cli" --no-audit --no-fund --ignore-scripts @playwright/cli@0.1.25
+          node skills/bdd-local-test/tests/Test-LoopbackLive.mjs \
+            --cli-path "$RUNNER_TEMP/bdd-playwright-cli/node_modules/@playwright/cli/playwright-cli.js" \
+            --chrome-path "$PROGRAMFILES/Google/Chrome/Application/chrome.exe" \
+            --output-dir "$RUNNER_TEMP/bdd-live-results"
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -153,6 +98,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        shell: pwsh
-        run: |
-          gh release create $env:GITHUB_REF_NAME --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes

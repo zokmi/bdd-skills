@@ -9,19 +9,23 @@
 在〈環境〉與〈修正與複測〉註明實際使用的瀏覽器工具、localhost 網址、每輪修正與複測結果。
 每輪於〈BDD 執行模式〉記錄子代理並行／子代理分批／混合、分組依據、實際代理與派工／結果契約位置；只有一個名額而逐組派工時標「子代理分批」，不宣稱同時執行。因無子代理工具或使用者明確禁用而停止時，記錄阻塞原因；不得記為主代理序列實測。只整理既有報告或只產情境時標「未實測」，不虛構派工或新一輪結果。
 
-同一張 issue 接到新回饋時，在〈驗證階段與範圍〉指明本批回饋、調整前的基準 commit、候選版本及受影響行為。通過、失敗、阻塞與未執行各欄只計本批選入的情境。前批未受影響的結果保留在原輪次；引用時附原版本。若前批仍有未解問題，保留其狀態，只有本批涉及的項目才進入本輪清單。
+同一張 issue 接到新回饋時，在〈驗證階段與範圍〉指明本批回饋、上批實測快照或調整前的基準 commit、候選版本及受影響行為。通過、失敗、阻塞與未執行各欄只計本批選入的情境。前批未受影響的結果保留在原輪次；引用時附原版本。若前批仍有未解問題，保留其狀態，只有本批涉及的項目才進入本輪清單。
 
-兩批共用同一個 HEAD 且含未提交調整時，另記上批已保存的差異、這次選入的路徑與情境編號；用 `--capture-revision` 保存實測候選的工作區雜湊。雜湊用來核對版本，批次邊界以兩批間可查證的差異及回饋內容為準。
+在受測 checkout 完成每輪測試時立即執行 `verification --record`，再切換版本或清理工作區。工具在本機 Git 保存該輪的工作樹快照，輪次以 `worktreeSnapshot` 記錄引用。下一批將這份 verification.json 傳給 `quality-plan --previous-verification`。從其他 checkout 重用時須能讀取對應的本機 Git 物件及引用。
+
+同單回饋可在記錄時明列 `--issue <單號>`。快照保存當時受測的 Git 可見工作檔與情境，使用 Git 的內容轉換規則，排除本輪驗證紀錄及 BDD 執行產物。本機引用位於 `refs/bdd/worktree-snapshots/`。用上一輪快照選測時，選測檔的 `base` 是受測的 Git tree，`baseHead` 是當時的 commit；記錄下一輪的提交範圍時，將 `baseHead` 傳給 `verification --record --base`。
+
+若產品檔使用 `assume-unchanged`、`skip-worktree` 或子模組內仍有未提交的內容，工具會指出影響快照的路徑。請從可完整核對的 checkout 記錄，保留原工作區的修改。
 
 **報告必須註記 git commit**：標題表格的「repo」「測試版本」寫完整資訊，〈版本紀錄〉逐輪列出 repo、分支、受測 HEAD（短 SHA）、
 工作區是否乾淨與結果統計，〈受測 commit〉列出本輪涵蓋的每個 commit（短 SHA＋標題）。
 測的是含未提交異動的工作區時照實寫「`<SHA>` + 未提交異動（檔案…）」，不要只寫 SHA 讓人以為測的是乾淨版本。
 同步後複測的輪次，另填〈同步對照〉：來源 repo／commit → 本 repo 對應 commit 與對應方式（`patch`／`subject`／`missing`）。
 
-**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）。使用 v2 核准清單的派工，在該輪實測結束時從受測工作區執行以下指令並加上 `--capture-revision`（PowerShell 入口為 `-CaptureRevision`），再切換版本或清理測資。這會在該輪保存實際 checkout 的 HEAD 與未提交內容雜湊。
+**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）。使用 v3 核准清單的派工，在該輪實測結束時從受測工作區執行以下指令，再切換版本或清理測資。這會在該輪保存實際 checkout 的 HEAD 與未提交內容雜湊。
 
 ```bash
-node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料夾>" --base "<本輪基準 commit>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本批調整的 .feature>::<實測編號>" --regression-scenarios "<回歸的 .feature>::<實測編號>,<實測編號>" --note "<回饋批次與本輪實測範圍>"
+node "<skill 目錄>/scripts/bdd.mjs" verification --record --capture-revision --dir "<輸出資料夾>" --base "<本輪基準 commit>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本批調整的 .feature>::<實測編號>" --regression-scenarios "<回歸的 .feature>::<實測編號>,<實測編號>" --note "<回饋批次與本輪實測範圍>"
 ```
 
 `--changed-scenarios`／`--regression-scenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。

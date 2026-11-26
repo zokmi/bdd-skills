@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { readArchiveStates } from '../scripts/lib/archive-index.mjs';
 import { expandArchive } from '../scripts/lib/extract.mjs';
-import { stageArchiveEntries } from '../scripts/lib/recompress.mjs';
+import { recompressCommand, stageArchiveEntries } from '../scripts/lib/recompress.mjs';
 import { writeZip } from '../scripts/lib/zip-io.mjs';
 
 const execute = promisify(execFile);
@@ -90,15 +92,80 @@ function solidBmp() {
   return data;
 }
 
-test('concurrent recompression keeps one index transition, historical references and the attachment hash', async t => {
-  const available = [['python'], ['python3'], ['py', '-3']].some(([command, ...args]) => {
+function pillowAvailable() {
+  return [['python'], ['python3'], ['py', '-3']].some(([command, ...args]) => {
     const probe = spawnSync(command, [...args, helper, 'check'], { encoding: 'utf8', windowsHide: true });
     return probe.status === 0 && JSON.parse(probe.stdout).ok;
   });
-  if (!available) return t.skip('Requires Python with Pillow WebP support');
+}
+
+test('stale backups, an unavailable encoder and invalid aliases leave the archive and index untouched', async t => {
+  const data = solidBmp();
+  const f = await fixture(t, [{ name: 'evidence/source.bmp', data }]);
+  const originalIndex = await readFile(f.index);
+  for (const [suffix, message] of [['.bak', /備份/], ['.recompress.zip', /暫存檔/]]) {
+    await writeFile(f.archive + suffix, 'preserve');
+    await assert.rejects(f.run(), message);
+    assert.equal(await readFile(f.archive + suffix, 'utf8'), 'preserve');
+    await rm(f.archive + suffix);
+  }
+  await assert.rejects(f.run({ BDD_WEBP_ENCODER: 'none' }), /Pillow/);
+  assert.deepEqual(await readFile(f.archive), f.original);
+  assert.deepEqual(await readFile(f.index), originalIndex);
+  for (const [source, digest] of [['../absent', sha(data)], ['absent', sha(data)], ['source.bmp', '0'.repeat(64)]]) {
+    const manifest = { topic: '歷史', files: { 'source.bmp': { sha256: digest }, 'alias.bmp': { sha256: digest } },
+      aliases: { 'alias.bmp': source } };
+    const bad = await fixture(t, [{ name: '歷史/source.bmp', data },
+      { name: '歷史/bdd-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]);
+    const index = await readFile(bad.index);
+    await assert.rejects(bad.run(), /不安全|alias|內容不符/);
+    assert.deepEqual(await readFile(bad.archive), bad.original);
+    assert.deepEqual(await readFile(bad.index), index);
+    assert.deepEqual((await readdir(bad.root)).sort(), ['index.jsonl', '歷史.zip']);
+  }
+});
+
+test('recompression preserves historical directory layouts and rolls back a failed index append', async t => {
+  if (!pillowAvailable()) return t.skip('Requires Python with Pillow WebP support');
+  const data = solidBmp();
+  for (const [folder, withReport] of [['old/', true], ['', true], ['', false]]) {
+    const entries = [{ name: folder + 'evidence/來源.bmp', data }];
+    if (withReport) entries.push({ name: folder + 'REPORT.md', data: Buffer.from('evidence/' + encodeURIComponent('來源.bmp')) });
+    const f = await fixture(t, entries), initial = await readFile(f.index);
+    const originalOpen = fs.promises.open;
+    const failAppend = t.mock.method(fs.promises, 'open', (file, flags, ...args) => {
+      if (file === f.index && flags === 'a+') throw new Error('simulated index append failure');
+      return originalOpen(file, flags, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(recompressCommand(['--archive', f.archive]), /simulated index append failure/);
+    } finally {
+      failAppend.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.deepEqual(await readFile(f.archive), f.original);
+    assert.deepEqual(await readFile(f.index), initial);
+    assert.deepEqual((await readdir(f.root)).sort(), ['index.jsonl', '歷史.zip']);
+    assert.equal((await f.run()).converted, 1);
+    const to = path.join(f.root, 'restored');
+    const restored = await expandArchive({ archive: f.archive, to });
+    assert.equal(restored.folder, path.join(to, folder ? 'old' : '歷史'));
+    assert.equal(restored.manifest.legacy, true);
+    assert.equal(restored.manifest.recompressedFrom.sha256, sha(f.original));
+    assert.equal(restored.manifest.files['evidence/來源.webp'].originalSha256, sha(data));
+    if (withReport) assert.equal(await readFile(path.join(restored.folder, 'REPORT.md'), 'utf8'), 'evidence/' + encodeURIComponent('來源.webp'));
+  }
+});
+
+test('concurrent recompression keeps one index transition, historical references and the attachment hash', async t => {
+  if (!pillowAvailable()) return t.skip('Requires Python with Pillow WebP support');
   const bmp = solidBmp();
   const source = 'evidence/測試.bmp';
-  const ledger = { files: { [source]: { method: 'css', sha256: sha(bmp) } } };
+  const ledger = { files: {
+    [source]: { method: 'css', sha256: sha(bmp) },
+    'evidence/second.bmp': { method: 'css', sha256: sha('previous image bytes') },
+  } };
   const utf16 = text => Buffer.from('\uFEFF' + text, 'utf16le');
   const resultFile = 'coordination/attempt-2/result.json';
   const otherResult = 'misc/result.json';
@@ -149,6 +216,8 @@ test('concurrent recompression keeps one index transition, historical references
   assert.equal(report, '![](' + webp + ')');
   const savedLedger = JSON.parse(await readFile(path.join(restored.folder, 'masking.json'), 'utf8'));
   assert.equal(savedLedger.files[webp].derivedFrom.sha256, sha(bmp));
+  const mask = await execute(process.execPath, [cli, 'mask-evidence', '--dir', restored.folder, '--status']);
+  assert.ok(JSON.parse(mask.stdout).unmasked.includes('evidence/second.webp'));
   const rewritten = JSON.parse(await readFile(path.join(restored.folder, resultFile), 'utf8'));
   assert.deepEqual(rewritten.scenarios[0], { actual: source, evidence: [webp + '#detail', source + '.txt', 'REPORT.md#test'] });
   assert.equal(restored.manifest.rewrittenLinks[resultFile], 1);

@@ -97,3 +97,50 @@ test('a schema 2 archive cannot publish a payload omitted from its hash manifest
   await assert.rejects(expandArchive(opts), /SHA-256/);
   assert.equal(fs.existsSync(opts.to), false);
 });
+
+test('invalid manifest references never publish payloads or read an existing file as an alias', async t => {
+  const { archive, to } = fixture(t);
+  const existing = path.join(to, 'topic', 'on-disk.txt');
+  fs.mkdirSync(path.dirname(existing), { recursive: true });
+  fs.writeFileSync(existing, data);
+  for (const change of [
+    m => { m.topic = '../outside'; },
+    m => { m.aliases = { '../outside.txt': 'source.txt' }; },
+    m => { m.aliases['copy.txt'] = '../outside.txt'; },
+    m => { m.aliases['copy.txt'] = 'on-disk.txt'; },
+    m => { m.files['../outside.txt'] = { sha256: hash }; },
+    m => { m.files['source.txt'].sha256 = '0'.repeat(64); },
+    m => { m.files['nested/file.txt'] = { sha256: hash }; m.files['nested\\file.txt'] = { sha256: hash }; },
+  ]) {
+    const entries = archiveEntries();
+    const manifest = JSON.parse(entries[1].data);
+    delete manifest.legacy;
+    manifest.topic = 'topic';
+    change(manifest);
+    entries[1].data = Buffer.from(JSON.stringify(manifest));
+    if (fs.existsSync(archive)) fs.unlinkSync(archive);
+    await writeZip(archive, entries);
+    await assert.rejects(expandArchive({ archive, to }));
+    assert.deepEqual(fs.readdirSync(to), ['topic']);
+    assert.deepEqual(fs.readdirSync(path.dirname(existing)), ['on-disk.txt']);
+    assert.deepEqual(fs.readFileSync(existing), data);
+  }
+});
+
+test('restores mixed historical ZIP paths only into regular output directories', async t => {
+  const opts = fixture(t);
+  const outside = path.join(path.dirname(opts.to), 'external');
+  fs.mkdirSync(outside);
+  fs.mkdirSync(opts.to);
+  const linked = path.join(opts.to, 'old');
+  fs.symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  await writeZip(opts.archive, [{ name: 'REPORT.md', data }, { name: 'old/nested/file.txt', data }]);
+  await assert.rejects(expandArchive(opts));
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.deepEqual(fs.readdirSync(opts.to), ['old']);
+  fs.unlinkSync(linked);
+  const r = await expandArchive(opts);
+  assert.equal(r.hasManifest, false);
+  assert.equal(r.written, 2);
+  assert.deepEqual(fs.readFileSync(path.join(opts.to, 'old/nested/file.txt')), data);
+});
