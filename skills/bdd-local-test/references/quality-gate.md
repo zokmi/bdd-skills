@@ -8,7 +8,7 @@ node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <�
 
 - 只有靜態檢查通過才傳入 `--static-passed`。PR 候選、Release 或明確要求全套／全模組驗證時傳入 `--full`。
 - LOW 須確認執行行為不變。第一版只有純文件白名單可走 FAST。MEDIUM 為可界定的局部行為異動。實際改變認證授權、Schema、交易、資料完整性、核心依賴、安全或付款結算時，依系統性風險選 HIGH 並記錄依據。例如調整收據顯示的小數位可只驗證格式與直接使用者；若變更實際扣款金額或結算規則，應提升為 HIGH。本批與哪些情境相依尚未核對時，先以 BLOCKED 補齊映射。
-- 核對模組依賴、共用程式、route、endpoint、資料表讀寫及已知失敗紀錄。只有所有受影響模組都已由路徑匹配涵蓋才傳入 `--impact-complete`。如有外溢、映射缺漏或不確定，省略該參數。明確要求範圍以外的必要回歸須列在報告。
+- 核對模組依賴、共用程式、route、endpoint、資料表讀寫及已知失敗紀錄。確認已涵蓋所有受影響的業務模組，以及本批工程檢查所對應的路徑，再傳入 `--impact-complete`。如有外溢、映射缺漏或不確定，省略該參數。明確要求範圍以外的必要回歸須列在報告。
 
 ### 同一張單的本次回饋
 
@@ -23,6 +23,22 @@ node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --previous
 - 若同一差異還混入其他批次，可用已核對的 `--batch-path` 限定路徑，對每個選入的行為檔和 Feature 明列 `--impact-scenario`。使用上批快照可直接辨識同一 Feature 內本批改動的情境。
 - 程式、設定及其他行為異動，以同一參數逐項連到直接影響及必要回歸。相依情境可來自其他模組；上例只選取計算與匯出這兩個已核對的情境。同單歷史情境、`@core` 或 `@P0` 依本批實際依賴加入映射。輸出的 `batchMappings` 保留人工核對的映射。
 - 缺少影響映射、尚未確認外溢範圍或靜態檢查未通過時，`bddStatus` 為 `BLOCKED`，依 `blockers` 補正後重新產生清單。批次預設風險為 MEDIUM。確認高風險時明確傳入 `--review-risk HIGH` 並在 `--review-reason` 說明，或依使用者要求傳入 `--full` 執行完整驗證。
+
+#### 工程檢查
+
+同單回饋若只改 CI、工具或其他工程行為，可在本輪輸出目錄建立 UTF-8 JSON 檔，以 `--engineering-checks "<本批>/checks.json"` 加入選測。以下範例驗證 CI 的工作矩陣。
+
+```json
+[{
+  "id": "build-matrix",
+  "path": ".github/workflows/build.yml",
+  "action": "以本批設定產生工作矩陣並列出各工作",
+  "expected": "矩陣各包含一個 Windows 和 Linux 工作",
+  "evidence": "保存矩陣輸出及兩個工作的名稱"
+}]
+```
+
+每筆檢查使用唯一 ID，`path` 填本批 Git 差異中的一個路徑。數項技術斷言可對應同一檔案。涉及業務行為和工程驗證時，同時傳入 `--impact-scenario` 與 `--engineering-checks`，Feature 的異動仍須核對實際情境。核對所有改動與必要回歸後加上 `--impact-complete`。工程檢查會保留在選測檔的 `engineeringChecks`，即使沒有業務情境，也可依該檔產生核准清單並派工。純文件變更若明列工程檢查，仍需執行該項檢查。
 
 ### 整單檢查與無單號的模組選測
 

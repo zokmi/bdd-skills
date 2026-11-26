@@ -65,6 +65,14 @@ function checkoutFamilies() {
 function validateScope(groups, commonDir) {
   const groupIds = new Set();
   const owners = new Map();
+  function addOwner(key, repo, description) {
+    const previous = owners.get(key) ?? [];
+    if (previous.some(owner => owner === repo || commonDir(owner) === commonDir(repo))) {
+      throw new Error('Duplicate approved ' + description);
+    }
+    previous.push(repo);
+    owners.set(key, previous);
+  }
   for (const group of groups) {
     const groupKey = group.groupId.toLowerCase();
     if (groupIds.has(groupKey)) throw new Error('Duplicate approved group: ' + group.groupId);
@@ -76,14 +84,10 @@ function validateScope(groups, commonDir) {
           scenario.feature.includes('//')) {
         throw new Error('Expected a repo-relative feature path using forward slashes: ' + scenario.feature);
       }
-      const key = approvedScenarioKey(scenario);
-      const previous = owners.get(key) ?? [];
-      // Most scenarios have a single owner, so planning those needs no Git calls.
-      if (previous.some(owner => owner === repo || commonDir(owner) === commonDir(repo))) {
-        throw new Error('Duplicate approved scenario: ' + group.groupId + '/' + label(scenario));
-      }
-      previous.push(repo);
-      owners.set(key, previous);
+      addOwner(approvedScenarioKey(scenario), repo, 'scenario: ' + group.groupId + '/' + label(scenario));
+    }
+    for (const check of group.engineeringChecks ?? []) {
+      addOwner('engineering:' + check.id, repo, 'engineering check: ' + group.groupId + '/' + check.id);
     }
   }
 }
@@ -106,6 +110,9 @@ function compareGroup(plan, group, actual, issues) {
   if (!matchesPlanReference(plan, actual)) issues.push('Approved plan reference mismatch: ' + group.groupId);
   if (!matchesApprovedTarget(group.revision, actual.target)) {
     issues.push('Assignment HEAD or dirty state differs from the approved revision for group ' + group.groupId);
+  }
+  if (!isDeepStrictEqual(group.engineeringChecks, actual.engineeringChecks)) {
+    issues.push('Assigned engineering checks differ from the approved group: ' + group.groupId);
   }
 
   const remaining = new Map(group.scenarios.map(s => [approvedScenarioKey(s), s]));
@@ -173,12 +180,13 @@ function liveRevisionIssues(groups, assignments = []) {
 function generateAssignment(plan, file) {
   const template = parseJson(fs.readFileSync(file), file);
   if (!template || typeof template !== 'object' || Array.isArray(template)) throw new Error('Expected an assignment template object');
-  if (Object.hasOwn(template, 'scenarios') || Object.hasOwn(template, 'approvedPlan')) {
-    throw new Error('Omit scenarios and approvedPlan from the assignment template');
+  if (['scenarios', 'approvedPlan', 'engineeringChecks'].some(key => Object.hasOwn(template, key))) {
+    throw new Error('Omit scenarios, engineeringChecks and approvedPlan from the assignment template');
   }
   const group = plan.groups.find(group => group.groupId === template.groupId);
   if (!group) throw new Error('Group absent from approved plan: ' + template.groupId);
-  const result = { ...template, scenarios: group.scenarios, approvedPlan: plan.reference };
+  const result = { ...template, scenarios: group.scenarios,
+    ...(group.engineeringChecks && { engineeringChecks: group.engineeringChecks }), approvedPlan: plan.reference };
   validate(assignment, result, 'assignment schema');
   const issues = liveRevisionIssues(plan.scope === 'batch' ? plan.groups : [group], [result]);
   compareGroup(plan, group, result, issues);
@@ -209,6 +217,10 @@ function report(plan) {
         const cells = [group.groupId, a.requirement, s.id + ' ' + s.feature, a.action, a.expected, a.method, a.evidence];
         rows.push('| ' + cells.map(markdownCell).join(' | ') + ' |');
       }
+    }
+    for (const check of group.engineeringChecks ?? []) {
+      const cells = [group.groupId, check.id, '不適用（工程驗證） ' + check.path, check.action, check.expected, '工程檢查', check.evidence];
+      rows.push('| ' + cells.map(markdownCell).join(' | ') + ' |');
     }
   }
   return rows.join('\n');

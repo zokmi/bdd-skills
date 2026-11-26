@@ -19,6 +19,66 @@ function invokeFrom(cwd, expected, ...args) {
 }
 const invoke = (expected, ...args) => invokeFrom(undefined, expected, ...args);
 
+test('an engineering-only batch binds its check, actual result, evidence and verification round', t => {
+  const f = fixture(t);
+  const [{ feature, id }] = f.group.scenarios;
+  fs.writeFileSync(path.join(f.repo, feature), '@' + id + ' @API @#1\nScenario: Amount\n');
+  fs.writeFileSync(path.join(f.repo, path.dirname(feature), 'MODULE.md'), '---\nprefix: SS\npaths:\n  - src/**\n---\n');
+  f.commit();
+  const base = f.git('rev-parse', 'HEAD');
+  fs.writeFileSync(f.source, '42\n');
+  f.commit();
+  const check = { id: 'amount-file', path: 'src/amount.txt', action: 'Read the generated file',
+    expected: 'One line with 42', evidence: 'File contents in the report' };
+  const checks = path.join(f.temp, 'checks.json');
+  save(checks, [check]);
+  const reference = JSON.parse(invoke(0, 'quality-plan', '--repo', f.repo, '--base', base, '--issue', '1',
+    '--run-id', f.plan.runId, '--review-reason', 'Generated file format', '--impact-complete', '--static-passed',
+    '--engineering-checks', checks, '--output', path.join(f.temp, 'selection.json')));
+  Object.assign(f.group, { scenarios: [], engineeringChecks: [check], revision: f.revision() });
+  Object.assign(f.plan, { scope: 'batch', selections: [reference] });
+  save(f.planFile, f.plan);
+  Object.assign(f.template.target, { head: f.group.revision.head, serviceVersion: null });
+  Object.assign(f.template.environment, { apiUrl: null, uiUrl: null });
+  save(f.templateFile, f.template);
+  const assignment = JSON.parse(f.usePlan(0, '--template', f.templateFile));
+  save(f.assignedFile, assignment);
+  const output = f.template.outputDir;
+  const record = JSON.parse(invokeFrom(f.repo, 0, 'verification', '--record', '--capture-revision', '--dir', output,
+    '--base', base, '--engineering-check', check.id, '--engineering-assignment', f.assignedFile, '--passed', '1'));
+  const observed = { id: check.id, expected: check.expected, actual: '42 followed by a newline',
+    evidence: ['REPORT.md#amount'], status: 'passed', reason: null };
+  const result = { ...structuredClone(examples[1]), approvedPlanSha256: assignment.approvedPlan.sha256,
+    scenarios: [], engineeringChecks: [observed], artifacts: { report: 'REPORT.md', masking: null },
+    resourceStates: [], execution: { tool: 'node', apiUrl: null, uiUrl: null, serviceVersion: null } };
+  const resultFile = path.join(path.dirname(f.assignedFile), 'result.json');
+  save(resultFile, result);
+  fs.writeFileSync(path.join(output, 'REPORT.md'), '## Amount\n42\n');
+  const accepted = f.summarize(0, 'accepted');
+  assert.equal(accepted.eligibleForReview, true);
+  assert.equal(accepted.counts.passed, 1);
+  assert.deepEqual(accepted.scenarios, []);
+  assert.deepEqual(accepted.engineeringChecks, [{ groupId: f.group.groupId, repo: f.repo, ...check, status: 'passed' }]);
+  const endpoint = 'http://localhost:4200';
+  save(f.assignedFile, { ...assignment, environment: { ...assignment.environment, uiUrl: endpoint } });
+  save(resultFile, { ...result, execution: { ...result.execution, uiUrl: endpoint } });
+  assert.equal(f.summarize(1, 'unknown-deployed-version').counts['not-run'], 1);
+  save(f.assignedFile, assignment);
+  for (const [name, rows] of [
+    ['missing', []], ['duplicate', [observed, observed]], ['unexpected', [{ ...observed, id: 'other' }]],
+    ['changed-expectation', [{ ...observed, expected: 'Anything' }]], ['no-observation', [{ ...observed, actual: ' ' }]],
+    ['missing-evidence', [{ ...observed, evidence: ['REPORT.md#absent'] }]],
+  ]) {
+    save(resultFile, { ...result, engineeringChecks: rows });
+    assert.equal(f.summarize(1, name).counts['not-run'], 1, name);
+  }
+  save(resultFile, result);
+  save(path.join(output, 'verification.json'), { rounds: [{ ...record, engineeringChecks: [] }] });
+  assert.equal(f.summarize(1, 'not-recorded').eligibleForReview, false);
+  save(path.join(output, 'verification.json'), { rounds: [{ ...record, engineeringSources: [{ id: check.id, path: 'other.txt' }] }] });
+  assert.equal(f.summarize(1, 'wrong-engineering-source').counts['not-run'], 1);
+});
+
 function fixture(t) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-plan-revision-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));

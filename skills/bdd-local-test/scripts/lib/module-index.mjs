@@ -57,18 +57,18 @@ export function parseFeature(bytes, feature, hashFeatures = false) {
       lastTagLine = i + 1;
       continue;
     }
-    const title = line.match(/^(?:場景大綱|場景|劇本大綱|劇本|Scenario Outline|Scenario Template|Scenario|Example)\s*[:：]\s*(.*)$/i);
+    const indexedTitle = line.match(/^(?:場景大綱|場景|劇本大綱|劇本|Scenario Outline|Scenario Template|Scenario|Example)\s*[:：]\s*(.*)$/i);
+    const title = indexedTitle ?? line.match(/^(?:Démonstration|Scénario|Plan du scénario|Exemple|情境(?:大綱)?|场景(?:大纲)?|剧本(?:大纲)?)\s*[:：]\s*(\S.*)$/iu);
     const ids = scenarioIds(tags);
     if (title) {
-      scenarios.push({
+      const rows = indexedTitle ? scenarios : unindexedScenarios;
+      rows.push({
         line: i + 1, title: title[1], tags, ids,
         methods: tags.filter(t => ['@UI', '@API', '@DB'].includes(t)).map(t => t.slice(1)),
       });
     } else if (ids.length) {
-      // Older files can use localized scenario headings outside the quick index.
-      // Keep stray tags for lint/number allocation, but never use them as test IDs.
-      const legacyHeading = /^(?:Démonstration|Scénario|Plan du scénario|Exemple|情境(?:大綱)?|场景(?:大纲)?|剧本(?:大纲)?)\s*[:：]\s*\S/iu.test(line);
-      unindexedScenarios.push({ line: i + 1, ids, ...(legacyHeading ? {} : { unattached: true }) });
+      // Reserve stray IDs for number allocation without treating them as scenarios.
+      unindexedScenarios.push({ line: i + 1, ids, unattached: true });
     }
     tags = [];
   }
@@ -83,10 +83,13 @@ export function parseFeature(bytes, feature, hashFeatures = false) {
 }
 
 // Include supported tagged headings that required full-file review in the quick index.
-export function declaredScenarioIds(feature) {
+export function reviewableScenarios(feature) {
   const legacy = (feature.unindexedScenarios ?? []).filter(s => !s.unattached);
-  const rows = legacy.length ? feature.scenarios.concat(legacy).sort((a, b) => a.line - b.line) : feature.scenarios;
-  return new Set(rows.flatMap(s => s.ids));
+  return legacy.length ? feature.scenarios.concat(legacy).sort((a, b) => a.line - b.line) : feature.scenarios;
+}
+
+export function declaredScenarioIds(feature) {
+  return new Set(reviewableScenarios(feature).flatMap(s => s.ids));
 }
 
 export function checkScenarioIds(available, selected, feature) {

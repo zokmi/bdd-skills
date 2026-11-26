@@ -11,6 +11,19 @@ import { captureEvidence } from '../scripts/lib/evidence-screenshot.mjs';
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const compatibilityCli = fileURLToPath(new URL('../scripts/bdd.cjs', import.meta.url));
 
+test('documented Playwright CLI install commands select the release-tested version', () => {
+  const root = new URL('../../../', import.meta.url);
+  const workflow = fs.readFileSync(new URL('.github/workflows/release.yml', root), 'utf8');
+  const pin = workflow.match(/^\s*npm install\b[^\r\n]*?\s(@playwright\/cli@\d+\.\d+\.\d+)\s*$/m)?.[1];
+  assert.ok(pin, 'Release verification must install an exact Playwright CLI version');
+  for (const guide of ['README.md', 'README.zh-TW.md', 'skills/bdd-local-test/references/local-execution.md']) {
+    const markdown = fs.readFileSync(new URL(guide, root), 'utf8');
+    const installs = [...markdown.matchAll(/`npm install -g (@playwright\/cli[^`\s]*)`/g)];
+    assert.ok(installs.length, 'Missing Playwright CLI install command in ' + guide);
+    for (const [, spec] of installs) assert.equal(spec, pin, guide);
+  }
+});
+
 for (const entry of [cli, compatibilityCli]) {
   test(`${path.basename(entry)} cli-session reports a blocked preflight in JSON`, () => {
     const result = spawnSync(process.execPath, [entry, 'cli-session'], { encoding: 'utf8' });

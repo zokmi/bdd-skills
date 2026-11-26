@@ -321,6 +321,109 @@ test('checks reachable commits in a batch and preserves order and duplicate expl
   assert.ok(historyCalls.length <= 2, JSON.stringify(historyCalls));
 });
 
+test('verification rejects invalid result counts before appending a round', t => {
+  const { repo, output, run, args, base } = fixture(t);
+  const round = run(0, '--record', '--base', base, '--passed', '+3', '--failed', '1', '--blocked', '0');
+  assert.deepEqual(round.result, { passed: 3, failed: 1, blocked: 0, notRun: 0 });
+  const file = path.join(output, 'verification.json');
+  const saved = fs.readFileSync(file);
+  for (const [name, value] of [['passed', '-1'], ['failed', '-1'], ['blocked', '-1'], ['not-run', '-1'],
+    ['passed', '1.5'], ['failed', '9007199254740992']]) {
+    const res = spawnSync(process.execPath, args('--record', '--base', base, '--' + name + '=' + value),
+      { cwd: repo, encoding: 'utf8' });
+    assert.equal(res.status, 2, res.stdout + res.stderr);
+    assert.ok(res.stderr.includes('--' + name), res.stderr);
+    assert.deepEqual(fs.readFileSync(file), saved);
+  }
+});
+
+test('verification records named engineering checks without feature files and keeps prior rounds unchanged', t => {
+  const { repo, output, run, args, base } = fixture(t);
+  const previous = run(0, '--record', '--base', base);
+  assert.equal(Object.hasOwn(previous, 'engineeringChecks'), false);
+  const selected = run(0, '--record', '--base', base, '--engineering-check', 'CLI-01',
+    '--engineering-check', 'DB-02', '--passed', '2');
+  assert.deepEqual(selected.engineeringChecks, ['CLI-01', 'DB-02']);
+  assert.deepEqual(selected.scenarios, []);
+  assert.equal(selected.result.passed, 2);
+  assert.match(run(1, '--check').reasons.join(' '), /工程檢查/);
+  const file = path.join(output, 'verification.json');
+  const saved = fs.readFileSync(file);
+  assert.deepEqual(JSON.parse(saved).rounds, [previous, selected]);
+  for (const extra of [
+    ['--record', '--base', base, '--engineering-check', ' '],
+    ['--record', '--base', base, '--engineering-check', ' CLI-01'],
+    ['--record', '--base', base, '--engineering-check', 'CLI-01', '--engineering-check', 'CLI-01'],
+    ['--check', '--engineering-check', 'CLI-01'],
+  ]) {
+    const res = spawnSync(process.execPath, args(...extra), { cwd: repo, encoding: 'utf8' });
+    assert.equal(res.status, 2, res.stdout + res.stderr);
+    assert.match(res.stderr, /--engineering-check/);
+    assert.deepEqual(fs.readFileSync(file), saved);
+  }
+});
+
+test('engineering assignment binds selected source paths to this checkout even with an empty commit range', t => {
+  const { output, repo, git, run, args, base } = fixture(t);
+  const guide = fs.readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const assignment = JSON.parse(guide.match(/^```json\r?\n([\s\S]*?)\r?\n```/m)[1]);
+  const check = (id, file) => ({ id, path: file, action: 'Inspect source', expected: 'Matches config', evidence: 'Log' });
+  git('mv', 'readme', 'config.yml');
+  git('commit', '-qm', 'replace config');
+  const head = git('rev-parse', 'HEAD');
+  assignment.scenarios = [];
+  assignment.approvedPlan = { path: 'plan.json', sha256: 'a'.repeat(64) };
+  assignment.engineeringChecks = [check('CFG', 'config.yml'), check('OLD', 'readme'), check('OTHER', 'other.yml')];
+  assignment.target = { ...assignment.target, repo, workDir: repo, head };
+  const file = path.join(output, 'assignment.json');
+  const save = () => fs.writeFileSync(file, JSON.stringify(assignment));
+  save();
+  const flags = ['--record', '--base', head, '--engineering-check', 'OLD', '--engineering-check', 'CFG',
+    '--engineering-assignment', file, '--passed', '2'];
+  const round = run(0, ...flags);
+  assert.deepEqual(round.engineeringSources, [{ id: 'OLD', path: 'readme' }, { id: 'CFG', path: 'config.yml' }]);
+  assert.deepEqual(round.files, { readme: null, 'config.yml': git('rev-parse', 'HEAD:config.yml') });
+  assert.deepEqual(round.fileModes, { readme: null, 'config.yml': '100644' });
+  assert.equal(run(0, '--check').verdict, 'current');
+  fs.writeFileSync(path.join(repo, 'other.yml'), 'unselected');
+  git('add', 'other.yml');
+  git('commit', '-qm', 'change unselected');
+  assert.equal(run(0, '--check').verdict, 'still-valid');
+  fs.writeFileSync(path.join(repo, 'readme'), 'reinstated');
+  fs.appendFileSync(path.join(repo, 'config.yml'), 'updated');
+  assert.deepEqual(run(1, '--check').dirtyPaths.sort(), ['config.yml', 'readme']);
+  git('add', '.');
+  git('commit', '-qm', 'change selected');
+  assert.deepEqual(run(1, '--check').changedFiles.sort(), ['config.yml', 'readme']);
+  git('switch', '--detach', head);
+  fs.appendFileSync(path.join(repo, 'config.yml'), 'tested local change');
+  assert.deepEqual(run(0, ...flags).dirtyPaths, ['config.yml']);
+  git('restore', '--', 'config.yml');
+  assert.equal(run(1, '--check').verdict, 'rerun');
+  const recordFile = path.join(output, 'verification.json');
+  for (const patch of [{ engineeringSources: [round.engineeringSources[0]] }, { files: {} }, { fileModes: {} }]) {
+    fs.writeFileSync(recordFile, JSON.stringify({ rounds: [{ ...round, ...patch }] }));
+    assert.match(run(1, '--check').reasons.join(' '), /工程檢查/);
+  }
+  const saved = fs.readFileSync(recordFile);
+  const reject = (...extra) => {
+    const res = spawnSync(process.execPath, args(...extra), { cwd: repo, encoding: 'utf8' });
+    assert.equal(res.status, 2, res.stdout + res.stderr);
+    assert.deepEqual(fs.readFileSync(recordFile), saved);
+  };
+  reject('--check', '--engineering-assignment', file);
+  reject('--record', '--base', 'HEAD', '--engineering-assignment', file);
+  reject(...flags, '--engineering-check', 'unknown');
+  reject(...flags, '--head', base);
+  assignment.target.head = base;
+  save();
+  reject(...flags);
+  assignment.target.head = head;
+  assignment.target.repo = output;
+  save();
+  reject(...flags);
+});
+
 test('records touched paths and ordered subjects with one Git query each across explicit commits', t => {
   const { repo, output, git, args } = fixture(t);
   git('switch', '-qc', 'side');
@@ -352,12 +455,49 @@ test('records touched paths and ordered subjects with one Git query each across 
   const round = JSON.parse(res.stdout);
   assert.deepEqual(round.commits.map(c => c.sha), selected);
   assert.deepEqual(round.commits.map(c => c.subject), ['remove', 'merge side', '加入暫存檔', 'remove']);
-  assert.deepEqual(round.files, { [name]: null });
+  assert.deepEqual(round.files, { [name]: null, 'only-on-side': git('rev-parse', merge + ':only-on-side') });
 
   const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
     .filter(event => event.event === 'start').map(event => event.argv);
   assert.equal(queries.filter(argv => argv.includes('show') && argv.includes('--name-only')).length, 1);
   assert.equal(queries.filter(argv => argv.includes('log')).length, 1);
+});
+
+test('explicit merge selections track rename endpoints and recheck incomplete historical rounds', t => {
+  const { repo, git, output, base, run } = fixture(t);
+  git('switch', '-qc', 'topic');
+  git('mv', 'readme', 'renamed');
+  git('commit', '-qm', 'rename');
+  git('switch', 'main');
+  fs.writeFileSync(path.join(repo, 'main-only'), 'unselected');
+  git('add', 'main-only');
+  git('commit', '-qm', 'main change');
+  git('merge', '--no-ff', '-qm', 'merge topic', 'topic');
+  const merge = git('rev-parse', 'HEAD');
+  const round = run(0, '--record', '--commits', merge);
+  assert.deepEqual(round.files, { readme: null, renamed: git('rev-parse', 'HEAD:renamed') });
+  assert.equal(run(0, '--check').verdict, 'current');
+  fs.appendFileSync(path.join(repo, 'renamed'), 'changed');
+  assert.deepEqual(run(1, '--check').dirtyPaths, ['renamed']);
+  git('commit', '-qam', 'change merged file');
+  assert.deepEqual(run(1, '--check').changedFiles, ['renamed']);
+  const recordFile = path.join(output, 'verification.json');
+  for (const scope of [{ fileScope: 'commits' }, { fileScope: undefined }, { fileScope: undefined, base }]) {
+    const oldRound = { ...round, ...scope, files: {}, fileModes: {} };
+    const historical = JSON.stringify({ rounds: [oldRound] });
+    fs.writeFileSync(recordFile, historical);
+    const checked = run(1, '--check');
+    assert.deepEqual(checked.changedFiles, ['renamed']);
+    assert.match(checked.reasons.join(' '), /未涵蓋.*readme.*renamed/);
+    assert.equal(fs.readFileSync(recordFile, 'utf8'), historical);
+  }
+  git('switch', '--detach', merge);
+  const same = run(1, '--check');
+  assert.deepEqual(same.changedFiles, []);
+  assert.match(same.reasons.join(' '), /未涵蓋/);
+  fs.writeFileSync(path.join(repo, '.git', 'shallow'), merge + '\n');
+  run(2, '--record', '--commits', merge);
+  assert.match(run(1, '--check').reasons.join(' '), /無法重建/);
 });
 
 test('base rounds cover merge resolutions, rename endpoints and transient paths at the tested HEAD', t => {

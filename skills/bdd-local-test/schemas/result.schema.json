@@ -227,6 +227,36 @@
         ]
       }
     },
+    "engineeringChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?$" },
+          "status": { "$ref": "#/properties/scenarios/items/properties/status" },
+          "expected": { "type": ["string", "null"], "pattern": "\\S" },
+          "actual": { "type": ["string", "null"], "pattern": "\\S" },
+          "reason": { "type": ["string", "null"], "pattern": "\\S" },
+          "evidence": { "$ref": "#/properties/scenarios/items/properties/evidence" }
+        },
+        "required": ["id", "status", "expected", "actual", "reason", "evidence"],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "enum": ["passed", "failed"] } } },
+            "then": { "properties": { "expected": { "type": "string" }, "actual": { "type": "string" } } }
+          },
+          {
+            "if": { "properties": { "status": { "const": "passed" } } },
+            "then": { "properties": { "evidence": { "minItems": 1 } } }
+          },
+          {
+            "if": { "properties": { "status": { "enum": ["blocked", "not-run"] } } },
+            "then": { "properties": { "reason": { "type": "string" } } }
+          }
+        ]
+      }
+    },
     "artifacts": {
       "type": "object",
       "properties": {

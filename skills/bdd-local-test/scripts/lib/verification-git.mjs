@@ -76,10 +76,9 @@ export async function commitInfo(root, shas) {
   });
 }
 
-function changedPaths(root, shas, rangeDiff) {
-  const files = new Set(rangeDiff?.split('\0'));
-  const args = ['show', '--format=', '--name-only', '-z'];
-  if (rangeDiff !== undefined) args.push('--no-renames', '--diff-merges=first-parent');
+function changedPaths(root, shas, rangeDiff = '') {
+  const files = new Set(rangeDiff.split('\0'));
+  const args = ['show', '--format=', '--name-only', '-z', '--no-renames', '--diff-merges=first-parent'];
   for (const output of readCommitBatches(root, args, shas)) {
     for (const p of output.split('\0')) files.add(p);
   }
@@ -192,21 +191,29 @@ export async function mapCommits(root, head, last, depth) {
   return mapping;
 }
 
+// Git treats shallow boundaries as roots and omits deletions from their missing parents.
+function assertCompleteHistory(root, candidates) {
+  if (!candidates.length || git(root, ['rev-parse', '--is-shallow-repository']).trim() !== 'true') return;
+  const shallowFile = git(root, ['rev-parse', '--git-path', 'shallow']).trimEnd();
+  const cutoffs = new Set(readFileSync(path.resolve(root, shallowFile), 'utf8').trim().split(/\r?\n/));
+  if (candidates.some(sha => cutoffs.has(sha))) throw new Error('受測範圍的提交歷程不完整，請取得缺少的 Git 歷程');
+}
+
+export function selectedCommitPaths(root, shas) {
+  if (!shas.every(sha => typeof sha === 'string' && fullCommitId.test(sha))) throw new Error('紀錄的 commit SHA 無效');
+  assertCompleteHistory(root, shas);
+  return changedPaths(root, shas);
+}
+
 export function testedChanges(root, references, base, head) {
   if (references.length) {
     const shas = references.map(ref => commit(root, ref));
-    return { shas, paths: changedPaths(root, shas) };
+    return { shas, paths: selectedCommitPaths(root, shas) };
   }
   if (!base) throw new Error('記錄模式需要 --base 或 --commits');
   const history = git(root, ['rev-list', '--parents', '--reverse', base + '..' + head, '--']).trim()
     .split(/\r?\n/).filter(Boolean).map(line => line.split(' '));
-  // rev-list treats a shallow boundary as a root even if the base object exists.
-  const roots = history.filter(row => row.length === 1);
-  if (roots.length && git(root, ['rev-parse', '--is-shallow-repository']).trim() === 'true') {
-    const shallowFile = git(root, ['rev-parse', '--git-path', 'shallow']).trimEnd();
-    const cutoffs = new Set(readFileSync(path.resolve(root, shallowFile), 'utf8').trim().split(/\r?\n/));
-    if (roots.some(([sha]) => cutoffs.has(sha))) throw new Error('受測範圍的提交歷程不完整，請取得缺少的 Git 歷程');
-  }
+  assertCompleteHistory(root, history.filter(row => row.length === 1).map(([sha]) => sha));
   // Keep patch/subject mapping limited to ordinary commits. Merge resolutions
   // still contribute paths, including edits subsequently reverted in the range.
   const shas = history.filter(row => row.length <= 2).map(row => row[0]);

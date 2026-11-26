@@ -61,6 +61,22 @@
         "additionalProperties": false
       }
     },
+    "engineeringChecks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "$ref": "#/$defs/assertionText" },
+          "path": { "$ref": "#/$defs/assertionText" },
+          "action": { "$ref": "#/$defs/assertionText" },
+          "expected": { "$ref": "#/$defs/assertionText" },
+          "evidence": { "$ref": "#/$defs/assertionText" }
+        },
+        "required": ["id", "path", "action", "expected", "evidence"],
+        "additionalProperties": false
+      }
+    },
     "scenarios": {
       "type": "array",
       "items": {
@@ -361,6 +377,12 @@
     "assertionText": { "type": "string", "pattern": "\\S" }
   },
   "if": { "required": ["approvedPlan"] },
-  "then": { "properties": { "scenarios": { "minItems": 1, "items": { "required": ["assertions"] } } } },
-  "else": { "properties": { "scenarios": { "items": { "not": { "required": ["assertions"] } } } } }
+  "then": {
+    "properties": { "scenarios": { "items": { "required": ["assertions"] } } },
+    "anyOf": [{ "required": ["engineeringChecks"] }, { "properties": { "scenarios": { "minItems": 1 } } }]
+  },
+  "else": {
+    "not": { "required": ["engineeringChecks"] },
+    "properties": { "scenarios": { "items": { "not": { "required": ["assertions"] } } } }
+  }
 }

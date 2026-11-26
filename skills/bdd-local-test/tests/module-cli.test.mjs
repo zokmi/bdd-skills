@@ -203,6 +203,35 @@ test('reviewed batch paths separate two uncommitted feedback fixes at the same H
   assert.equal(fs.readFileSync(path.join(repo, saved), 'utf8'), firstPatch);
 });
 
+test('module lint checks localized scenarios and reports both locations of a duplicate ID', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-localized-lint-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const dir = '.bdd/modules/api/orders';
+  fs.mkdirSync(path.join(repo, dir), { recursive: true });
+  fs.writeFileSync(path.join(repo, dir, 'MODULE.md'), '---\nprefix: OR\npaths:\n  - orders.js\n---');
+  const feature = dir + '/orders.feature';
+  fs.writeFileSync(path.join(repo, feature), [
+    'Feature: Orders', '@OR-01 @API @#1', '情境：已成立的訂單',
+    '@OR-01 @UI @#1', 'Scenario: Existing order',
+    '@OR-02', 'Scénario: An order can be edited',
+    '@API @#1', '场景大纲：查詢訂單',
+    '@OR-01 @API @#1', 'Unrecognized heading: needs manual review',
+  ].join('\n'));
+  const index = moduleIndex(repo);
+  const problems = lint(index);
+  assert.deepEqual(problems.map(p => [p.rule, p.file, p.line]), [
+    ['duplicate-id', feature, 5],
+    ['missing-issue-tag', feature, 7],
+    ['missing-method-tag', feature, 7],
+    ['scenario-id', feature, 9],
+  ]);
+  assert.ok(problems[0].message.includes(feature + ':3'));
+  assert.ok(problems[0].message.includes(feature + ':5'));
+  const [parsed] = index.modules[0].features();
+  assert.equal(parsed.requiresFullFeature, true);
+  assert.ok(parsed.unindexedScenarios.some(row => row.line === 11 && row.unattached));
+});
+
 test('mapped plans retain English aliases and flag partially indexed feature files', t => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-index-alias-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
@@ -244,7 +273,7 @@ test('mapped plans retain English aliases and flag partially indexed feature fil
   assert.deepEqual(partial.scenarioImpact[0].incompleteFeatures, [legacyFile]);
   const legacy = partial.selected.find(f => f.feature === legacyFile);
   assert.equal(legacy.requiresFullFeature, true);
-  assert.deepEqual(legacy.unindexedScenarios, [{ line: 14, ids: ['OR-05'] }]);
+  assert.deepEqual(legacy.unindexedScenarios.map(row => [row.line, row.ids]), [[14, ['OR-05']]]);
   assert.deepEqual(legacy.scenarios.flatMap(s => s.ids), ['OR-02', 'OR-03', 'OR-04']);
   const byIssue = buildQualityPlan({ ...options, issue: '1', 'issue-scope': 'issue', 'impact-scenario': undefined });
   assert.equal(byIssue.selected.find(f => f.feature === legacyFile).requiresFullFeature, true);

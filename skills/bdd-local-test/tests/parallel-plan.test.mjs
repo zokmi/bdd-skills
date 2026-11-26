@@ -13,6 +13,88 @@ const guide = fs.readFileSync(new URL('../references/parallel-bdd-contract.md', 
 const example = JSON.parse(guide.match(/^```json\r?\n([\s\S]*?)\r?\n```/m)[1]);
 const writeJson = (file, value) => fs.writeFileSync(file, '\uFEFF' + JSON.stringify(value));
 
+test('engineering-only feedback can be reviewed and assigned with its changed paths and exact checks', t => {
+  const { dir, repo, git, file, plan, template, run } = fixture(t);
+  const scenario = plan.groups[0].scenarios[0];
+  const feature = scenario.feature;
+  fs.writeFileSync(path.join(repo, feature), 'Feature: Orders\n@OR-01 @#42 @API\nScenario: Read order\n');
+  fs.writeFileSync(path.join(repo, path.dirname(feature), 'MODULE.md'), '---\nprefix: OR\npaths:\n  - orders/**\n---\n');
+  const commit = () => git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
+    'commit', '--quiet', '-m', 'checks');
+  git('add', '-f', '--', '.bdd');
+  commit();
+  const base = git('rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(repo, 'build.yml'), 'jobs: [test]\n');
+  git('add', '--', 'build.yml');
+  commit();
+  const checks = [{ id: 'build-matrix', path: 'build.yml', action: 'Run the matrix', expected: 'All jobs pass', evidence: 'Job logs' }];
+  const input = path.join(dir, 'checks.json');
+  const source = path.join(dir, 'selection.json');
+  const quality = (...args) => spawnSync(process.execPath, [cli, 'quality-plan', '--repo', repo, '--base', base, '--issue', '42',
+    '--review-reason', 'Only the build changed', '--static-passed', '--impact-complete', '--engineering-checks', input, ...args],
+  { encoding: 'utf8' });
+  writeJson(input, checks);
+  const selection = quality('--run-id', plan.runId, '--output', source);
+  assert.equal(selection.status, 0, selection.stderr);
+  const selected = JSON.parse(fs.readFileSync(source));
+  assert.equal(selected.bddStatus, 'PENDING');
+  assert.deepEqual(selected.selected, []);
+  assert.deepEqual(selected.engineeringChecks, checks);
+  plan.scope = 'batch';
+  plan.selections = [JSON.parse(selection.stdout)];
+  plan.groups = [{ ...plan.groups[0], revision: selected.revision, scenarios: [], engineeringChecks: checks }];
+  writeJson(file, plan);
+  const report = run('--report');
+  assert.equal(report.status, 0, report.stderr);
+  for (const value of Object.values(checks[0])) assert.ok(report.stdout.includes(value), value);
+  template.target.head = selected.head;
+  const templateFile = path.join(dir, 'template.json');
+  writeJson(templateFile, template);
+  const assignment = run('--template', templateFile);
+  assert.equal(assignment.status, 0, assignment.stderr);
+  const assigned = JSON.parse(assignment.stdout);
+  assert.deepEqual(assigned.engineeringChecks, checks);
+  const assignedFile = path.join(dir, 'assignment.json');
+  writeJson(assignedFile, assigned);
+  assert.equal(run('--assignment', assignedFile).status, 0);
+  assigned.engineeringChecks[0].expected = 'Starts a job';
+  writeJson(assignedFile, assigned);
+  assert.notEqual(run('--assignment', assignedFile).status, 0);
+  plan.groups[0].engineeringChecks = assigned.engineeringChecks;
+  writeJson(file, plan);
+  assert.notEqual(run('--report').status, 0);
+  for (const invalid of [[], [checks[0], checks[0]], [{ ...checks[0], action: ' ' }], [{ ...checks[0], path: 'unchanged.yml' }]]) {
+    writeJson(input, invalid);
+    assert.notEqual(quality().status, 0);
+  }
+  writeJson(input, checks);
+  const orderSource = 'order-list.js';
+  fs.writeFileSync(path.join(repo, orderSource), 'export const showOrders = true;\n');
+  assert.equal(JSON.parse(quality().stdout).bddStatus, 'BLOCKED');
+  const full = JSON.parse(quality('--full').stdout);
+  assert.ok(full.selected.some(f => f.scenarios.some(s => s.ids.includes('OR-01'))));
+  assert.equal(full.bddStatus, 'BLOCKED', 'FULL cannot stand in for mapping a second changed file');
+  const mixedSource = path.join(dir, 'mixed-selection.json');
+  const mixed = quality('--impact-scenario', orderSource + '=OR-01', '--run-id', plan.runId, '--output', mixedSource);
+  assert.equal(mixed.status, 0, mixed.stderr);
+  const mixedSelection = JSON.parse(fs.readFileSync(mixedSource));
+  assert.deepEqual(mixedSelection.selected.map(f => [f.feature, f.scenarios.flatMap(s => s.ids)]), [[feature, ['OR-01']]]);
+  assert.deepEqual(mixedSelection.engineeringChecks, checks);
+  plan.selections = [JSON.parse(mixed.stdout)];
+  plan.groups = [{ ...plan.groups[0], revision: mixedSelection.revision, scenarios: [scenario], engineeringChecks: checks }];
+  writeJson(file, plan);
+  template.target.dirtyPaths = [orderSource];
+  writeJson(templateFile, template);
+  const mixedAssignment = run('--template', templateFile);
+  assert.equal(mixedAssignment.status, 0, mixedAssignment.stderr);
+  const mixedGroup = JSON.parse(mixedAssignment.stdout);
+  assert.deepEqual(mixedGroup.scenarios, [scenario]);
+  assert.deepEqual(mixedGroup.engineeringChecks, checks);
+  writeJson(input, [{ ...checks[0], path: feature }]);
+  fs.appendFileSync(path.join(repo, feature), '\n');
+  assert.notEqual(quality().status, 0);
+});
+
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-approved-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

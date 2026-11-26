@@ -10,7 +10,9 @@
 
 開始實測或派實測子代理前，核對本輪清單已取得[實測範圍審核](execution-workflow.md#實測範圍審核) PASS，並完成下列環境確認。
 
-**必須取得使用者對具體資料庫環境的明確確認，才能開始實測。本機與唯讀情境同樣適用。** 順序如下：
+純工程組若只讀取檔案或執行建置檢查，先核對操作及其呼叫的工具均無資料庫相依，在派工與報告註明「資料庫不適用」及依據，即可執行。其他組別分別依自己的操作核對。
+
+**凡會直接或間接連到資料庫的操作，實測或派工前都須取得使用者對具體資料庫環境的明確確認。** 本機與唯讀情境同樣適用。依下列步驟核對。
 
 1. **盤點實際目標**：讀前端 API 位址、後端生效的連線設定、啟動 profile、環境變數與覆寫來源，列出所有資料庫主機／執行個體、埠（如有）、庫名、租戶（如有）、環境用途、設定來源及本輪讀寫範圍。不輸出密碼、token 或完整連線字串。API 在 localhost、庫名含 Test／Dev 或設定寫 Development 都不能代替確認。未知目標先補齊，不能當作已確認。
 2. **展示並詢問**：例如「本次 API 為 http://localhost:5000，實際資料庫為 (localdb)\\MSSQLLocalDB／App_Test，環境 Development，來源為啟動 profile 與連線設定；測試會新增、修改及清理本輪測試資料。請確認這是正確的測試資料庫，並同意在此環境執行本次 BDD。」依實際情境說明唯讀或寫入範圍，多資料庫逐一列出。
@@ -33,7 +35,7 @@
 
 依核准清單查出所需服務的原始 URL、設定來源、啟動命令及適用的 proxy／SSR 上游。worktree 自動隔離，多專案主 checkout 加 `--isolate`。各組共用本輪服務管理者交付的 IP 與有效埠。整輪只需 API 時，管理者可用 `node bdd.mjs loopback-slot --ports <API 原埠>` 取得對應。純 API 組直接核對服務版本、真實身分及資料範圍；瀏覽器及路由探測僅在操作或必要前置需要 UI 時準備。
 
-`@UI` 的前置套件為 Node.js 20 以上與 Microsoft 的 `@playwright/cli`。以 `npm install -g @playwright/cli@latest` 安裝，再用 `playwright-cli --help` 確認命令可用。若 `open` 回報缺少瀏覽器，依錯誤訊息以 `playwright-cli install-browser <瀏覽器>` 安裝本輪設定使用的瀏覽器，再重試。[官方安裝與命令說明](https://github.com/microsoft/playwright-cli)
+`@UI` 的前置套件為 Node.js 20 以上與 Microsoft 的 `@playwright/cli`。以 `npm install -g @playwright/cli@0.1.25` 安裝，再用 `playwright-cli --help` 確認命令可用。若 `open` 回報缺少瀏覽器，依錯誤訊息以 `playwright-cli install-browser <瀏覽器>` 安裝本輪設定使用的瀏覽器，再重試。[官方安裝與命令說明](https://github.com/microsoft/playwright-cli)
 
 **本輪需要 UI 時**，依 [worktree 隔離](worktree-loopback.md) 執行 `node bdd.mjs prepare-worktree-cli --ports <原埠清單> --output-dir .bdd/.playwright-cli/<本輪-組別>`，保存回傳的 `portMappings` 與 `effectivePorts`。一般單專案主 checkout 沿用專案的 localhost 流程。在本輪暫存目錄建立 CLI 設定 JSON，將 `outputDir` 設為該組暫存目錄的絕對路徑，從受測 checkout 執行 `playwright-cli -s=<名稱> open --config="<設定檔>"`。CLI 會自動保存可能含帳號或畫面內容的 snapshot 與日誌；各組使用 `.bdd/.playwright-cli/<本輪-組別>/` 或私有暫存目錄，與報告、`evidence/` 和封存來源分開。僅保留核准的遮罩證據，測試收尾時清理本輪 CLI 暫存檔。
 

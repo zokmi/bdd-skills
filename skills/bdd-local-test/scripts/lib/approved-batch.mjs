@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { validateEngineeringChecks } from './engineering-checks.mjs';
 
 const commitId = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const sha256 = /^[0-9a-f]{64}$/;
@@ -18,9 +20,10 @@ function readSelection(reference, runId) {
       typeof selection.issue !== 'string' || !/^\d+$/.test(selection.issue)) {
     throw new Error('Expected a batch selection for this runId and issue: ' + reference.path);
   }
+  const engineering = selection.engineeringChecks === undefined ? [] : validateEngineeringChecks(selection.engineeringChecks, selection.paths);
   if (selection.bddStatus !== 'PENDING' || !['TARGETED', 'FULL'].includes(selection.level) || selection.staticPassed !== true ||
       selection.blockers?.length || selection.lint?.length ||
-      !Array.isArray(selection.selected) || !selection.selected.length) {
+      !Array.isArray(selection.selected) || !(selection.selected.length || engineering.length)) {
     throw new Error('Batch selection is not ready for dispatch: ' + reference.path);
   }
   const { repo, base, head, revision } = selection;
@@ -43,7 +46,7 @@ function readSelection(reference, runId) {
       }
     }
   }
-  return { repo, base, revision, issue: selection.issue, expected };
+  return { repo, base, revision, issue: selection.issue, expected, engineering };
 }
 
 // Match the union of every group's scenarios to the immutable output of quality-plan.
@@ -53,9 +56,10 @@ export function validateBatchScope(plan, commonDir) {
   const approved = new Map();
   for (const group of plan.groups) {
     const key = candidate(group.repo, group.revision);
-    if (!approved.has(key)) approved.set(key, new Set());
-    const ids = approved.get(key);
+    if (!approved.has(key)) approved.set(key, { ids: new Set(), checks: new Map() });
+    const { ids, checks } = approved.get(key);
     for (const s of group.scenarios) ids.add(scenarioKey(s.feature, s.id));
+    for (const check of group.engineeringChecks ?? []) checks.set(check.id, check);
   }
   let issue;
   const evidence = [];
@@ -64,8 +68,12 @@ export function validateBatchScope(plan, commonDir) {
     issue ??= selection.issue;
     if (selection.issue !== issue) throw new Error('Batch selections refer to different issues');
     const key = candidate(selection.repo, selection.revision);
-    const ids = approved.get(key);
-    if (!ids) throw new Error('Unexpected or duplicate batch selection for this checkout and revision: ' + selection.repo);
+    const batch = approved.get(key);
+    if (!batch) throw new Error('Unexpected or duplicate batch selection for this checkout and revision: ' + selection.repo);
+    const { ids, checks } = batch;
+    if (checks.size !== selection.engineering.length || selection.engineering.some(c => !isDeepStrictEqual(c, checks.get(c.id)))) {
+      throw new Error('Approved engineering checks differ from the batch selection for ' + selection.repo);
+    }
     const missing = [...selection.expected].filter(s => !ids.has(s));
     const extra = [...ids].filter(s => !selection.expected.has(s));
     if (missing.length || extra.length) {

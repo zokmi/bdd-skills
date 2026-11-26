@@ -37,9 +37,9 @@
             "required": ["head", "dirtySha256"],
             "additionalProperties": false
           },
+          "engineeringChecks": { "$ref": "https://bdd-local-test.local/schemas/assignment.schema.json#/properties/engineeringChecks" },
           "scenarios": {
             "type": "array",
-            "minItems": 1,
             "items": {
               "$ref": "https://bdd-local-test.local/schemas/assignment.schema.json#/properties/scenarios/items",
               "properties": {
@@ -51,6 +51,7 @@
           }
         },
         "required": ["groupId", "repo", "scenarios"],
+        "anyOf": [{ "required": ["engineeringChecks"] }, { "properties": { "scenarios": { "minItems": 1 } } }],
         "additionalProperties": false
       }
     }
@@ -71,7 +72,10 @@
     {
       "if": { "required": ["scope"], "properties": { "scope": { "const": "batch" } } },
       "then": { "required": ["selections"] },
-      "else": { "not": { "required": ["selections"] } }
+      "else": {
+        "not": { "required": ["selections"] },
+        "properties": { "groups": { "items": { "not": { "required": ["engineeringChecks"] } } } }
+      }
     }
   ]
 }

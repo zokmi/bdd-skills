@@ -10,7 +10,7 @@
 
 引用報告位置時，該紀錄必須能追溯至本任務使用者的原始確認回覆；報告單獨宣稱「已確認」不能作為授權。
 
-實測派工前，主代理必須已取得使用者對具體資料庫與讀寫範圍的明確確認；`environment.confirmationBasis` 記錄回覆摘要與可追溯對話位置／時間或報告位置，`databaseTarget` 列出全部實際主機／執行個體與庫名。本機判定、`writeAuthorized=true` 或代理自行核對都不能代替使用者確認。唯讀組同樣適用；缺少確認或實際目標不符時，子代理停止並回報主代理，不執行情境。
+派工執行 UI／API／DB 情境或存取資料庫的工程檢查前，主代理必須已取得使用者對具體資料庫與讀寫範圍的明確確認。`environment.confirmationBasis` 記錄回覆摘要與可追溯對話位置／時間或報告位置，`databaseTarget` 列出全部實際主機／執行個體與庫名。本機判定、`writeAuthorized=true` 或代理自行核對都不能代替使用者確認。唯讀組同樣適用，缺少確認或實際目標不符時，子代理停止並回報主代理。
 
 主代理在啟動子代理前寫入。`scenarios` 必須列出每個編號，不用「全部」等不明確值；`kind` 僅可為 `changed` 或 `regression`。路徑 `feature` 相對於該 repo，以 `/` 分隔；workDir／outputDir／instructions 使用絕對路徑。`dependsOn` 是本輪前置 groupId，依賴尚未解除不能執行受影響情境。
 
@@ -61,6 +61,12 @@ UI 派工附文列出每組的 `browser.isolationId`、實際 `-s=<名稱>`、�
 收到含 `approvedPlan` 的派工時，子代理在執行時記下 `assignment.approvedPlan.sha256`，並將同一值填入結果的 `approvedPlanSha256`。彙總時會連同 runId、groupId 及 attempt 核對。下方範例使用原有 v1 結果欄位。
 
 使用 v3 核准清單時，子代理在實測工作區完成該輪測試後執行 `verification --record --capture-revision`，其餘參數見[報告與驗證紀錄](reporting.md)。工具從實際 checkout 擷取該輪的 `revision`。彙總會逐組比對受審與實測的 HEAD 及未提交內容雜湊。若實測版不同或缺少當時的快照，該輪無法採納。
+
+批次選測含工程檢查時，依組別將選測檔中的各筆 `engineeringChecks` 原樣放入核准清單，每個 ID 交給一組。純工程組填 `scenarios: []`。工程檢查列出的操作若不使用資料庫、瀏覽器或部署服務，相關目標與版本填 `null`，`writeAuthorized` 填 `false`，`confirmationBasis` 說明本組執行範圍。需要上述資源的檢查仍記錄實際環境及適用授權。工程組同樣須核對受審 HEAD 與實測版本。
+
+每輪記錄時，在 `verification --record --capture-revision` 加上 `--engineering-assignment <本組的 assignment.json>`，並為本組每個派工 ID 各傳一次 `--engineering-check <id>`，包含阻塞與未執行的項目。工具依派工檔保存各 ID 的受測路徑。`--passed`、`--failed`、`--blocked`、`--not-run` 填業務情境與工程檢查的合計。
+
+在 `result.json` 的 `engineeringChecks` 為每個派工 ID 寫一筆結果。例如 `{"id":"build-matrix","status":"passed","expected":"矩陣各包含一個 Windows 和 Linux 工作","actual":"產生 windows-build 和 linux-build 各一次","evidence":["REPORT.md#build-matrix"],"reason":null}`。`expected` 使用核准值。通過時附上能核對觀察結果的實際檔案或報告段落，阻塞及未執行時寫明原因。彙總結果的 `engineeringChecks` 可逐項核對工程狀態。
 
 子代理在完成或停止本次 attempt 時寫入。`taskStatus` 為 `completed`、`blocked` 或 `interrupted`，僅表示派工狀態，completed 可以包含測試失敗。`scenarios[].status` 僅為 `passed`、`failed`、`blocked`、`not-run`，分別對應通過、失敗、阻塞、未執行。
 
@@ -161,7 +167,7 @@ blockers 每項使用 `{ "reason": "缺少指定角色帳號", "scenarioIds": ["
 
 1. 對每個受測 checkout 根目錄執行 `--revision`，將回傳的完整物件填入對應組別的 `revision`。`head` 為實際 commit，乾淨工作區的 `dirtySha256` 為 `null`；有異動時，此值涵蓋 Git 暫存區、工作樹變更與未被忽略的未追蹤檔。將本輪清單、派工檔及報告放在既有 Git 忽略的執行輸出目錄或 checkout 外，避免這些檔案本身改變受審內容。
 2. 以 `--report` 核對選測檔內容的 SHA-256、批次、受測版本，以及各組合計的 Feature 路徑與情境 ID。漏列、多列或錯用上一批的 ID 時，先修正清單再送審。通過後產生清單 SHA-256、候選版本與情境斷言表，放入 `REPORT.md` 的〈預計驗證項目〉，連同清單原檔、選取理由及適用的工程檢查送獨立審核。把 PASS 與該次審核的路徑及 SHA-256 一起記錄。候選版本、未提交內容或範圍變更時，重新擷取版本、另存新清單並複審。
-3. 依上方派工輸入範例準備各組的 `template.json`，填入實際環境、版本、資源、權限與 attempt，省略 `scenarios` 及 `approvedPlan`。建立各組本次 attempt 的目錄後，用 `--template` 產生派工檔。產生器先核對整批情境及該組候選版本，再寫入核准的斷言、清單絕對路徑及 SHA-256。
+3. 依上方派工輸入範例準備各組的 `template.json`，填入實際環境、版本、資源、權限與 attempt，省略 `scenarios`、`engineeringChecks` 及 `approvedPlan`。建立各組本次 attempt 的目錄後，用 `--template` 產生派工檔。產生器核對整批情境、工程檢查和受審版本，再寫入各組的核准內容、清單絕對路徑及 SHA-256。
 4. 開始派工前，將本輪所有組的派工檔逐一以 `--assignment` 傳給 `parallel-plan`。此時再次核對工作區版本。清單雜湊與審核紀錄一致且整輪核對通過後，再按原先的依賴與批次交付派工。複測時選定每組採用的 attempt。
 
 ```sh

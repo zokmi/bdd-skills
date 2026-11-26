@@ -43,4 +43,5 @@ const approvedPlan = readSchema('approved-plan');
 const contracts = new Ajv({ schemas: [assignment, result, approvedPlan], strictTypes: false, code });
 emit('parallel-validators.mjs', standalone(contracts, {
   assignment: assignment.$id, result: result.$id, approvedPlan: approvedPlan.$id,
+  engineeringChecks: assignment.$id + '#/properties/engineeringChecks',
 }));

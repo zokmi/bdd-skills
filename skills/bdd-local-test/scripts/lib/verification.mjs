@@ -3,9 +3,11 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { captureApprovedRevision } from './approved-revision.mjs';
+import { hasEngineeringCoverage, validateEngineeringChecks } from './engineering-checks.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, parseFeature, readFeature } from './module-index.mjs';
-import { git, repoIdentity, treeEntriesAt, dirtyPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
+import { readContract } from './parallel-contracts.mjs';
+import { git, repoIdentity, treeEntriesAt, dirtyPaths, selectedCommitPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
 import { captureWorktreeSnapshot, pinWorktreeSnapshot } from './worktree-snapshot.mjs';
 
 function readDocument(file) {
@@ -82,17 +84,39 @@ function intOption(value, name) {
   return Number(value);
 }
 
+function assignedSources(file, ids, root, currentHead, head) {
+  const { target, engineeringChecks = [] } = readContract(file, 'assignment');
+  const checkout = fs.realpathSync.native(root);
+  if (target.head !== head || currentHead !== head || !path.isAbsolute(target.repo) || !path.isAbsolute(target.workDir) ||
+      fs.realpathSync.native(target.repo) !== checkout || fs.realpathSync.native(repoRoot(target.workDir)) !== checkout) {
+    throw new Error('--engineering-assignment 的 checkout 與受測 HEAD 須符合目前工作區');
+  }
+  // The assignment carries the paths from the batch selection, including paths since deleted from HEAD.
+  validateEngineeringChecks(engineeringChecks, engineeringChecks.map(check => check.path));
+  const paths = new Map(engineeringChecks.map(check => [check.id, check.path]));
+  return ids.map(id => {
+    if (!paths.has(id)) throw new Error('派工未指定工程檢查：' + id);
+    return { id, path: paths.get(id) };
+  });
+}
+
 async function record(file, opts) {
-  const result = Object.fromEntries(['passed', 'failed', 'blocked', 'not-run'].map(name =>
-    [name === 'not-run' ? 'notRun' : name, intOption(opts[name] ?? '0', name)]));
+  const result = Object.fromEntries(['passed', 'failed', 'blocked', 'not-run'].map(name => {
+    const count = intOption(opts[name] ?? '0', name);
+    if (count < 0) throw new Error('--' + name + ' 必須為非負整數');
+    return [name === 'not-run' ? 'notRun' : name, count];
+  }));
   const root = repoRoot('.');
   const currentHead = commit(root, 'HEAD');
   const head = opts.head && opts.head !== 'HEAD' ? commit(root, opts.head) : currentHead;
+  const sources = opts['engineering-assignment']
+    ? assignedSources(opts['engineering-assignment'], opts['engineering-check'], root, currentHead, head) : [];
   const revision = opts['capture-revision'] ? captureApprovedRevision(root) : null;
   if (revision && revision.head !== head) throw new Error('記錄受測快照時，指定的 HEAD 須與實際 checkout 相同');
   const base = opts.base ? commit(root, opts.base) : null;
   const refs = (opts.commits || []).flatMap(s => s.split(/[,\s]+/)).filter(Boolean);
-  const { shas, paths } = testedChanges(root, refs, base, head);
+  const changes = testedChanges(root, refs, base, head);
+  const paths = [...new Set([...changes.paths, ...sources.map(s => s.path)])];
   const hasScenarios = opts['changed-scenarios']?.length || opts['regression-scenarios']?.length;
   const historicalHead = hasScenarios && head !== currentHead ? head : null;
   const scenarios = [
@@ -104,11 +128,13 @@ async function record(file, opts) {
   for (const s of scenarios) s.blob = blobs[s.path];
   const round = {
     recordedAt: recordedAt(new Date()), repo: repoIdentity(root), branch: git(root, ['branch', '--show-current']).trim(),
-    head, base, baseRef: opts.base || '', dirtyPaths: dirtyPaths(root, allPaths), commits: await commitInfo(root, shas),
-    fileScope: refs.length ? 'commits' : 'base',
+    head, base, baseRef: opts.base || '', dirtyPaths: dirtyPaths(root, allPaths), commits: await commitInfo(root, changes.shas),
+    fileScope: refs.length ? 'commits-first-parent' : 'base',
     fileModes: modes,
     files: Object.fromEntries(paths.map(p => [p, blobs[p]])), scenarios, result, note: opts.note || '',
   };
+  if (opts['engineering-check']) round.engineeringChecks = opts['engineering-check'];
+  if (sources.length) round.engineeringSources = sources;
   if (revision) round.revision = revision;
   if (head === currentHead) {
     round.worktreeSnapshot = captureWorktreeSnapshot(root, head, file, opts.issue);
@@ -125,24 +151,29 @@ async function record(file, opts) {
 
 const normalizedUrl = url => url.trim().toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '');
 
-function checkedFiles(root, last, sameRepo, reasons) {
-  if (last.fileScope || !last.base || !sameRepo) return last.files;
-  // Older records also kept a base when explicit commits overrode --base.
-  // Reconstruct range coverage only if its commits match the recorded selection.
+function checkedScope(root, last, sameRepo, reasons) {
+  if (!sameRepo || last.fileScope === 'base' || last.fileScope === 'commits-first-parent') return last;
   try {
-    if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(last.base)) throw new Error('基準 SHA 無效');
-    const { shas, paths } = testedChanges(root, [], last.base, last.head);
-    const selected = new Set(last.commits.map(c => c.sha));
-    if (selected.size !== shas.length || !shas.every(sha => selected.has(sha))) return last.files;
+    const selected = last.commits.map(c => c.sha);
+    let paths;
+    if (!last.fileScope && last.base) {
+      // Older records also kept a base when explicit commits overrode --base.
+      if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(last.base)) throw new Error('基準 SHA 無效');
+      const range = testedChanges(root, [], last.base, last.head);
+      const ids = new Set(selected);
+      if (ids.size === range.shas.length && range.shas.every(sha => ids.has(sha))) paths = range.paths;
+    }
+    paths ??= selectedCommitPaths(root, selected);
     const omitted = paths.filter(p => !Object.hasOwn(last.files, p));
-    if (!omitted.length) return last.files;
+    if (!omitted.length) return last;
     // Committed blobs are recoverable. The omitted paths' working-tree state
     // at test time was never captured, even if their committed blobs still match.
     reasons.push('舊驗證紀錄未涵蓋以下受測路徑，無法確認實測當時的工作區狀態：' + omitted.join('、'));
-    return { ...last.files, ...treeEntriesAt(root, last.head, omitted).blobs };
+    const { blobs, modes } = treeEntriesAt(root, last.head, omitted);
+    return { ...last, files: { ...last.files, ...blobs }, fileModes: last.fileModes && { ...last.fileModes, ...modes } };
   } catch (error) {
     reasons.push('無法重建舊驗證紀錄的受測範圍：' + error.message);
-    return last.files;
+    return last;
   }
 }
 
@@ -154,6 +185,7 @@ async function check(last, depth) {
   const repo = repoIdentity(root);
   const head = commit(root, 'HEAD');
   const reasons = [];
+  if (!hasEngineeringCoverage(last)) reasons.push('工程檢查缺少對應的受測來源與檔案版本，請依派工重新驗證');
   const sameUrl = normalizedUrl(repo.url) === normalizedUrl(last.repo.url);
   const sameRepo = sameUrl && (repo.url || last.repo.name === repo.name);
   if (!sameRepo) reasons.push('repo 不同：紀錄於 ' + last.repo.name + '（' + last.repo.url + '），目前為 ' + repo.name + '（' + repo.url + '）');
@@ -167,12 +199,12 @@ async function check(last, depth) {
   if (rewritten.length) reasons.push(rewritten.length + ' 個受測 commit 只找到同標題的 commit，內容有差異：' + rewritten.map(m => m.subject).join('；'));
   if (missing.length) reasons.push(missing.length + ' 個受測 commit 在目前 repo 找不到：' + missing.map(m => m.subject).join('；'));
   const scenarios = last.scenarios ?? [];
-  const recordedFiles = checkedFiles(root, last, sameRepo, reasons);
+  const { files: recordedFiles, fileModes } = checkedScope(root, last, sameRepo, reasons);
   const files = Object.keys(recordedFiles);
   const paths = [...files, ...scenarios.map(s => s.path)];
   const { blobs, modes } = treeEntriesAt(root, head, paths);
   // Older rounds stored only object IDs. Recover the modes from their immutable tested tree.
-  let recordedModes = last.fileModes;
+  let recordedModes = fileModes;
   if (!recordedModes && (descended || git(root, ['cat-file', '-e', last.head + '^{commit}'], [0, 1, 128]) !== null)) {
     recordedModes = head === last.head ? modes : treeEntriesAt(root, last.head, paths).modes;
   }
@@ -199,11 +231,19 @@ export async function verificationCommand(args) {
   const flag = { type: 'boolean' };
   const { values: v } = parseArgs({ args, options: {
     dir: str, record: flag, check: flag, 'capture-revision': flag, issue: str, base: str, commits: list, head: str, passed: str, failed: str,
-    blocked: str, 'not-run': str, note: str, 'changed-scenarios': list, 'regression-scenarios': list, 'search-depth': str,
+    blocked: str, 'not-run': str, note: str, 'changed-scenarios': list, 'regression-scenarios': list,
+    'engineering-check': list, 'engineering-assignment': str, 'search-depth': str,
   } });
   if (!v.dir || Boolean(v.record) === Boolean(v.check)) throw new Error('請指定 --dir，並擇一指定 --record 或 --check');
   if (v.issue !== undefined && (!v.record || !/^\d+$/.test(v.issue))) throw new Error('--issue 須與 --record 一起指定數字單號');
   if (v['capture-revision'] && !v.record) throw new Error('--capture-revision 適用於 --record');
+  const checks = v['engineering-check'];
+  if (checks && (!v.record || new Set(checks).size !== checks.length || checks.some(id => !id || id !== id.trim() || /[\r\n]/.test(id)))) {
+    throw new Error('--engineering-check 須搭配 --record，且 ID 必須非空、無首尾空白且不可重複');
+  }
+  if (v['engineering-assignment'] !== undefined && (!v['engineering-assignment'] || !v.record || !checks?.length)) {
+    throw new Error('--engineering-assignment 須與 --record 及 --engineering-check 一併使用');
+  }
   const file = path.join(v.dir, 'verification.json');
   if (v.record) {
     console.log(JSON.stringify(await record(file, v)));

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EOL } from 'node:os';
-import { parseArgs } from 'node:util';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
+import { hasEngineeringCoverage } from './engineering-checks.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, parseFeature } from './module-index.mjs';
 import { git, repoIdentity } from './verification-git.mjs';
@@ -33,7 +34,10 @@ function verificationRound(root, a, r, repo, approvedRevision) {
       round.revision?.dirtySha256 !== approvedRevision.dirtySha256)) {
     throw new Error('Recorded candidate revision is missing or differs from the approved plan. Record the tested checkout with --capture-revision.');
   }
-  if (round.head !== a.target.head || !r.execution.serviceVersion || r.execution.serviceVersion !== a.target.serviceVersion) {
+  const localEngineeringCheck = approvedRevision && !a.scenarios.length && a.engineeringChecks?.length &&
+    a.environment.uiUrl === null && a.environment.apiUrl === null && !a.resources.some(resource => resource.type === 'service');
+  if (round.head !== a.target.head || (!localEngineeringCheck && !r.execution.serviceVersion) ||
+      r.execution.serviceVersion !== a.target.serviceVersion) {
     throw new Error('Actual version differs from assignment or is unknown');
   }
   if (r.execution.uiUrl !== a.environment.uiUrl || r.execution.apiUrl !== a.environment.apiUrl) {
@@ -54,7 +58,31 @@ function verificationRound(root, a, r, repo, approvedRevision) {
   return round;
 }
 
-function checkScenarios(root, a, r, round, repo, historicalFeatures) {
+function engineeringResults(assigned, submitted, round, checkEvidence, total) {
+  const recorded = round.engineeringChecks ?? [];
+  if (!hasEngineeringCoverage(round)) throw new Error('Incomplete engineering source coverage. Record with --engineering-assignment.');
+  const planned = new Map(assigned.map(check => [check.id, check]));
+  const remaining = new Set(recorded);
+  if (remaining.size !== recorded.length || remaining.size !== planned.size ||
+      recorded.some(id => !planned.has(id))) throw new Error('Engineering checks differ from verification round');
+  if (round.engineeringSources?.some(source => source.path !== planned.get(source.id).path)) {
+    throw new Error('Engineering source paths differ from the assignment');
+  }
+  const results = new Map();
+  for (const check of submitted) {
+    if (!remaining.delete(check.id)) throw new Error('Unexpected or duplicate engineering result: ' + check.id);
+    if (check.expected !== null && check.expected !== planned.get(check.id).expected) {
+      throw new Error('Engineering result differs from approved expectation: ' + check.id);
+    }
+    for (const ref of check.evidence) checkEvidence(ref, check.status === 'passed');
+    results.set(check.id, check);
+    total[check.status]++;
+  }
+  if (remaining.size) throw new Error('Missing engineering results: ' + [...remaining].join(', '));
+  return results;
+}
+
+function checkResults(root, a, r, round, repo, historicalFeatures) {
   artifact(root, r.artifacts.report);
   if (r.artifacts.masking) artifact(root, r.artifacts.masking);
   checkModifiedPaths(r.modifiedPaths, a.permissions.editablePaths);
@@ -82,6 +110,7 @@ function checkScenarios(root, a, r, round, repo, historicalFeatures) {
     if (s.status === 'passed' && (!s.expected || !s.actual)) throw new Error('Passed scenario lacks expected/actual: ' + label(s));
     total[s.status]++;
   }
+  const engineering = engineeringResults(a.engineeringChecks ?? [], r.engineeringChecks ?? [], round, checkEvidence, total);
   for (const [status, field] of Object.entries(statusFields)) {
     if (round.result[field] !== total[status]) throw new Error('Verification count mismatch: ' + status);
   }
@@ -91,7 +120,7 @@ function checkScenarios(root, a, r, round, repo, historicalFeatures) {
     if (states.get(id.toLowerCase()) !== 1) throw new Error('Missing or duplicate resource state: ' + id);
   }
   if (r.rerunScenarios.length) throw new Error('Pending rerun scenarios');
-  return results;
+  return { scenarios: results, engineering };
 }
 
 function groupResults(root, a, group, issues, versions, { repo, repoId }, approvedRevision, historicalFeatures) {
@@ -106,17 +135,22 @@ function groupResults(root, a, group, issues, versions, { repo, repoId }, approv
     group.result = resultPath;
   } catch (err) {
     issues.push(a.groupId + ': ' + err.message);
-    return new Map();
+    return { scenarios: new Map(), engineering: new Map() };
   }
   if (result.taskStatus !== 'completed' || result.blockers.length) issues.push(a.groupId + ': Task incomplete or unresolved blockers');
   try {
     const round = verificationRound(root, a, result, repo, approvedRevision);
     group.version = { repo: round.repo, head: round.head, serviceVersion: result.execution.serviceVersion };
-    versions.add(JSON.stringify([repoId, round.head, result.execution.serviceVersion]));
-    return checkScenarios(root, a, result, round, repo, approvedRevision && historicalFeatures);
+    const candidate = JSON.stringify([repoId, round.head]);
+    if (!versions.has(candidate)) versions.set(candidate, new Set());
+    if (result.execution.serviceVersion) versions.get(candidate).add(result.execution.serviceVersion);
+    return checkResults(root, a, result, round, repo, approvedRevision && historicalFeatures);
   } catch (err) {
     issues.push(a.groupId + ': ' + err.message);
-    return new Map(result.scenarios.filter(s => s.status === 'blocked' && s.reason).map(s => [scenarioKey(s), s]));
+    return {
+      scenarios: new Map(result.scenarios.filter(s => s.status === 'blocked' && s.reason).map(s => [scenarioKey(s), s])),
+      engineering: new Map((result.engineeringChecks ?? []).filter(s => s.status === 'blocked' && s.reason).map(s => [s.id, s])),
+    };
   }
 }
 
@@ -127,6 +161,7 @@ export function summarize(assignments, destination, planFile) {
   const issues = plan ? compareApprovedPlan(plan, records) : [];
   const groups = [];
   const scenarios = [];
+  const engineeringChecks = [];
   const approvedGroups = new Map();
   for (const group of plan?.groups ?? []) {
     const rows = new Map();
@@ -135,14 +170,20 @@ export function summarize(assignments, destination, planFile) {
       scenarios.push(row);
       rows.set(scenarioKey(s), row);
     }
-    approvedGroups.set(group.groupId, { repo: approvedRepoKey(group.repo), revision: group.revision, rows, submissions: 0 });
+    const checks = new Map();
+    for (const check of group.engineeringChecks ?? []) {
+      const row = { groupId: group.groupId, repo: group.repo, ...check, status: 'not-run' };
+      engineeringChecks.push(row);
+      checks.set(check.id, { check, row });
+    }
+    approvedGroups.set(group.groupId, { repo: approvedRepoKey(group.repo), revision: group.revision, rows, checks, submissions: 0 });
   }
   for (const a of records) {
     const group = approvedGroups.get(a.groupId);
     if (group) group.submissions++;
   }
   const seen = new Set();
-  const versions = new Set();
+  const versions = new Map();
   const identities = new Set();
   const repos = new Map();
   const historicalFeatures = new Map();
@@ -171,10 +212,18 @@ export function summarize(assignments, destination, planFile) {
     }
     const checkout = repos.get(target);
     const approved = approvedGroups.get(a.groupId);
-    const results = groupResults(root, a, group, issues, versions, checkout, approved?.revision, historicalFeatures);
+    const { scenarios: results, engineering } = groupResults(root, a, group, issues, versions, checkout, approved?.revision, historicalFeatures);
     const assigned = new Set();
     const bound = approved?.submissions === 1 && a.runId === runId && matchesPlanReference(plan, a) &&
       approved.repo === approvedRepoKey(a.target.repo) && matchesApprovedTarget(approved.revision, a.target);
+    for (const check of a.engineeringChecks ?? []) {
+      const planned = approved?.checks.get(check.id);
+      if (bound && plan.scope === 'batch' && planned && isDeepStrictEqual(check, planned.check)) {
+        planned.row.status = engineering.get(check.id)?.status ?? 'not-run';
+      } else {
+        issues.push('Engineering check differs from approved batch: ' + a.groupId + '/' + check.id);
+      }
+    }
     for (const s of a.scenarios) {
       const id = scenarioKey(s);
       if (assigned.has(id)) issues.push('Duplicate assigned scenario: ' + label(s));
@@ -203,11 +252,15 @@ export function summarize(assignments, destination, planFile) {
     }
     for (const [id, s] of results) if (!assigned.has(id)) issues.push('Unexpected result scenario: ' + label(s));
   }
-  if (versions.size > 1) issues.push('Multiple tested versions: keep separate; no combined pass eligibility.');
-  for (const s of scenarios) total[s.status]++;
+  if (versions.size > 1 || [...versions.values()].some(services => services.size > 1)) {
+    issues.push('Multiple tested versions: keep separate; no combined pass eligibility.');
+  }
+  const rows = [...scenarios, ...engineeringChecks];
+  for (const row of rows) total[row.status]++;
   return {
-    contractVersion: 1, runId, eligibleForReview: scenarios.length > 0 && !issues.length && total.passed === scenarios.length,
+    contractVersion: 1, runId, eligibleForReview: rows.length > 0 && !issues.length && total.passed === rows.length,
     ...(plan && { approvedPlan: plan.reference }), counts: total, issues, groups, scenarios,
+    ...(engineeringChecks.length && { engineeringChecks }),
     limitation: 'Structural acceptance only: main agent must review evidence content, environment, dependencies and final integration. Resource release is not inferred.' +
       (plan?.contractVersion === 1 ? ' The historical v1 plan did not record the reviewed candidate revision.' : '') +
       (plan?.contractVersion === 2 ? ' The historical v2 plan did not bind a batch selection.' : ''),

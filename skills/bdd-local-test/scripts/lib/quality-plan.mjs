@@ -3,10 +3,11 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { captureApprovedRevision } from './approved-revision.mjs';
+import { validateEngineeringChecks } from './engineering-checks.mjs';
 import { changedPaths, commit, repoRoot } from './git-changes.mjs';
 import { isIgnoredPath } from './gitignore.mjs';
 import { lint } from './module-lint.mjs';
-import { moduleIndex, findImpact, parseFeature } from './module-index.mjs';
+import { moduleIndex, findImpact, parseFeature, reviewableScenarios } from './module-index.mjs';
 import { git, treeEntriesAt } from './verification-git.mjs';
 import { previousWorktreeChanges } from './worktree-snapshot.mjs';
 import { writeNewFile } from './write-new-file.mjs';
@@ -18,7 +19,7 @@ const repoOption = { type: 'string', default: '.' };
 export function qualityPlan(args) {
   const { values: v } = parseArgs({ args, options: {
     repo: repoOption, base: string, 'previous-verification': string, 'review-risk': string, 'issue-scope': string,
-    output: string, 'run-id': string,
+    output: string, 'run-id': string, 'engineering-checks': string,
     'review-reason': string, 'static-passed': boolean, 'impact-complete': boolean, issue: string, full: boolean,
     'impact-scenario': { type: 'string', multiple: true }, 'batch-path': { type: 'string', multiple: true },
   } });
@@ -46,7 +47,7 @@ export function qualityPlan(args) {
         feature.unindexedScenarios.some(row => row.unattached || row.ids.length !== 1)) {
       throw new Error('請先確認可派工的完整情境編號：' + feature.feature);
     }
-    feature.scenarios = reviewableScenarios(repo, feature);
+    feature.scenarios = reviewableScenarios(feature);
   }
   const after = captureApprovedRevision(repo);
   if (revision.head !== plan.head || revision.head !== after.head || revision.dirtySha256 !== after.dirtySha256) {
@@ -115,19 +116,6 @@ function tagStart(lines, headingLine) {
   return start;
 }
 
-function reviewableScenarios(repo, feature) {
-  const localized = feature.unindexedScenarios?.filter(s => !s.unattached);
-  if (!localized?.length) return feature.scenarios;
-  const lines = fs.readFileSync(path.join(repo, feature.feature), 'utf8').split(/\r\n?|\n/);
-  const rows = localized.map(({ line, ids }) => {
-    const tags = lines.slice(tagStart(lines, line), line - 1).map(x => x.trim()).filter(x => x.startsWith('@'))
-      .flatMap(x => x.split(/\s+/)).filter(tag => tag.startsWith('@'));
-    const title = lines[line - 1].trim().replace(/^[^:：]*[:：]\s*/, '');
-    return { line, title, tags, ids, methods: tags.filter(t => ['@UI', '@API', '@DB'].includes(t)).map(t => t.slice(1)) };
-  });
-  return feature.scenarios.concat(rows).sort((a, b) => a.line - b.line);
-}
-
 // Include the tags preceding a heading and the steps/examples following it.
 // Shared declarations and removed IDs need an explicit decision about coverage.
 function scenarioSections(text, feature) {
@@ -164,7 +152,8 @@ function feedbackPlan(repo, opts, index, result) {
   const blockers = [];
   const selectedIds = new Set();
   const changed = new Set(result.paths);
-  const mappedPaths = new Set();
+  const checks = result.engineeringChecks ?? [];
+  const mappedPaths = new Set(checks.map(check => check.path));
   const mappings = [];
   const features = new Map();
   const scenarioById = new Map();
@@ -174,7 +163,7 @@ function feedbackPlan(repo, opts, index, result) {
   for (const mod of index.modules) {
     if (!prefixes.has(mod.prefix) && !directories.has(path.posix.join('.bdd/modules', mod.name))) continue;
     for (const f of mod.features()) {
-      const scenarios = reviewableScenarios(repo, f);
+      const scenarios = reviewableScenarios(f);
       features.set(f.feature, { module: mod.name, feature: f, rows: scenarios });
       for (const s of scenarios) for (const id of s.ids) scenarioById.set(id, scenarioById.has(id) ? null : f);
     }
@@ -205,11 +194,11 @@ function feedbackPlan(repo, opts, index, result) {
     }
   }
   const unmapped = [...requiredMappings].filter(p => !mappedPaths.has(p));
-  if (unmapped.length) blockers.push('以 --impact-scenario "異動路徑=情境編號" 補上本批受影響情境與相依回歸：' + unmapped.join('、'));
+  if (unmapped.length) blockers.push('以 --impact-scenario "異動路徑=情境編號" 補上受影響情境與相依回歸，純工程異動可用 --engineering-checks：' + unmapped.join('、'));
   if (!opts['impact-complete']) blockers.push('核對本批差異與外溢依賴後加上 --impact-complete');
   if (!result.staticPassed) blockers.push('完成並通過本批靜態檢查後加上 --static-passed');
   if (!result.paths.length) blockers.push('本批沒有異動，請核對 --base 是否為本次回饋修改前的版本');
-  else if (!selectedIds.size && !unmapped.length) blockers.push('本批尚無可執行的情境，請核對差異並提供適用的 --impact-scenario');
+  else if (!selectedIds.size && !checks.length && !unmapped.length) blockers.push('本批尚無可執行項目，請提供適用的 --impact-scenario 或 --engineering-checks');
   const selected = [];
   for (const { module, feature, rows } of features.values()) {
     const scenarios = rows.filter(s => s.ids.some(id => selectedIds.has(id)));
@@ -225,6 +214,7 @@ export function buildQualityPlan(v) {
     throw new Error('--issue-scope batch 或 issue 須與 --issue 一起使用');
   }
   if (v['batch-path'] && issueScope !== 'batch') throw new Error('--batch-path 適用於 --issue 的本批選測');
+  if (v['engineering-checks'] !== undefined && issueScope !== 'batch') throw new Error('--engineering-checks 適用於 --issue 的本批選測');
   const risk = (v['review-risk'] ?? (issueScope ? 'MEDIUM' : 'HIGH')).toUpperCase();
   const staticPassed = Boolean(v['static-passed']);
   const previous = v['previous-verification'];
@@ -248,14 +238,16 @@ export function buildQualityPlan(v) {
     }
   }
   const paths = batchPaths && !v.full && risk !== 'HIGH' ? batchPaths : allPaths;
+  const checks = v['engineering-checks'] === undefined ? undefined : validateEngineeringChecks(
+    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(v['engineering-checks']))), paths);
   const index = moduleIndex(repo, { hashFeatures: true });
   const problems = lint(index);
   const impact = findImpact(index.modules, paths);
   const result = { head, base, ...(snapshot && { baseHead: snapshot.baseHead }), paths, risk: v['review-risk'] ?? risk, reviewReason: v['review-reason'],
     staticPassed, unmatched: impact.unmatched, lint: problems, ...(issueScope && { issue: v.issue, issueScope }),
-    ...(batchPaths && { batchPaths, allChangedPaths: allPaths }) };
+    ...(batchPaths && { batchPaths, allChangedPaths: allPaths }), ...(checks && { engineeringChecks: checks }) };
   const docsOnly = paths.every(isDocumentation);
-  const fast = risk === 'LOW' && staticPassed && docsOnly;
+  const fast = risk === 'LOW' && staticPassed && docsOnly && !checks;
   if (issueScope === 'batch' && !v.full && risk !== 'HIGH' && !(fast && !problems.length && paths.length)) {
     return feedbackPlan(repo, v, index, result);
   }
@@ -296,7 +288,7 @@ export function buildQualityPlan(v) {
     if (level === 'TARGETED' && !affected.has(m.name)) {
       if (issueScope === 'issue') {
         for (const f of m.features()) {
-          const scenarios = reviewableScenarios(repo, f).filter(s => s.tags.includes(issueTag));
+          const scenarios = reviewableScenarios(f).filter(s => s.tags.includes(issueTag));
           if (scenarios.length) selected.push({ module: m.name, feature: f.feature, sha256: f.sha256, scenarios, reason: '整單檢查，選取 ' + issueTag });
         }
       }
@@ -323,7 +315,13 @@ export function buildQualityPlan(v) {
   let bddStatus = 'BLOCKED';
   if (staticPassed && !problems.length) {
     if (level === 'FAST') bddStatus = 'SKIPPED';
-    else if (selected.length) bddStatus = 'PENDING';
+    else if (selected.length || checks?.length) bddStatus = 'PENDING';
+  }
+  if (checks) {
+    // FULL adds regression scenarios and still needs coverage of the actual engineering batch.
+    const batch = feedbackPlan(repo, v, index, result);
+    return { ...result, level, reason, selected, bddStatus: batch.bddStatus,
+      blockers: batch.blockers, batchMappings: batch.batchMappings };
   }
   return { ...result, level, reason, selected, bddStatus,
     ...(issueScope !== 'batch' && v['impact-scenario'] && { scenarioImpact: scope }) };
