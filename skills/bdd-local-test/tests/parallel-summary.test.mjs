@@ -137,7 +137,9 @@ test('summary destination cannot alias group output through a directory link', t
 test('approved assignments account for the entire plan even when the caller omits a group', t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-approved-summary-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
-  const git = (...args) => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8' }).trim();
+  const repo = path.join(temp, 'checkout');
+  fs.mkdirSync(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
   git('init', '-q');
   git('-c', 'user.name=Fixture', '-c', 'user.email=bdd@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'fixture');
   const head = git('rev-parse', 'HEAD');
@@ -145,9 +147,9 @@ test('approved assignments account for the entire plan even when the caller omit
   const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
   const planFile = path.join(temp, 'approved.json');
   const plan = {
-    contractVersion: 1, runId: 'approved-run',
+    contractVersion: 2, runId: 'approved-run',
     groups: ['A', 'B'].map(groupId => ({
-      groupId, repo: temp, scenarios: [{
+      groupId, repo, revision: { head, dirtySha256: null }, scenarios: [{
         feature: 'list.feature', id: groupId + '-01', kind: 'changed',
         assertions: [{ requirement: 'List items', action: 'Load the list', expected: 'One item', method: 'API', evidence: 'Response body' }],
       }],
@@ -164,7 +166,7 @@ test('approved assignments account for the entire plan even when the caller omit
     const coord = path.join(outputDir, 'coordination', 'attempt-1');
     fs.mkdirSync(coord, { recursive: true });
     const template = { ...baseAssignment, runId: plan.runId, groupId: group.groupId, outputDir,
-      target: { ...baseAssignment.target, repo: temp, workDir: temp, head }, resources: [] };
+      target: { ...baseAssignment.target, repo, workDir: repo, head }, resources: [] };
     delete template.scenarios;
     const templateFile = path.join(coord, 'template.json');
     write(templateFile, template);
@@ -176,7 +178,7 @@ test('approved assignments account for the entire plan even when the caller omit
       scenarios: [{ ...baseResult.scenarios[0], feature, id, kind, evidence: ['REPORT.md#result'] }],
       artifacts: { report: 'REPORT.md', masking: null }, resourceStates: [] });
     write(path.join(outputDir, 'verification.json'), { rounds: [{
-      repo: { name: path.basename(temp), url: '' }, head, dirtyPaths: [],
+      repo: { name: path.basename(repo), url: '' }, head, dirtyPaths: [], revision: group.revision,
       scenarios: [{ path: feature, ids: [id], role: kind }], result: { passed: 1, failed: 0, blocked: 0, notRun: 0 },
     }] });
     fs.writeFileSync(path.join(outputDir, 'REPORT.md'), '## Result\nOne item');

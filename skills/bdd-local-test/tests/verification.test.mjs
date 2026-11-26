@@ -150,3 +150,131 @@ test('records touched paths and ordered subjects with one Git query each across 
   assert.equal(queries.filter(argv => argv.includes('show') && argv.includes('--name-only')).length, 1);
   assert.equal(queries.filter(argv => argv.includes('log')).length, 1);
 });
+
+test('base rounds cover merge resolutions, rename endpoints and transient paths at the tested HEAD', t => {
+  const { repo, git, base, run, output } = fixture(t);
+  const write = (name, value) => fs.writeFileSync(path.join(repo, name), value);
+  git('switch', '-qc', 'side');
+  write('component.js', 'component');
+  git('add', '.');
+  git('commit', '-qm', 'side');
+  const component = git('rev-parse', 'HEAD');
+  git('switch', 'main');
+  write('service.js', 'service');
+  git('add', '.');
+  git('commit', '-qm', 'main');
+  git('merge', '--no-commit', '--no-ff', 'side');
+  git('mv', 'readme', 'renamed');
+  write('policy.js', 'integration');
+  write('temporary', 'only at first merge');
+  git('add', '.');
+  git('commit', '-qm', 'integrate');
+  const merge = git('rev-parse', 'HEAD');
+  git('switch', '-qc', 'more');
+  git('commit', '--allow-empty', '-qm', 'other');
+  git('switch', 'main');
+  git('merge', '--no-commit', '--no-ff', 'more');
+  git('rm', '-q', 'temporary');
+  git('commit', '-qm', 'finish integration');
+  const head = git('rev-parse', 'HEAD');
+
+  const round = run(0, '--record', '--base', base);
+  assert.deepEqual(Object.keys(round.files).sort(), ['component.js', 'policy.js', 'readme', 'renamed', 'service.js', 'temporary']);
+  assert.equal(round.files.readme, null);
+  assert.equal(round.files.temporary, null);
+  assert.equal(round.files['policy.js'], git('rev-parse', head + ':policy.js'));
+  assert.ok(!round.commits.some(c => [merge, head].includes(c.sha)));
+  assert.equal(run(0, '--check').verdict, 'current');
+  write('policy.js', 'updated');
+  assert.deepEqual(run(1, '--check').dirtyPaths, ['policy.js']);
+  git('commit', '-qam', 'change integration policy');
+  assert.deepEqual(run(1, '--check').changedFiles, ['policy.js']);
+  assert.deepEqual(run(0, '--record', '--base', base, '--head', head).files, round.files);
+
+  // v3.2.0 stored only the non-merge paths and lacked provenance for omitted working-tree files.
+  const old = { ...round, files: { 'component.js': round.files['component.js'], 'service.js': round.files['service.js'] } };
+  delete old.fileScope;
+  const recordFile = path.join(output, 'verification.json');
+  const historical = JSON.stringify({ rounds: [old] });
+  fs.writeFileSync(recordFile, historical);
+  const checked = run(1, '--check');
+  assert.deepEqual(checked.changedFiles, ['policy.js']);
+  assert.equal(checked.verdict, 'rerun');
+  assert.equal(fs.readFileSync(recordFile, 'utf8'), historical);
+  git('switch', '--detach', head);
+  assert.equal(run(1, '--check').verdict, 'rerun');
+
+  const selected = run(0, '--record', '--base', base, '--commits', component);
+  assert.deepEqual(Object.keys(selected.files), ['component.js']);
+  assert.equal(run(0, '--check').verdict, 'current');
+  delete selected.fileScope;
+  fs.writeFileSync(recordFile, JSON.stringify({ rounds: [selected] }));
+  assert.equal(run(0, '--check').verdict, 'current');
+
+  fs.writeFileSync(recordFile, JSON.stringify({ rounds: [{ ...old, base: 'f'.repeat(40) }] }));
+  const unavailable = run(1, '--check');
+  assert.match(unavailable.reasons.join(' '), /無法重建/);
+});
+
+test('base coverage includes a parent resolution in the net diff from the common ancestor', t => {
+  const { repo, git, run } = fixture(t);
+  git('switch', '-qc', 'upstream');
+  fs.writeFileSync(path.join(repo, 'upstream-policy'), 'incoming');
+  git('add', '.');
+  git('commit', '-qm', 'upstream policy');
+  git('switch', 'main');
+  fs.writeFileSync(path.join(repo, 'feature'), 'feature');
+  git('add', '.');
+  git('commit', '-qm', 'feature');
+  // Keep the first parent's tree, excluding the policy that exists in the incoming base.
+  git('merge', '-q', '-s', 'ours', 'upstream', '-m', 'integrate');
+  git('switch', 'upstream');
+  fs.writeFileSync(path.join(repo, 'unrelated-upstream'), 'later');
+  git('add', '.');
+  git('commit', '-qm', 'unrelated');
+  git('switch', 'main');
+  const round = run(0, '--record', '--base', 'upstream');
+  assert.deepEqual(Object.keys(round.files).sort(), ['feature', 'upstream-policy']);
+  assert.equal(round.files['upstream-policy'], null);
+  assert.equal(run(0, '--check').verdict, 'current');
+});
+
+test('two merges that adopt and restore a parent version keep the intermediate path in scope', t => {
+  const { repo, git, base, run } = fixture(t);
+  git('switch', '-qc', 'upstream');
+  fs.writeFileSync(path.join(repo, 'readme'), 'upstream\n');
+  git('commit', '-qam', 'change upstream');
+  const firstUpstream = git('rev-parse', 'HEAD');
+  git('restore', '--source', base, '--', 'readme');
+  git('commit', '-qam', 'restore upstream');
+  const secondUpstream = git('rev-parse', 'HEAD');
+
+  git('switch', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'feature');
+  git('merge', '--no-ff', '-qm', 'adopt upstream change', firstUpstream);
+  git('merge', '--no-ff', '-qm', 'adopt upstream restoration', secondUpstream);
+  assert.equal(git('diff', '--name-only', secondUpstream + '...HEAD'), '');
+  const round = run(0, '--record', '--base', secondUpstream);
+  assert.deepEqual(round.commits.map(c => c.subject), ['feature']);
+  assert.deepEqual(round.files, { readme: git('rev-parse', 'HEAD:readme') });
+  fs.writeFileSync(path.join(repo, 'readme'), 'changed again\n');
+  git('commit', '-qam', 'change after the test');
+  assert.deepEqual(run(1, '--check').changedFiles, ['readme']);
+});
+
+test('a shallow boundary inside a base range cannot stand in for complete historical coverage', t => {
+  const { repo, git, run, output, base, args } = fixture(t);
+  git('commit', '--allow-empty', '-qm', 'first');
+  git('commit', '--allow-empty', '-qm', 'second');
+  const round = run(0, '--record', '--base', base);
+  // Both endpoints exist locally, as after separate depth-limited fetches.
+  fs.writeFileSync(path.join(repo, '.git', 'shallow'), round.head + '\n');
+  assert.equal(git('rev-list', '--count', base + '..HEAD'), '1');
+  const truncated = spawnSync(process.execPath, args('--record', '--base', base), { cwd: repo, encoding: 'utf8' });
+  assert.equal(truncated.status, 2);
+  assert.match(truncated.stderr, /提交歷程不完整/);
+  const legacy = { ...round };
+  delete legacy.fileScope;
+  fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify({ rounds: [legacy] }));
+  assert.match(run(1, '--check').reasons.join(' '), /無法重建/);
+});

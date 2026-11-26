@@ -14,7 +14,7 @@
 測的是含未提交異動的工作區時照實寫「`<SHA>` + 未提交異動（檔案…）」，不要只寫 SHA 讓人以為測的是乾淨版本。
 同步後複測的輪次，另填〈同步對照〉：來源 repo／commit → 本 repo 對應 commit 與對應方式（`patch`／`subject`／`missing`）。
 
-報告寫完後，**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）：
+**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）。使用 v2 核准清單的派工，在該輪實測結束時從受測工作區執行以下指令並加上 `--capture-revision`（PowerShell 入口為 `-CaptureRevision`），再切換版本或清理測資。這會在該輪保存實際 checkout 的 HEAD 與未提交內容雜湊。
 
 ```bash
 node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料夾>" --base "<基準分支>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本單新增或修改的 .feature，多個以 ; 分隔>" --regression-scenarios "<回歸的 .feature>::<編號>,<編號>" --note "<一句話，例如：自 yuanlih 同步後複測>"
@@ -22,6 +22,8 @@ node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料
 
 `--changed-scenarios`／`--regression-scenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。
 情境檔要先 commit。保留本輪非圖片紀錄時，從受測 commit 取出對應版本的情境。
+
+以 `--base` 記錄時，受測檔案涵蓋逐次提交碰過的路徑、每次合併相對第一個父提交的變動，以及從共同祖先到受測 HEAD 的整合差異。改了又還原的檔案與改名前後的路徑都納入比對。以 `--commits` 指定清單時，沿用清單內的提交範圍。`--check` 會核對缺少檔案範圍標記的舊輪次。若發現漏記路徑或無法重建範圍，回傳 `rerun` 並列出原因，保留原始紀錄。
 
 同一輸出資料夾有多個寫入者時，`verification --record` 會依序追加輪次。若程序中斷後回報 `verification.json.lock` 逾時，先確認所有寫入程序均已結束，將殘留鎖檔移到另一位置保留，再核對 `verification.json` 最後一輪，只重記尚未保存的結果。
 
@@ -36,4 +38,4 @@ node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料
 範圍不是 `<基準>..HEAD`（例如使用者指定了 commit、或在別的分支上 cherry-pick 過來的一串）時，
 改用 `--commits <sha1>,<sha2>` 明列。`verification.json`、`REPORT.md`、`masking.json` 與本輪證據均為執行產物，不新增到 Git；非圖片紀錄保存於本機輸出，只有 issue 交付需要的圖片在附件核對且 Issue 回覆內容審核通過後清理本機副本，代理即時驗證截圖判讀後立即刪除。Git 僅保存 `.bdd/modules/` 的 `.feature`、`MODULE.md` 與不含敏感或個人設定的共用 `.bdd/config.json`。版控與既有追蹤檔的遷移方式見 [版控分工](version-control.md)。
 程式同步到其他 repo 或 worktree 時，另行複製本輪輸出或從封存包還原，再執行版本比對；不能因 Git 沒帶入報告就視為沒有驗證紀錄。已授權更新 issue 時，依交付模板上傳必要的逐項證據；只要報告或未授權更新 issue 時，保存在本機並回報位置，不自行上傳。記錄前工作區若有受測檔案的未提交異動，腳本會記在 `dirtyPaths`，
-之後的比對一律判 `rerun`——所以正式結案的那一輪，應在受測異動都 commit 之後再跑。
+該輪之後的比對會判 `rerun`。加上 `--capture-revision` 時，若實測快照包含 Git 可見的未提交內容，即使異動落在列出的路徑之外也須複測。正式結案的那一輪應在受測異動都 commit 之後再跑。

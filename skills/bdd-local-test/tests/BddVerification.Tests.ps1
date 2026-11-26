@@ -58,6 +58,20 @@ Describe 'bdd-verification.ps1 模組情境' {
         ($saved.rounds[-1].scenarios[1].ids -is [array]) | Should -BeTrue
     }
 
+    It '-CaptureRevision 保存範圍外的未提交內容，清理後仍須複測' {
+        $extra = Join-Path $t.repo 'local-settings.json'
+        Set-Content -LiteralPath $extra -Value '{}'
+        $r = Invoke-Verification $t.repo @{ Record = $true; CaptureRevision = $true; Dir = $t.bdd; Base = $t.base }
+        $r.code | Should -Be 0
+        $r.json.revision.head | Should -Be (git -C $t.repo rev-parse HEAD).Trim()
+        $r.json.revision.dirtySha256 | Should -Match '^[a-f0-9]{64}$'
+        @($r.json.dirtyPaths).Count | Should -Be 0
+        Remove-Item -LiteralPath $extra
+        $c = Invoke-Verification $t.repo @{ Check = $true; Dir = $t.bdd }
+        $c.json.verdict | Should -Be 'rerun'
+        $c.code | Should -Be 1
+    }
+
     It '情境檔沒變、HEAD 前進時判 still-valid' {
         Invoke-Verification $t.repo @{ Record = $true; Dir = '.bdd/1-demo'; Base = $t.base; ChangedScenarios = @('.bdd/modules/m/01.feature') } | Out-Null
         Set-Content -LiteralPath (Join-Path $t.repo 'README.md') -Value 'y'

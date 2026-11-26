@@ -17,22 +17,29 @@ function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-approved-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'approved.json');
+  const repo = path.join(dir, 'checkout');
+  fs.mkdirSync(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  git('init', '--quiet');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
+    'commit', '--quiet', '--allow-empty', '-m', 'fixture');
+  const head = git('rev-parse', 'HEAD');
   const groups = ['A', 'B'].map((groupId, i) => ({
-    groupId, repo: dir, scenarios: [{
+    groupId, repo, revision: { head, dirtySha256: null }, scenarios: [{
       feature: '.bdd/modules/shop/order/list.feature', id: 'OR-0' + (i + 1), kind: 'changed',
       assertions: [{ requirement: '列表', action: '按下儲存', expected: 'A|B\n<C>', method: 'UI', evidence: '狀態截圖' }],
     }],
   }));
-  const plan = { contractVersion: 1, runId: example.runId, groups };
+  const plan = { contractVersion: 2, runId: example.runId, groups };
   writeJson(file, plan);
   const template = structuredClone(example);
   delete template.scenarios;
   template.groupId = 'A';
-  Object.assign(template.target, { repo: dir, workDir: dir });
+  Object.assign(template.target, { repo, workDir: repo, head });
   function run(...args) {
     return spawnSync(process.execPath, [cli, 'parallel-plan', '--plan', file, ...args], { encoding: 'utf8' });
   }
-  return { dir, file, plan, template, run };
+  return { dir, repo, git, head, file, plan, template, run };
 }
 
 test('normal CLI emits approved assignments and report rows and prevents partial dispatch', t => {
@@ -63,10 +70,10 @@ test('normal CLI emits approved assignments and report rows and prevents partial
   const report = run('--report');
   assert.equal(report.status, 0, report.stderr);
   assert.ok(report.stdout.startsWith('核准清單 SHA-256 `' + reference.sha256 + '`'));
-  const rows = report.stdout.trimEnd().split(/\r?\n/).filter(line => line.startsWith('|'));
-  assert.equal(rows.length, 4);
-  assert.match(rows[2], /A&#124;B<br>&#60;C&#62;/);
-  for (const column of ['列表', '按下儲存', 'UI', '狀態截圖', 'OR-01']) assert.ok(rows[2].includes(column));
+  const assertionRows = report.stdout.trimEnd().split(/\r?\n/).filter(line => line.startsWith('|') && /OR-0[12]/.test(line));
+  assert.equal(assertionRows.length, 2);
+  assert.match(assertionRows[0], /A&#124;B<br>&#60;C&#62;/);
+  for (const column of ['列表', '按下儲存', 'UI', '狀態截圖', 'OR-01']) assert.ok(assertionRows[0].includes(column));
 
   // The current template selects B. Redirecting it over A must preserve the earlier dispatch.
   assert.equal(run('--template', templateFile, '--output', files[0]).status, 2);
@@ -80,10 +87,10 @@ test('normal CLI emits approved assignments and report rows and prevents partial
 });
 
 test('bound assignments reject drift in scope, owner, assertions and the reviewed plan bytes', t => {
-  const { dir, file, plan } = fixture(t);
+  const { dir, file, plan, template } = fixture(t);
   const approved = loadApprovedPlan(file);
   const records = plan.groups.map(g => ({
-    runId: plan.runId, groupId: g.groupId, target: { repo: dir },
+    runId: plan.runId, groupId: g.groupId, target: template.target,
     scenarios: g.scenarios, approvedPlan: approved.reference,
   }));
   const cases = [
@@ -112,6 +119,10 @@ test('invalid or ambiguous approved plans stop before assignments are created', 
   const { file, plan } = fixture(t);
   const cases = [
     [p => { p.groups = []; }, /approved plan schema/],
+    [p => { delete p.groups[0].revision; }, /approved plan schema/],
+    [p => { p.groups[0].revision.head = 'abcd'; }, /approved plan schema/],
+    [p => { p.groups[0].revision.dirtySha256 = ''; }, /approved plan schema/],
+    [p => { p.contractVersion = 1; }, /approved plan schema/],
     [p => { p.groups[0].scenarios[0].assertions[0].expected = ' '; }, /approved plan schema/],
     [p => { p.groups[1].groupId = 'a'; }, /Duplicate approved group/],
     [p => { p.groups[0].repo = './app'; }, /absolute approved repo/],
@@ -127,13 +138,7 @@ test('invalid or ambiguous approved plans stop before assignments are created', 
 });
 
 test('same scenario cannot be dispatched twice through linked worktrees', t => {
-  const { dir, file, plan } = fixture(t);
-  function git(...args) {
-    return execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
-  }
-  git('init', '--quiet');
-  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
-    'commit', '--quiet', '--allow-empty', '-m', 'fixture');
+  const { dir, file, plan, git } = fixture(t);
   const linked = path.join(dir, 'linked checkout');
   git('worktree', 'add', '--quiet', '--detach', linked, 'HEAD');
   plan.groups[1].repo = linked;
