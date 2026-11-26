@@ -15,8 +15,7 @@
         patch    SHA 不同但 patch-id 相同（cherry-pick 過來，內容一致）
         subject  只找到同標題的 commit，內容有差異（通常是解衝突或手動改寫）
         missing  找不到，這個異動沒有同步過來
-    - 受測檔案在目前 HEAD 的 blob 是否與紀錄時相同
-    - 本輪跑過的模組情境檔（scenarios）在目前 HEAD 的 blob 是否與紀錄時相同
+    - 受測檔案與本輪跑過的模組情境檔在目前 HEAD 的 blob、檔案類型及執行權限是否與紀錄時相同
 
   判定（verdict）：
     current       同 repo、同 HEAD、相關檔案無未提交異動 → 報告仍有效

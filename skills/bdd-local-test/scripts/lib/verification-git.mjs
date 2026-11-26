@@ -97,15 +97,19 @@ function* batches(paths) {
   if (batch.length) yield batch;
 }
 
-export function blobsAt(root, head, paths) {
+export function treeEntriesAt(root, head, paths) {
   const blobs = Object.fromEntries(paths.map(p => [p, null]));
+  const modes = { ...blobs };
   for (const batch of batches(paths)) {
     for (const row of git(root, ['ls-tree', '-z', head, '--', ...batch]).split('\0').filter(Boolean)) {
       const tab = row.indexOf('\t');
-      blobs[row.slice(tab + 1)] = row.slice(0, tab).split(' ')[2];
+      const [mode, , oid] = row.slice(0, tab).split(' ');
+      const name = row.slice(tab + 1);
+      modes[name] = mode;
+      blobs[name] = oid;
     }
   }
-  return blobs;
+  return { blobs, modes };
 }
 
 export function dirtyPaths(root, paths) {
@@ -121,18 +125,40 @@ export function dirtyPaths(root, paths) {
   return [...dirty];
 }
 
+const fullCommitId = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
+
 export function isAncestor(root, source, head) {
-  if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(source)) throw new Error('紀錄的 commit SHA 無效');
+  if (!fullCommitId.test(source)) throw new Error('紀錄的 commit SHA 無效');
   if (git(root, ['cat-file', '-e', source + '^{commit}'], [0, 1, 128]) === null) return false;
   return git(root, ['merge-base', '--is-ancestor', source, head], [0, 1]) !== null;
 }
 
+function reachableCommits(root, head, commits) {
+  const reachable = new Set([head]);
+  const requested = [...new Set(commits.map(entry => entry.sha))].filter(sha => sha !== head);
+  if (!requested.length) return reachable;
+  if (!requested.every(sha => typeof sha === 'string' && fullCommitId.test(sha))) throw new Error('紀錄的 commit SHA 無效');
+  const types = git(root, ['cat-file', '--batch-check=%(objecttype)'], [0],
+    requested.map(sha => sha + '^{commit}').join('\n') + '\n').trimEnd().split(/\r?\n/);
+  const existing = requested.filter((_, index) => types[index] === 'commit');
+  if (!existing.length) return reachable;
+  // The union of the selected histories minus HEAD is empty iff every tip is reachable.
+  const outside = git(root, ['rev-list', '--max-count=1', '--stdin'], [0], ['^' + head, ...existing].join('\n') + '\n').trim();
+  for (const sha of existing) {
+    if (!outside || (sha !== outside && git(root, ['merge-base', '--is-ancestor', sha, head], [0, 1]) !== null)) {
+      reachable.add(sha);
+    }
+  }
+  return reachable;
+}
+
 export async function mapCommits(root, head, last, depth) {
   const mapping = [];
+  const reachable = reachableCommits(root, head, last.commits);
   let index;
   for (const entry of last.commits) {
     let status = 'same', target = entry.sha;
-    if (!isAncestor(root, entry.sha, head)) {
+    if (!reachable.has(entry.sha)) {
       if (!index) {
         const paths = Object.keys(last.files);
         // Git reads pathspecs after a standalone "--" on stdin. POSIX names

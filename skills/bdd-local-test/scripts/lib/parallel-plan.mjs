@@ -6,6 +6,7 @@ import { readContract } from './parallel-contracts.mjs';
 import { approvedPlan, assignment } from './parallel-validators.mjs';
 import { captureApprovedRevision } from './approved-revision.mjs';
 import { repoRoot } from './git-changes.mjs';
+import { checkScenarioIds, declaredScenarioIds, readFeature } from './module-index.mjs';
 import { pathKey } from './summary-evidence.mjs';
 import { git } from './verification-git.mjs';
 
@@ -129,6 +130,7 @@ export function compareApprovedPlan(plan, assignments) {
 function liveRevisionIssues(groups, assignments = []) {
   const issues = [];
   const snapshots = new Map();
+  const featureIds = new Map();
   for (const group of groups) {
     const repo = approvedRepoKey(group.repo);
     try {
@@ -136,6 +138,12 @@ function liveRevisionIssues(groups, assignments = []) {
       const current = snapshots.get(repo);
       if (current.head !== group.revision.head || current.dirtySha256 !== group.revision.dirtySha256) {
         issues.push('Candidate revision changed for group ' + group.groupId + ' (' + group.repo + '). Review the updated plan before dispatch.');
+        continue;
+      }
+      for (const scenario of group.scenarios) {
+        const file = path.join(repo, scenario.feature);
+        if (!featureIds.has(file)) featureIds.set(file, declaredScenarioIds(readFeature(file, repo)));
+        checkScenarioIds(featureIds.get(file), [scenario.id], scenario.feature);
       }
     } catch (error) {
       issues.push('Cannot confirm candidate revision for ' + group.groupId + ': ' + error.message);

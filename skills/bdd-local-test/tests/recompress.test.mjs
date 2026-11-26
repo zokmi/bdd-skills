@@ -100,9 +100,15 @@ test('concurrent recompression keeps one index transition, historical references
   const source = 'evidence/測試.bmp';
   const ledger = { files: { [source]: { method: 'css', sha256: sha(bmp) } } };
   const utf16 = text => Buffer.from('\uFEFF' + text, 'utf16le');
+  const resultFile = 'coordination/attempt-2/result.json';
+  const otherResult = 'misc/result.json';
+  const result = { contractVersion: 1, scenarios: [{ actual: source, evidence: [
+    './evidence\\測試.bmp#detail', source + '.txt', 'REPORT.md#test',
+  ] }] };
   const originals = [
     { name: source, data: bmp }, { name: 'REPORT.md', data: utf16('![](' + source + ')') },
     { name: 'masking.json', data: utf16(JSON.stringify(ledger)) },
+    { name: resultFile, data: utf16(JSON.stringify(result)) }, { name: otherResult, data: utf16(JSON.stringify(result)) },
     { name: 'evidence/second.bmp', data: bmp },
     { name: 'evidence/old.webp', data: Buffer.from('previously imported image') },
   ];
@@ -143,4 +149,8 @@ test('concurrent recompression keeps one index transition, historical references
   assert.equal(report, '![](' + webp + ')');
   const savedLedger = JSON.parse(await readFile(path.join(restored.folder, 'masking.json'), 'utf8'));
   assert.equal(savedLedger.files[webp].derivedFrom.sha256, sha(bmp));
+  const rewritten = JSON.parse(await readFile(path.join(restored.folder, resultFile), 'utf8'));
+  assert.deepEqual(rewritten.scenarios[0], { actual: source, evidence: [webp + '#detail', source + '.txt', 'REPORT.md#test'] });
+  assert.equal(restored.manifest.rewrittenLinks[resultFile], 1);
+  assert.deepEqual(await readFile(path.join(restored.folder, otherResult)), utf16(JSON.stringify(result)));
 });

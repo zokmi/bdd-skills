@@ -38,22 +38,39 @@ try {
     Assert-Plan TARGETED 1 PENDING MEDIUM
     $review = @{ Repo = $repo; Base = 'HEAD'; ReviewRisk = 'MEDIUM'; ReviewReason = 'Fixture review'
         StaticPassed = $true; ImpactComplete = $true }
-    $issue = & $planner @review -Issue 1 | ConvertFrom-Json
-    if ($issue.level -ne 'TARGETED' -or ($issue.selected.scenarios.ids -join ',') -ne 'OR-01,OR-02') {
-        throw 'Issue selection must include the exact issue tag and affected core, excluding unrelated scenarios'
+    $batch = & $planner @review -Issue 1 -ImpactScenario 'src/orders/handler.txt=OR-01' | ConvertFrom-Json
+    if ($batch.issueScope -ne 'batch' -or $batch.bddStatus -ne 'PENDING' -or ($batch.selected.scenarios.ids -join ',') -ne 'OR-01') {
+        throw 'The default issue batch must use only the reviewed impact mapping'
     }
-    $unknownIssue = & $planner @review -Issue 99 | ConvertFrom-Json
+    $unmappedBatch = & $planner @review -Issue 1 | ConvertFrom-Json
+    if ($unmappedBatch.bddStatus -ne 'BLOCKED' -or -not $unmappedBatch.blockers -or $unmappedBatch.selected.Count -ne 0) {
+        throw 'A batch with an unmapped source must request impact review'
+    }
+    $issue = & $planner @review -Issue 1 -IssueScope issue | ConvertFrom-Json
+    if ($issue.level -ne 'TARGETED' -or ($issue.selected.scenarios.ids -join ',') -ne 'AC-01,OR-01,OR-02') {
+        throw 'Whole-issue selection must include matching issue tags across modules and the affected module core'
+    }
+    $unknownIssue = & $planner @review -Issue 99 -IssueScope issue | ConvertFrom-Json
     if ($unknownIssue.selected.scenarios.Count -ne 3) { throw 'Unmapped issue must retain the affected module coverage' }
     $full = & $planner @review -Issue 1 -Full | ConvertFrom-Json
     if ($full.level -ne 'FULL' -or @($full.selected | ForEach-Object { $_.scenarios }).Count -ne 6) {
         throw 'FULL must retain all six scenarios'
     }
     Add-Content -LiteralPath (Join-Path $repo '.bdd/modules/api/orders/01-read.feature') -Value '# Reviewed scenario update'
-    $updatedIssue = & $planner @review -Issue 1 | ConvertFrom-Json
-    if ($updatedIssue.level -ne 'TARGETED' -or ($updatedIssue.selected.scenarios.ids -join ',') -ne 'OR-01,OR-02') {
+    $updatedIssue = & $planner @review -Issue 1 -IssueScope issue | ConvertFrom-Json
+    if ($updatedIssue.level -ne 'TARGETED' -or ($updatedIssue.selected.scenarios.ids -join ',') -ne 'AC-01,OR-01,OR-02') {
         throw 'A local feature edit in an affected module must retain issue selection'
     }
-    "PASS issue selection, missing mapping, explicit FULL, and local feature update"
+    'earlier feedback in another source' | Set-Content (Join-Path $repo 'src/accounts/handler.txt')
+    $paths = @('src/orders/handler.txt', '.bdd/modules/api/orders/01-read.feature')
+    $mappings = @('src/orders/handler.txt=OR-01', '.bdd/modules/api/orders/01-read.feature=OR-01')
+    $scoped = & $planner @review -Issue 1 -BatchPath $paths -ImpactScenario $mappings | ConvertFrom-Json
+    if ($scoped.bddStatus -ne 'PENDING' -or ($scoped.selected.scenarios.ids -join ',') -ne 'OR-01' -or
+        $scoped.batchPaths.Count -ne 2 -or $scoped.allChangedPaths -notcontains 'src/accounts/handler.txt') {
+        throw 'The PowerShell entry must forward all reviewed batch paths and scenario mappings'
+    }
+    git -C $repo restore -- 'src/accounts/handler.txt'
+    "PASS feedback batch, whole issue, missing mapping, explicit FULL, and local feature update"
     Assert-Plan FULL 2 PENDING HIGH
     'changed' | Set-Content (Join-Path $repo '.bdd/config.json')
     Assert-Plan FULL 2 PENDING MEDIUM

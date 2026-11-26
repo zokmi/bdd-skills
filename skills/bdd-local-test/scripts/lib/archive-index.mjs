@@ -55,13 +55,26 @@ export function archiveKey(archive) {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
-async function* indexEvents(index, stat) {
+async function* indexEvents(index, stat, priorIssue) {
   if (!stat?.size) return;
   const input = createReadStream(index, { encoding: 'utf8', end: stat.size - 1 });
   const lines = createInterface({ input, crlfDelay: Infinity });
+  let replacement;
   try {
     for await (const line of lines) {
-      if (line.trim()) yield JSON.parse(line.replace(/^\uFEFF/, ''));
+      if (!line.trim()) continue;
+      const event = JSON.parse(line.replace(/^\uFEFF/, ''));
+      // publish() appends the creation immediately followed by its automatic
+      // replacement statuses in one write. Older writers matched only repo/topic.
+      if (replacement && event.event === 'status' && event.status === 'superseded' &&
+          event.by === replacement.archive && event.at === replacement.at) {
+        const previous = priorIssue(archiveKey(event.archive));
+        if (previous && replacement.issue && previous !== replacement.issue) continue;
+      } else {
+        replacement = event.event === 'created' && typeof event.at === 'string' && event.at ?
+          { archive: event.archive, issue: archiveIssue(event), at: event.at } : null;
+      }
+      yield event;
     }
   } finally {
     lines.close();
@@ -71,15 +84,22 @@ async function* indexEvents(index, stat) {
 
 const isDigest = value => typeof value === 'string' && /^[a-f\d]{64}$/i.test(value);
 
+export function archiveIssue({ issue, sourceDir, topic }) {
+  if (issue != null && issue !== '') return String(issue);
+  // A group's leaf carries its role; its parent task directory carries the issue.
+  const group = sourceDir?.match(/(?:^|[/\\])\.bdd[/\\](\d+)-[^/\\]+[/\\]groups[/\\][^/\\]+$/i);
+  return group?.[1] ?? topic?.match(/^(\d+)-/)?.[1] ?? '';
+}
+
 export async function readArchiveStates(index, { archive, includeVerifiedOriginals = false } = {}) {
   const states = new Map();
   const wanted = archive && archiveKey(archive);
-  for await (const event of indexEvents(index, await indexStat(index))) {
+  for await (const event of indexEvents(index, await indexStat(index), key => states.get(key)?.issue)) {
     const key = archiveKey(event.archive);
     if (wanted && wanted !== key) continue;
     if (event.event === 'created') {
       states.set(key, {
-        archive: event.archive, name: event.name ?? null, issue: event.issue ?? null, topic: event.topic ?? null,
+        archive: event.archive, name: event.name ?? null, issue: archiveIssue(event) || (event.issue ?? null), topic: event.topic ?? null,
         commit: event.commit ?? null, sha256: event.sha256, bytes: event.bytes, repo: event.repo ?? null,
         createdAt: event.at, status: 'local-only', attachments: [], statusAt: event.at,
         legacy: Boolean(event.legacy), recompressed: false, issueCopySha256: null,
@@ -117,10 +137,11 @@ export async function readArchiveStates(index, { archive, includeVerifiedOrigina
 
 export async function previousArchives(index, stat, created) {
   const active = new Map();
-  for await (const event of indexEvents(index, stat)) {
+  const issue = archiveIssue(created);
+  for await (const event of indexEvents(index, stat, key => active.has(key) ? issue : null)) {
     const key = archiveKey(event.archive);
     if (event.event === 'created') {
-      if (event.topic?.toLowerCase() === created.topic.toLowerCase() && event.repo &&
+      if (event.topic?.toLowerCase() === created.topic.toLowerCase() && archiveIssue(event) === issue && event.repo &&
           path.relative(event.repo, created.repo) === '' && path.relative(event.archive, created.archive) !== '') {
         active.set(key, { archive: event.archive, status: 'local-only' });
       } else active.delete(key);

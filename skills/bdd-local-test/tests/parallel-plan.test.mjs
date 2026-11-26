@@ -21,12 +21,16 @@ function fixture(t) {
   fs.mkdirSync(repo);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
   git('init', '--quiet');
+  const feature = '.bdd/modules/shop/order/list.feature';
+  fs.mkdirSync(path.dirname(path.join(repo, feature)), { recursive: true });
+  fs.writeFileSync(path.join(repo, feature), '@OR-01\nScenario: First\n@OR-02\nScenario: Second\n');
+  git('add', '-f', '--', feature);
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
     'commit', '--quiet', '--allow-empty', '-m', 'fixture');
   const head = git('rev-parse', 'HEAD');
   const groups = ['A', 'B'].map((groupId, i) => ({
     groupId, repo, revision: { head, dirtySha256: null }, scenarios: [{
-      feature: '.bdd/modules/shop/order/list.feature', id: 'OR-0' + (i + 1), kind: 'changed',
+      feature, id: 'OR-0' + (i + 1), kind: 'changed',
       assertions: [{ requirement: '列表', action: '按下儲存', expected: 'A|B\n<C>', method: 'UI', evidence: '狀態截圖' }],
     }],
   }));

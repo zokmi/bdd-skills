@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { evidenceFolder, isEvidenceImage, maskRecord, readMaskLedger, sha256File } from './mask-ledger.mjs';
+import { markdownAnchors } from './report-anchors.mjs';
+import { evidenceFolder, evidencePathKey, isEvidenceImage, maskRecord, readMaskLedger, sha256File } from './mask-ledger.mjs';
 
 export const pathKey = name => process.platform === 'win32' ? name.toLowerCase() : name;
 
@@ -26,6 +27,8 @@ export function checkSeparateDirectories(root, destination) {
   if (below(a, b) || below(b, a)) throw new Error('OutputDir must be separate from group outputs.');
 }
 
+class MissingArtifact extends Error {}
+
 export function artifact(root, reference, literal = false) {
   const name = literal ? reference : reference?.split('#', 1)[0];
   if (!name || path.win32.isAbsolute(name) || name.includes(':')) throw new Error('Unsafe artifact path: ' + reference);
@@ -42,20 +45,48 @@ export function artifact(root, reference, literal = false) {
   for (const part of parts) {
     current = path.join(current, part);
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
-    if (!stat) throw new Error('Missing artifact: ' + reference);
+    if (!stat) throw new MissingArtifact('Missing artifact: ' + reference);
     if (stat.isSymbolicLink()) throw new Error('Linked artifact not accepted: ' + reference);
     if (!path.relative(current, file) && !stat.isFile()) throw new Error('Missing artifact: ' + reference);
   }
   return file;
 }
 
-// Read the ledger once per group. Hash only screenshots cited as passing evidence.
+// Older converted archives retained the original image name in the result.
+// The archive's masking record ties that exact original to its WebP derivative.
+function archivedImage(ledger, original) {
+  const webp = original.replace(/\.[^.]+$/, '.webp');
+  const source = maskRecord(ledger, webp)?.derivedFrom;
+  return typeof source?.name === 'string' && evidencePathKey(original) === evidencePathKey(source.name) &&
+    typeof source.sha256 === 'string' && /^[a-f\d]{64}$/i.test(source.sha256) ? webp : null;
+}
+
 export function evidenceChecker(root) {
   let ledger;
   const checked = new Set();
+  const sections = new Map();
   return (reference, passed) => {
-    const file = artifact(root, reference);
-    if (!passed || !isEvidenceImage(file) || checked.has(file)) return;
+    let file, converted = false;
+    try { file = artifact(root, reference); }
+    catch (error) {
+      if (!(error instanceof MissingArtifact)) throw error;
+      const original = path.posix.normalize(reference.split('#', 1)[0].replaceAll('\\', '/'));
+      if (!/^evidence\/.*\.(?:png|jpe?g|bmp)$/is.test(original)) throw error;
+      ledger ??= readMaskLedger(root);
+      const mapped = archivedImage(ledger, original);
+      if (!mapped) throw error;
+      file = artifact(root, mapped, true);
+      converted = true;
+    }
+    const hash = reference.indexOf('#');
+    if (hash !== -1 && /\.(?:md|markdown)$/i.test(file)) {
+      let fragment;
+      try { fragment = decodeURIComponent(reference.slice(hash + 1)); }
+      catch { throw new Error('Invalid Markdown evidence fragment: ' + reference); }
+      if (!sections.has(file)) sections.set(file, markdownAnchors(fs.readFileSync(file, 'utf8')));
+      if (!fragment || !sections.get(file).has(fragment)) throw new Error('Missing Markdown evidence anchor: ' + reference);
+    }
+    if ((!passed && !converted) || !isEvidenceImage(file) || checked.has(file)) return;
     ledger ??= readMaskLedger(root);
     const relative = path.relative(root, file).split(path.sep).join('/');
     const record = maskRecord(ledger, relative);

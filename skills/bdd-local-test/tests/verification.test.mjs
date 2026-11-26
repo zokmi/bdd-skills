@@ -112,6 +112,52 @@ test('empty-range records do not validate diverged histories, including reposito
   assert.equal(run(1, '--check').verdict, 'rerun');
 });
 
+test('mode-only changes invalidate both new and historical verification rounds', t => {
+  const { repo, git, base, output, run } = fixture(t);
+  git('config', 'core.filemode', 'false');
+  fs.writeFileSync(path.join(repo, 'run.sh'), 'exit 0\n');
+  git('add', 'run.sh');
+  git('update-index', '--chmod=+x', '--', 'run.sh');
+  git('commit', '-qm', 'add executable');
+  const round = run(0, '--record', '--base', base);
+  git('commit', '--allow-empty', '-qm', 'unchanged script');
+  assert.equal(run(0, '--check').verdict, 'still-valid');
+  git('update-index', '--chmod=-x', '--', 'run.sh');
+  git('commit', '-qm', 'remove execute permission');
+  assert.equal(round.files['run.sh'], git('rev-parse', 'HEAD:run.sh'));
+  assert.deepEqual(run(1, '--check').changedFiles, ['run.sh']);
+  assert.equal(round.fileModes['run.sh'], '100755');
+  delete round.fileModes;
+  fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify({ rounds: [round] }));
+  assert.deepEqual(run(1, '--check').changedFiles, ['run.sh']);
+  const nonExecutable = git('rev-parse', 'HEAD');
+  git('switch', '--detach', base);
+  git('restore', '--source', nonExecutable, '--staged', '--worktree', '--', 'run.sh');
+  git('commit', '-qm', 'add script on a divergent branch');
+  assert.deepEqual(run(1, '--check').changedFiles, ['run.sh']);
+});
+
+test('checks reachable commits in a batch and preserves order and duplicate explicit selections', t => {
+  const { repo, git, output, run, args } = fixture(t);
+  const commits = [];
+  for (let n = 0; n < 4; n++) {
+    git('commit', '--allow-empty', '-qm', 'round ' + n);
+    commits.unshift(git('rev-parse', 'HEAD'));
+  }
+  commits.push(commits[1]);
+  run(0, '--record', '--commits', commits.join(','));
+  const trace = path.join(output, 'check-trace.ndjson');
+  const checked = spawnSync(process.execPath, args('--check'), {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
+  assert.deepEqual(JSON.parse(checked.stdout).commits.map(c => [c.source, c.status]), commits.map(sha => [sha, 'same']));
+  const starts = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(row => JSON.parse(row))
+    .filter(row => row.event === 'start').map(row => row.argv);
+  const historyCalls = starts.filter(argv => ['cat-file', 'merge-base', 'rev-list'].some(cmd => argv.includes(cmd)));
+  assert.ok(historyCalls.length <= 2, JSON.stringify(historyCalls));
+});
+
 test('records touched paths and ordered subjects with one Git query each across explicit commits', t => {
   const { repo, output, git, args } = fixture(t);
   git('switch', '-qc', 'side');

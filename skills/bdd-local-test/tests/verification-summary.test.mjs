@@ -63,4 +63,11 @@ test('summary adopts a recorded round and rejects the same result when its evide
   const incomplete = summarize(1, 'incomplete');
   assert.equal(incomplete.eligibleForReview, false);
   assert.equal(incomplete.counts['not-run'], 1);
+  result.scenarios[0].evidence = ['REPORT.md#ss-13'];
+  fs.writeFileSync(path.join(attempt, 'result.json'), JSON.stringify(result));
+  const missingSection = summarize(1, 'missing-section');
+  assert.equal(missingSection.counts['not-run'], 1);
+  assert.match(missingSection.issues.join('\n'), /REPORT\.md#ss-13/);
+  fs.writeFileSync(path.join(output, 'REPORT.md'), '### SS-13\nObserved order completion\n');
+  assert.equal(summarize(0, 'valid-section').eligibleForReview, true);
 });

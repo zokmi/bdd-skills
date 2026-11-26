@@ -15,14 +15,13 @@ export function repoRoot(repo) {
   return path.resolve(git(repo, 'rev-parse', '--show-toplevel').trimEnd());
 }
 
-export function changedPaths(repo, baseline, head, includeStaged) {
-  const options = ['--name-only', '-z'];
-  if (includeStaged) options.push('--no-renames');
+export function changedPaths(repo, baseline, head) {
+  const options = ['--name-only', '--no-renames', '-z'];
   const outputs = [
     git(repo, 'diff', ...options, baseline + '...' + head, '--'),
     git(repo, 'diff', ...options, head, '--'),
+    git(repo, 'diff', '--cached', ...options, head, '--'),
     git(repo, 'ls-files', '-z', '--others', '--exclude-standard'),
   ];
-  if (includeStaged) outputs.push(git(repo, 'diff', '--cached', ...options, head, '--'));
   return [...new Set(outputs.flatMap(output => output.split('\0').filter(Boolean)))].sort((a, b) => a.localeCompare(b));
 }

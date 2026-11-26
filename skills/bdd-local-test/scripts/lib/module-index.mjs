@@ -29,7 +29,10 @@ function metadata(file) {
 }
 
 function readFeature(file, root, hashFeatures) {
-  const bytes = fs.readFileSync(file);
+  return parseFeature(fs.readFileSync(file), relative(root, file), hashFeatures);
+}
+
+export function parseFeature(bytes, feature, hashFeatures = false) {
   const scenarios = [];
   const unindexedScenarios = [];
   const scenarioIds = tags => tags.filter(t => /^@[A-Z]{2,3}-\d{2,}$/.test(t)).map(t => t.slice(1));
@@ -62,17 +65,33 @@ function readFeature(file, root, hashFeatures) {
         methods: tags.filter(t => ['@UI', '@API', '@DB'].includes(t)).map(t => t.slice(1)),
       });
     } else if (ids.length) {
-      unindexedScenarios.push({ line: i + 1, ids });
+      // Older files can use localized scenario headings outside the quick index.
+      // Keep stray tags for lint/number allocation, but never use them as test IDs.
+      const legacyHeading = /^(?:Démonstration|Scénario|Plan du scénario|Exemple|情境(?:大綱)?|场景(?:大纲)?|剧本(?:大纲)?)\s*[:：]\s*\S/iu.test(line);
+      unindexedScenarios.push({ line: i + 1, ids, ...(legacyHeading ? {} : { unattached: true }) });
     }
     tags = [];
   }
-  const result = { feature: relative(root, file), scenarios };
+  const result = { feature, scenarios };
   const trailingIds = scenarioIds(tags);
-  if (trailingIds.length) unindexedScenarios.push({ line: lastTagLine, ids: trailingIds });
+  if (trailingIds.length) unindexedScenarios.push({ line: lastTagLine, ids: trailingIds, unattached: true });
   if (unindexedScenarios.length) result.unindexedScenarios = unindexedScenarios;
   if (unindexedScenarios.length || !scenarios.length || docString) result.requiresFullFeature = true;
   if (hashFeatures) result.sha256 = createHash('sha256').update(bytes).digest('hex').toUpperCase();
   return result;
+}
+
+// Include supported tagged headings that required full-file review in the quick index.
+export function declaredScenarioIds(feature) {
+  const legacy = (feature.unindexedScenarios ?? []).filter(s => !s.unattached);
+  const rows = legacy.length ? feature.scenarios.concat(legacy).sort((a, b) => a.line - b.line) : feature.scenarios;
+  return new Set(rows.flatMap(s => s.ids));
+}
+
+export function checkScenarioIds(available, selected, feature) {
+  if (!selected.length) throw new Error('情境檔 ' + feature + ' 缺少指定編號');
+  const missing = selected.filter(id => !available.has(id.toUpperCase()));
+  if (missing.length) throw new Error('情境檔 ' + feature + ' 找不到指定編號：' + missing.join('、'));
 }
 
 function moduleIndex(root, { hashFeatures = false } = {}) {

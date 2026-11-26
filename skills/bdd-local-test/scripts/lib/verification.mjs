@@ -4,8 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { captureApprovedRevision } from './approved-revision.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
-import { readFeature } from './module-index.mjs';
-import { git, repoIdentity, blobsAt, dirtyPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
+import { checkScenarioIds, declaredScenarioIds, parseFeature, readFeature } from './module-index.mjs';
+import { git, repoIdentity, treeEntriesAt, dirtyPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
 
 function readDocument(file) {
   let raw;
@@ -57,7 +57,7 @@ function recordedAt(now) {
   return day + ' ' + [now.getHours(), now.getMinutes(), now.getSeconds()].map(pad).join(':') + ' ' + zone;
 }
 
-function scenarioRecords(root, entries, role) {
+function scenarioRecords(root, entries, role, historicalHead) {
   return (entries || []).flatMap(v => v.split(';')).map(s => s.trim()).filter(Boolean).map(entry => {
     const separator = entry.indexOf('::');
     const rel = (separator === -1 ? entry : entry.slice(0, separator)).replaceAll('\\', '/').replace(/^\.\//, '');
@@ -65,9 +65,12 @@ function scenarioRecords(root, entries, role) {
       throw new Error('情境檔必須使用 repo 相對路徑：' + rel);
     }
     const file = path.join(root, rel);
-    if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error('找不到情境檔：' + rel);
-    const ids = separator === -1 ? readFeature(file, root).scenarios.flatMap(s => s.ids)
+    if (!historicalHead && !fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error('找不到情境檔：' + rel);
+    const feature = historicalHead ? parseFeature(git(root, ['cat-file', 'blob', historicalHead + ':' + rel]), rel) : readFeature(file, root);
+    const available = declaredScenarioIds(feature);
+    const ids = separator === -1 ? [...available]
       : entry.slice(separator + 2).split(/[,\s]+/).filter(Boolean);
+    if (separator !== -1) checkScenarioIds(available, ids, rel);
     return { path: rel, blob: null, ids, role };
   });
 }
@@ -87,17 +90,20 @@ async function record(file, opts) {
   const base = opts.base ? commit(root, opts.base) : null;
   const refs = (opts.commits || []).flatMap(s => s.split(/[,\s]+/)).filter(Boolean);
   const { shas, paths } = testedChanges(root, refs, base, head);
+  const hasScenarios = opts['changed-scenarios']?.length || opts['regression-scenarios']?.length;
+  const historicalHead = hasScenarios && opts.head && opts.head !== 'HEAD' && !revision && head !== commit(root, 'HEAD') ? head : null;
   const scenarios = [
-    ...scenarioRecords(root, opts['changed-scenarios'], 'changed'),
-    ...scenarioRecords(root, opts['regression-scenarios'], 'regression'),
+    ...scenarioRecords(root, opts['changed-scenarios'], 'changed', historicalHead),
+    ...scenarioRecords(root, opts['regression-scenarios'], 'regression', historicalHead),
   ];
   const allPaths = [...paths, ...scenarios.map(s => s.path)];
-  const blobs = blobsAt(root, head, allPaths);
+  const { blobs, modes } = treeEntriesAt(root, head, allPaths);
   for (const s of scenarios) s.blob = blobs[s.path];
   const round = {
     recordedAt: recordedAt(new Date()), repo: repoIdentity(root), branch: git(root, ['branch', '--show-current']).trim(),
     head, base, baseRef: opts.base || '', dirtyPaths: dirtyPaths(root, allPaths), commits: await commitInfo(root, shas),
     fileScope: refs.length ? 'commits' : 'base',
+    fileModes: modes,
     files: Object.fromEntries(paths.map(p => [p, blobs[p]])), scenarios, result, note: opts.note || '',
   };
   if (revision) round.revision = revision;
@@ -121,7 +127,7 @@ function checkedFiles(root, last, sameRepo, reasons) {
     // Committed blobs are recoverable. The omitted paths' working-tree state
     // at test time was never captured, even if their committed blobs still match.
     reasons.push('舊驗證紀錄未涵蓋以下受測路徑，無法確認實測當時的工作區狀態：' + omitted.join('、'));
-    return { ...last.files, ...blobsAt(root, last.head, omitted) };
+    return { ...last.files, ...treeEntriesAt(root, last.head, omitted).blobs };
   } catch (error) {
     reasons.push('無法重建舊驗證紀錄的受測範圍：' + error.message);
     return last.files;
@@ -139,7 +145,8 @@ async function check(last, depth) {
   const sameUrl = normalizedUrl(repo.url) === normalizedUrl(last.repo.url);
   const sameRepo = sameUrl && (repo.url || last.repo.name === repo.name);
   if (!sameRepo) reasons.push('repo 不同：紀錄於 ' + last.repo.name + '（' + last.repo.url + '），目前為 ' + repo.name + '（' + repo.url + '）');
-  if (head !== last.head && !isAncestor(root, last.head, head)) reasons.push('目前 HEAD 並非由受測版本前進');
+  const descended = head === last.head || isAncestor(root, last.head, head);
+  if (!descended) reasons.push('目前 HEAD 並非由受測版本前進');
   const mapping = await mapCommits(root, head, last, depth);
   const cherry = mapping.filter(m => m.status === 'patch');
   const rewritten = mapping.filter(m => m.status === 'subject');
@@ -151,12 +158,18 @@ async function check(last, depth) {
   const recordedFiles = checkedFiles(root, last, sameRepo, reasons);
   const files = Object.keys(recordedFiles);
   const paths = [...files, ...scenarios.map(s => s.path)];
-  const blobs = blobsAt(root, head, paths);
-  const changedFiles = files.filter(p => recordedFiles[p] !== blobs[p]);
-  const changedScenarios = scenarios.filter(s => !s.blob || s.blob !== blobs[s.path]).map(s => s.path);
+  const { blobs, modes } = treeEntriesAt(root, head, paths);
+  // Older rounds stored only object IDs. Recover the modes from their immutable tested tree.
+  let recordedModes = last.fileModes;
+  if (!recordedModes && (descended || git(root, ['cat-file', '-e', last.head + '^{commit}'], [0, 1, 128]) !== null)) {
+    recordedModes = head === last.head ? modes : treeEntriesAt(root, last.head, paths).modes;
+  }
+  const modeChanged = p => recordedModes && recordedModes[p] !== modes[p];
+  const changedFiles = files.filter(p => recordedFiles[p] !== blobs[p] || (blobs[p] !== null && modeChanged(p)));
+  const changedScenarios = scenarios.filter(s => !s.blob || s.blob !== blobs[s.path] || modeChanged(s.path)).map(s => s.path);
   const dirty = dirtyPaths(root, paths);
   if (changedScenarios.length) reasons.push(changedScenarios.length + ' 個情境檔與受測時不同或受測時未提交：' + changedScenarios.join('、'));
-  if (changedFiles.length) reasons.push(changedFiles.length + ' 個受測檔案內容與受測時不同');
+  if (changedFiles.length) reasons.push(changedFiles.length + ' 個受測檔案的內容或檔案模式與受測時不同');
   if (dirty.length) reasons.push(dirty.length + ' 個受測檔案有未提交異動');
   if (last.dirtyPaths?.length) reasons.push('記錄時有未提交異動：' + last.dirtyPaths.join('、'));
   else if (last.revision?.dirtySha256) reasons.push('實測快照包含未提交內容，無法從 commit 確認相同的受測版本');

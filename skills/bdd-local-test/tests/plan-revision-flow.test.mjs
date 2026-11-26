@@ -100,6 +100,7 @@ test('live dispatch binds the reviewed checkout, historical summary uses the rec
   assert.match(f.usePlan(2, '--template', f.templateFile), /workDir/);
   save(f.templateFile, f.template);
 
+  fs.writeFileSync(path.join(f.repo, f.group.scenarios[0].feature), '@SS-21\nScenario: replacement\n');
   fs.writeFileSync(f.source, 'committed change\n');
   f.commit();
   const head = f.git('rev-parse', 'HEAD');
@@ -111,6 +112,32 @@ test('live dispatch binds the reviewed checkout, historical summary uses the rec
   const changedSubmission = f.summarize(1, 'unreviewed-head');
   assert.equal(changedSubmission.eligibleForReview, false);
   assert.equal(changedSubmission.counts['not-run'], 1);
+});
+
+test('old v2 records cannot turn an ID absent at the recorded commit into passing evidence', t => {
+  const f = fixture(t);
+  const a = JSON.parse(f.usePlan(0, '--template', f.templateFile));
+  f.record(a);
+  // Older recorders trusted the explicit ID in <feature>::<ID>.
+  f.group.scenarios[0].id = 'SS-99';
+  save(f.planFile, f.plan);
+  a.scenarios = f.group.scenarios;
+  a.approvedPlan.sha256 = createHash('sha256').update(fs.readFileSync(f.planFile)).digest('hex');
+  save(f.assignedFile, a);
+  const verification = path.join(f.template.outputDir, 'verification.json');
+  const doc = JSON.parse(fs.readFileSync(verification));
+  doc.rounds[0].scenarios[0].ids = ['SS-99'];
+  save(verification, doc);
+  const resultPath = path.join(path.dirname(f.assignedFile), 'result.json');
+  const result = JSON.parse(fs.readFileSync(resultPath));
+  result.scenarios[0].id = 'SS-99';
+  result.approvedPlanSha256 = a.approvedPlan.sha256;
+  save(resultPath, result);
+  fs.writeFileSync(path.join(f.repo, a.scenarios[0].feature), '@SS-99\nScenario: added later\n');
+  f.commit();
+  const summary = f.summarize(1, 'stale-scenario');
+  assert.equal(summary.counts['not-run'], 1);
+  assert.match(summary.issues.join('\n'), /SS-99/);
 });
 
 test('dirty candidate dispatch rejects changes of content even with the same HEAD and dirty path list', t => {
@@ -129,6 +156,38 @@ test('dirty candidate dispatch rejects changes of content even with the same HEA
   fs.writeFileSync(f.source, 'other dirty contents\n');
   assert.match(f.usePlan(2, '--template', f.templateFile), /revision/i);
   assert.match(f.usePlan(1, '--assignment', f.assignedFile), /revision/i);
+});
+
+test('plan and recording reject scenario IDs absent from the tested feature', t => {
+  const f = fixture(t);
+  const scenario = f.group.scenarios[0];
+  const { head } = f.group.revision;
+  const assigned = JSON.parse(f.usePlan(0, '--template', f.templateFile));
+  scenario.id = 'SS-99';
+  save(f.planFile, f.plan);
+  assert.match(f.usePlan(2, '--report'), /SS-99/);
+  assert.match(f.usePlan(2, '--template', f.templateFile), /SS-99/);
+  save(f.assignedFile, assigned);
+  assert.match(f.usePlan(1, '--assignment', f.assignedFile), /SS-99/);
+  const recordArgs = ['verification', '--record', '--dir', f.template.outputDir, '--commits', head, '--regression-scenarios'];
+  assert.match(invokeFrom(f.repo, 2, ...recordArgs, scenario.feature + '::SS-99'), /SS-99/);
+  assert.equal(fs.existsSync(path.join(f.template.outputDir, 'verification.json')), false);
+  const file = path.join(f.repo, scenario.feature);
+  fs.writeFileSync(file, '@SS-99\nDémonstration: legacy title\n@SS-77\nNotes: instructions\n@SS-78\nGiven data: one item\n@SS-79\n');
+  f.commit();
+  assert.match(invokeFrom(f.repo, 2, ...recordArgs, scenario.feature + '::SS-99', '--head', head), /SS-99/);
+  assert.deepEqual(JSON.parse(invokeFrom(f.repo, 0, ...recordArgs, scenario.feature + '::SS-13', '--head', head)).scenarios[0].ids, ['SS-13']);
+  f.group.revision = f.revision();
+  save(f.planFile, f.plan);
+  assert.match(f.usePlan(0, '--report'), /SS-99/);
+  assert.deepEqual(JSON.parse(invokeFrom(f.repo, 0, ...recordArgs, scenario.feature + '::SS-99')).scenarios[0].ids, ['SS-99']);
+  assert.deepEqual(JSON.parse(invokeFrom(f.repo, 0, ...recordArgs, scenario.feature)).scenarios[0].ids, ['SS-99']);
+  for (const id of ['SS-77', 'SS-78', 'SS-79']) {
+    assert.match(invokeFrom(f.repo, 2, ...recordArgs, scenario.feature + '::' + id), new RegExp(id));
+    scenario.id = id;
+    save(f.planFile, f.plan);
+    assert.match(f.usePlan(2, '--report'), new RegExp(id));
+  }
 });
 
 test('dispatch and summary use the physical checkout when directory names differ only in case', t => {

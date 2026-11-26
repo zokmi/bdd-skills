@@ -1,7 +1,10 @@
 import { parseArgs } from 'node:util';
+import fs from 'node:fs';
+import path from 'node:path';
 import { changedPaths, commit, repoRoot } from './git-changes.mjs';
 import { lint } from './module-lint.mjs';
-import { moduleIndex, findImpact } from './module-index.mjs';
+import { moduleIndex, findImpact, parseFeature } from './module-index.mjs';
+import { git, treeEntriesAt } from './verification-git.mjs';
 
 const string = { type: 'string' };
 const boolean = { type: 'boolean' };
@@ -9,9 +12,9 @@ const repoOption = { type: 'string', default: '.' };
 
 export function qualityPlan(args) {
   const { values: v } = parseArgs({ args, options: {
-    repo: repoOption, base: string, 'review-risk': { type: 'string', default: 'HIGH' },
+    repo: repoOption, base: string, 'review-risk': string, 'issue-scope': string,
     'review-reason': string, 'static-passed': boolean, 'impact-complete': boolean, issue: string, full: boolean,
-    'impact-scenario': { type: 'string', multiple: true },
+    'impact-scenario': { type: 'string', multiple: true }, 'batch-path': { type: 'string', multiple: true },
   } });
   console.log(JSON.stringify(buildQualityPlan(v)));
   return 0;
@@ -52,8 +55,139 @@ function scenarioImpact(entries, affectedModules, index, paths) {
   });
 }
 
+const isDocumentation = p => /^(README\.md|docs\/[\p{L}\p{M}\p{N}\p{Pc}/.-]+\.md)$/u.test(p);
+
+function batchChangedPaths(repo, base, head) {
+  const paths = args => git(repo, args).split('\0').filter(Boolean);
+  const diff = ['diff', '--no-renames', '--name-only', '-z'];
+  const changed = new Set(paths([...diff, base, '--']));
+  const staged = paths([...diff, '--cached', head, '--']);
+  if (staged.length) {
+    // A saved feedback snapshot can differ from HEAD even when the index is untouched.
+    const differsFromBase = new Set(base === head ? staged : paths([...diff, '--cached', base, '--']));
+    for (const p of staged) if (differsFromBase.has(p)) changed.add(p);
+  }
+  for (const p of paths(['ls-files', '-z', '--others', '--exclude-standard'])) changed.add(p);
+  return [...changed].sort((a, b) => a.localeCompare(b));
+}
+
+function tagStart(lines, headingLine) {
+  let start = headingLine - 1;
+  while (start && /^(?:\s*$|\s*[@#])/.test(lines[start - 1])) start--;
+  return start;
+}
+
+function reviewableScenarios(repo, feature) {
+  const localized = feature.unindexedScenarios?.filter(s => !s.unattached);
+  if (!localized?.length) return feature.scenarios;
+  const lines = fs.readFileSync(path.join(repo, feature.feature), 'utf8').split(/\r\n?|\n/);
+  const rows = localized.map(({ line, ids }) => {
+    const tags = lines.slice(tagStart(lines, line), line - 1).map(x => x.trim()).filter(x => x.startsWith('@'))
+      .flatMap(x => x.split(/\s+/)).filter(tag => tag.startsWith('@'));
+    const title = lines[line - 1].trim().replace(/^[^:：]*[:：]\s*/, '');
+    return { line, title, tags, ids, methods: tags.filter(t => ['@UI', '@API', '@DB'].includes(t)).map(t => t.slice(1)) };
+  });
+  return feature.scenarios.concat(rows).sort((a, b) => a.line - b.line);
+}
+
+// Include the tags preceding a heading and the steps/examples following it.
+// Shared declarations and removed IDs need an explicit decision about coverage.
+function scenarioSections(text, feature) {
+  if (feature.requiresFullFeature) return null;
+  const lines = text.split(/\r\n?|\n/);
+  const starts = feature.scenarios.map(row => tagStart(lines, row.line));
+  const sections = new Map();
+  for (const [i, row] of feature.scenarios.entries()) {
+    if (row.ids.length !== 1 || sections.has(row.ids[0])) return null;
+    const block = lines.slice(starts[i], starts[i + 1]).join('\n').trimEnd();
+    if (/^\s*(?:Rule|Background|規則|规则|背景)\s*[:：]/mi.test(block)) return null;
+    sections.set(row.ids[0], block);
+  }
+  const header = lines.slice(0, starts[0]).join('\n').trimEnd();
+  return { header, sections };
+}
+
+function changedScenarioIds(repo, feature, originalBlob) {
+  const currentText = fs.readFileSync(path.join(repo, feature.feature), 'utf8');
+  if (!originalBlob) return { ids: feature.scenarios.flatMap(s => s.ids), needsMapping: Boolean(feature.requiresFullFeature) };
+  const previousText = git(repo, ['cat-file', 'blob', originalBlob]);
+  const before = scenarioSections(previousText, parseFeature(previousText, feature.feature));
+  const after = scenarioSections(currentText, feature);
+  if (!before || !after) return { ids: [], needsMapping: true };
+  const ids = [...after.sections.keys()].filter(id => after.sections.get(id) !== before.sections.get(id));
+  const removed = [...before.sections.keys()].some(id => !after.sections.has(id));
+  return { ids, needsMapping: before.header !== after.header || removed };
+}
+
+function feedbackPlan(repo, opts, index, result) {
+  const reason = '只選取本批新增、修改的情境，以及已核對的來源與相依回歸映射';
+  if (result.lint.length) return { ...result, level: 'TARGETED', reason, selected: [], bddStatus: 'BLOCKED',
+    blockers: ['修正 lint 所列的模組與情境問題後重新選測'], batchMappings: [] };
+  const blockers = [];
+  const selectedIds = new Set();
+  const changed = new Set(result.paths);
+  const mappedPaths = new Set();
+  const mappings = [];
+  const features = new Map();
+  const scenarioById = new Map();
+  const entries = new Set(opts['impact-scenario']);
+  const prefixes = new Set([...entries].map(entry => entry.slice(entry.lastIndexOf('=') + 1).split('-')[0]));
+  const directories = new Set(result.paths.filter(p => /\.feature$/i.test(p)).map(p => path.posix.dirname(p)));
+  for (const mod of index.modules) {
+    if (!prefixes.has(mod.prefix) && !directories.has(path.posix.join('.bdd/modules', mod.name))) continue;
+    for (const f of mod.features()) {
+      const scenarios = reviewableScenarios(repo, f);
+      features.set(f.feature, { module: mod.name, feature: f, rows: scenarios });
+      for (const s of scenarios) for (const id of s.ids) scenarioById.set(id, scenarioById.has(id) ? null : f);
+    }
+  }
+  for (const entry of entries) {
+    const separator = entry.lastIndexOf('=');
+    const file = entry.slice(0, separator).replaceAll('\\', '/');
+    const id = entry.slice(separator + 1);
+    if (separator < 1 || !changed.has(file) || !scenarioById.get(id)) {
+      throw new Error('--impact-scenario 需要本批的異動路徑與可辨識的現行情境編號：' + entry);
+    }
+    mappings.push({ path: file, id });
+    mappedPaths.add(file);
+    selectedIds.add(id);
+  }
+  const changedFeatures = result.paths.filter(p => features.has(p));
+  const requiredMappings = new Set(result.paths.filter(p => !isDocumentation(p) && (result.batchPaths !== undefined || !features.has(p))));
+  if (!result.batchPaths && changedFeatures.length) {
+    const { blobs, modes } = treeEntriesAt(repo, result.base, changedFeatures);
+    for (const file of changedFeatures) {
+      if (modes[file] && !['100644', '100755'].includes(modes[file])) {
+        requiredMappings.add(file);
+        continue;
+      }
+      const delta = changedScenarioIds(repo, features.get(file).feature, blobs[file]);
+      for (const id of delta.ids) selectedIds.add(id);
+      if (delta.needsMapping) requiredMappings.add(file);
+    }
+  }
+  const unmapped = [...requiredMappings].filter(p => !mappedPaths.has(p));
+  if (unmapped.length) blockers.push('以 --impact-scenario "異動路徑=情境編號" 補上本批受影響情境與相依回歸：' + unmapped.join('、'));
+  if (!opts['impact-complete']) blockers.push('核對本批差異與外溢依賴後加上 --impact-complete');
+  if (!result.staticPassed) blockers.push('完成並通過本批靜態檢查後加上 --static-passed');
+  if (!result.paths.length) blockers.push('本批沒有異動，請核對 --base 是否為本次回饋修改前的版本');
+  else if (!selectedIds.size && !unmapped.length) blockers.push('本批尚無可執行的情境，請核對差異並提供適用的 --impact-scenario');
+  const selected = [];
+  for (const { module, feature, rows } of features.values()) {
+    const scenarios = rows.filter(s => s.ids.some(id => selectedIds.has(id)));
+    if (scenarios.length) selected.push({ module, feature: feature.feature, sha256: feature.sha256, scenarios, reason });
+  }
+  return { ...result, level: 'TARGETED', reason, selected, bddStatus: blockers.length ? 'BLOCKED' : 'PENDING',
+    blockers, batchMappings: mappings };
+}
+
 export function buildQualityPlan(v) {
-  const risk = v['review-risk'].toUpperCase();
+  const issueScope = v['issue-scope'] ?? (v.issue !== undefined ? 'batch' : undefined);
+  if (issueScope !== undefined && (v.issue === undefined || !['batch', 'issue'].includes(issueScope))) {
+    throw new Error('--issue-scope batch 或 issue 須與 --issue 一起使用');
+  }
+  if (v['batch-path'] && issueScope !== 'batch') throw new Error('--batch-path 適用於 --issue 的本批選測');
+  const risk = (v['review-risk'] ?? (issueScope ? 'MEDIUM' : 'HIGH')).toUpperCase();
   const staticPassed = Boolean(v['static-passed']);
   if (!v.base || !v['review-reason']) throw new Error('--base 與 --review-reason 為必填');
   if (!['HIGH', 'MEDIUM', 'LOW'].includes(risk)) throw new Error('無效的 --review-risk');
@@ -61,26 +195,44 @@ export function buildQualityPlan(v) {
   const repo = repoRoot(v.repo);
   const head = commit(repo, 'HEAD');
   const base = commit(repo, v.base);
-  const paths = changedPaths(repo, base, head, true);
+  const allPaths = issueScope === 'batch' ? batchChangedPaths(repo, base, head) : changedPaths(repo, base, head);
+  let batchPaths;
+  if (v['batch-path']) {
+    const requested = new Set(v['batch-path'].map(p => p.replaceAll('\\', '/').replace(/^\.\//, '')));
+    batchPaths = allPaths.filter(p => requested.has(p));
+    if (!batchPaths.length || batchPaths.length !== requested.size) {
+      throw new Error('--batch-path 須指定 Git 差異中實際變更的路徑：' + [...requested].filter(p => !batchPaths.includes(p)).join('、'));
+    }
+  }
+  const paths = batchPaths && !v.full && risk !== 'HIGH' ? batchPaths : allPaths;
   const index = moduleIndex(repo, { hashFeatures: true });
   const problems = lint(index);
   const impact = findImpact(index.modules, paths);
+  const result = { head, base, paths, risk: v['review-risk'] ?? risk, reviewReason: v['review-reason'],
+    staticPassed, unmatched: impact.unmatched, lint: problems, ...(issueScope && { issue: v.issue, issueScope }),
+    ...(batchPaths && { batchPaths, allChangedPaths: allPaths }) };
+  const docsOnly = paths.every(isDocumentation);
+  const fast = risk === 'LOW' && staticPassed && docsOnly;
+  if (issueScope === 'batch' && !v.full && risk !== 'HIGH' && !(fast && !problems.length && paths.length)) {
+    return feedbackPlan(repo, v, index, result);
+  }
   const affected = new Set(impact.modules.map(m => m.name));
-  const scope = problems.length ? [] : scenarioImpact(v['impact-scenario'], impact.modules, index, paths);
+  const scope = problems.length || issueScope === 'batch' ? [] : scenarioImpact(v['impact-scenario'], impact.modules, index, paths);
   const mappedFeatures = new Set(scope.filter(s => s.mappings.length).flatMap(s => s.changedFeatures));
-  const docsOnly = paths.every(p => /^(README\.md|docs\/[\p{L}\p{M}\p{N}\p{Pc}/.-]+\.md)$/u.test(p));
   const reviewedFeatures = new Set();
   if (v.issue) {
     for (const m of index.modules.filter(m => affected.has(m.name))) {
       for (const f of m.features()) reviewedFeatures.add(f.feature);
     }
   }
-  const requiresFull = paths.some(p => p.startsWith('.bdd/') && !mappedFeatures.has(p) &&
-    !(/^\.bdd\/modules\/[^/]+\/[^/]+\/[^/]+\.feature$/.test(p) && reviewedFeatures.has(p)));
+  const requiresFull = paths.some(p => p.startsWith('.bdd/') && !mappedFeatures.has(p) && !reviewedFeatures.has(p));
   let level = 'FULL';
   let reason = '高風險、要求完整驗證或無法可靠界定影響範圍';
   if (!v.full && risk !== 'HIGH' && !problems.length) {
-    if (risk === 'LOW' && staticPassed && docsOnly) {
+    if (issueScope === 'issue' && docsOnly) {
+      level = 'TARGETED';
+      reason = '整單檢查，從所有模組選取本單情境';
+    } else if (fast) {
       level = 'FAST';
       reason = '靜態檢查通過且 Review 確認文件異動不影響行為';
     } else if (v['impact-complete'] && affected.size && !impact.unmatched.length && !requiresFull) {
@@ -95,11 +247,20 @@ export function buildQualityPlan(v) {
     }
   }
   const selected = [];
+  const issueTag = '@#' + v.issue;
   for (const m of index.modules) {
-    if (level === 'FAST' || (level === 'TARGETED' && !affected.has(m.name))) continue;
+    if (level === 'FAST') continue;
+    if (level === 'TARGETED' && !affected.has(m.name)) {
+      if (issueScope === 'issue') {
+        for (const f of m.features()) {
+          const scenarios = reviewableScenarios(repo, f).filter(s => s.tags.includes(issueTag));
+          if (scenarios.length) selected.push({ module: m.name, feature: f.feature, sha256: f.sha256, scenarios, reason: '整單檢查，選取 ' + issueTag });
+        }
+      }
+      continue;
+    }
     const features = m.features();
     const scenarios = features.flatMap(f => f.scenarios);
-    const issueTag = '@#' + v.issue;
     const reviewed = scope.find(s => s.module === m.name);
     const byMapping = reviewed?.selection === 'mapped';
     const mappedIds = new Set(reviewed?.mappings.map(row => row.id));
@@ -121,7 +282,6 @@ export function buildQualityPlan(v) {
     if (level === 'FAST') bddStatus = 'SKIPPED';
     else if (selected.length) bddStatus = 'PENDING';
   }
-  return { head, base, paths, risk: v['review-risk'], reviewReason: v['review-reason'],
-    staticPassed, level, reason, unmatched: impact.unmatched, lint: problems, selected, bddStatus,
-    ...(v['impact-scenario'] && { scenarioImpact: scope }) };
+  return { ...result, level, reason, selected, bddStatus,
+    ...(issueScope !== 'batch' && v['impact-scenario'] && { scenarioImpact: scope }) };
 }
