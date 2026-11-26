@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { listProcesses, withAllocationLocks } from '../scripts/lib/windows-host.mjs';
+import { worktreeFixture } from './worktree-fixture.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const run = promisify(execFile);
@@ -74,18 +76,10 @@ test('both legacy FileShare.None locks exclude old writers and allocation preser
   const original = '\uFEFF' + JSON.stringify({ version: 1, leases: [{ slot: 2, gitDir: legacy }] });
   fs.writeFileSync(file, original);
   await withAllocationLocks(registry, path.join(repo, '.git'), async () => {
-    const script = [
-      "$ErrorActionPreference='Stop'",
-      'foreach ($file in $env:BDD_TEST_GLOBAL,$env:BDD_TEST_COMMON) {',
-      "  try { $h=[IO.File]::Open($file, 'OpenOrCreate', 'ReadWrite', 'None') }",
-      '  catch [IO.IOException] { if (($_.Exception.GetBaseException().HResult -band 65535) -in 32,33) { continue }; throw }',
-      '  $h.Dispose(); throw "legacy writer acquired locked file"',
-      '}',
-      'exit 0',
-    ].join('\n');
-    await run('pwsh', ['-NoProfile', '-Command', script], { env: { ...process.env,
-      BDD_TEST_GLOBAL: path.join(registry, 'allocation.lock'), BDD_TEST_COMMON: path.join(repo, '.git', 'bdd-loopback-allocation.lock'),
-    } });
+    // FileShare.None rejects a second writable handle to either legacy lock, even in a Node process.
+    for (const lock of [path.join(registry, 'allocation.lock'), path.join(repo, '.git', 'bdd-loopback-allocation.lock')]) {
+      assert.throws(() => fs.closeSync(fs.openSync(lock, 'r+')), { code: 'EBUSY' });
+    }
   });
   const selected = await allocate('--isolate');
   assert.ok(selected.slot > 2);
@@ -96,4 +90,100 @@ test('both legacy FileShare.None locks exclude old writers and allocation preser
   await assert.rejects(allocate('--isolate'));
   assert.equal(fs.readFileSync(file, 'utf8'), stable);
   assert.equal(fs.readFileSync(marker, 'utf8'), '2');
+});
+
+test('concurrent worktrees in two repositories reserve and reuse distinct slots before listening', {
+  skip: process.platform !== 'win32',
+}, async t => {
+  const fixture = worktreeFixture();
+  t.after(fixture.clean);
+  const repos = ['project-a', 'project-b'].map(fixture.init);
+  const allocate = target => fixture.bdd(target, 'loopback-slot', '--ports', '4200,9453');
+  async function allocateTogether(targets) {
+    const results = await Promise.allSettled(targets.map(allocate));
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+    return results.map(result => result.value);
+  }
+  const targets = repos.flatMap((repo, i) => ['one', 'two'].map(name => fixture.worktree(repo, i + '-' + name)));
+  const first = await allocateTogether(targets);
+  assert.equal(new Set(first.map(r => r.ip)).size, 4);
+  const reused = await allocateTogether(targets);
+  assert.deepEqual(reused.map(r => [r.root, r.ip]), first.map(r => [r.root, r.ip]));
+  const fresh = repos.flatMap((repo, i) => ['three', 'four'].map(name => fixture.worktree(repo, i + '-' + name)));
+  const next = await allocateTogether(fresh);
+  assert.equal(new Set(first.concat(next).map(r => r.ip)).size, 8);
+
+  const marker = path.join(repos[1], '.git', 'bdd-loopback-slot');
+  fs.writeFileSync(marker, String(first[0].slot));
+  await assert.rejects(fixture.bdd(repos[1], 'loopback-slot', '--isolate'), /已由其他工作區預約/);
+});
+
+test('worktree preparation validates files, isolates sessions and uses a bindable port on collision', {
+  skip: process.platform !== 'win32',
+}, async t => {
+  const fixture = worktreeFixture();
+  t.after(fixture.clean);
+  const repo = fixture.init('project');
+  const a = fixture.worktree(repo, 'a');
+  const b = fixture.worktree(repo, 'b');
+  const state = path.join(fixture.root, 'private state.json');
+  const installed = path.join(fixture.root, 'installed cli.js');
+  fs.writeFileSync(state, '{"cookies":[],"origins":[]}');
+  fs.writeFileSync(installed, '// fixture');
+  const output = path.join(fixture.root, 'output');
+  const invalid = path.join(fixture.root, 'invalid');
+  for (const args of [['--storage-state', path.join(fixture.root, 'missing.json')],
+    ['--cli-path', path.join(fixture.root, 'missing.js')], ['--ports', '0']]) {
+    await assert.rejects(fixture.bdd(a, 'prepare-worktree-cli', '--ports', '4200', '--output-dir', invalid, ...args));
+    assert.equal(fs.existsSync(invalid), false);
+  }
+  const prepare = (checkout, ports, ...rest) =>
+    fixture.bdd(checkout, 'prepare-worktree-cli', '--ports', ports, '--output-dir', output, ...rest);
+  const manifest = path.join(output, 'prepared.json');
+  const configured = await prepare(a, '4200,5000', '--storage-state', state, '--cli-path', installed, '--manifest', manifest);
+  assert.deepEqual(JSON.parse(fs.readFileSync(manifest, 'utf8')), configured);
+  const before = fs.readdirSync(output);
+  await assert.rejects(prepare(a, '4200', '--manifest', manifest), /already exists/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(manifest, 'utf8')), configured);
+  await assert.rejects(prepare(a, '4200', '--manifest', path.join(output, 'absent', 'prepared.json')));
+  assert.deepEqual(fs.readdirSync(output), before);
+  assert.equal(configured.storageState, state);
+  assert.equal(configured.cliPath, installed);
+  assert.deepEqual(configured.ports, [4200, 5000]);
+  const config = JSON.parse(fs.readFileSync(configured.configPath, 'utf8'));
+  assert.equal(config.browser.isolated, true);
+  assert.deepEqual(config.browser.launchOptions.args, [configured.preflight.chromiumArg]);
+  assert.match(configured.isolationId, /^bdd-cli-[a-f0-9]{32}$/);
+  const fresh = await prepare(a, '4200,5000');
+  assert.equal(fresh.storageState, undefined);
+  assert.notEqual(fresh.isolationId, configured.isolationId);
+  assert.equal(fresh.preflight.slot, configured.preflight.slot);
+
+  async function listen(host, port) {
+    const server = net.createServer();
+    await new Promise((resolve, reject) => server.once('error', reject).listen({ host, port, exclusive: true }, resolve));
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    return server;
+  }
+  const owner = await listen('0.0.0.0', 0);
+  const port = owner.address().port;
+  const fallback = await prepare(a, String(port));
+  const [mapping] = fallback.portMappings;
+  assert.equal(mapping.originalPort, port);
+  assert.notEqual(mapping.effectivePort, port);
+  assert.deepEqual(fallback.effectivePorts, [mapping.effectivePort]);
+  assert.ok(mapping.effectivePort > 0);
+  await listen(fallback.preflight.ip, mapping.effectivePort);
+  const fixed = await fixture.bdd(a, 'loopback-slot', '--ports', String(port), '--keep-original-ports');
+  assert.equal(fixed.portMappings[0].effectivePort, port);
+  assert.equal(owner.address().port, port);
+
+  const main = await prepare(repo, '4200');
+  assert.deepEqual(JSON.parse(fs.readFileSync(main.configPath, 'utf8')).browser.launchOptions.args, []);
+  const marker = checkout => path.join(fixture.git('-C', checkout, 'rev-parse', '--absolute-git-dir'), 'bdd-loopback-slot');
+  fs.writeFileSync(marker(b), String(configured.preflight.slot));
+  await assert.rejects(fixture.bdd(a, 'loopback-slot'), /重複/);
+  fs.writeFileSync(marker(b), '254');
+  fs.writeFileSync(marker(a), '1');
+  await assert.rejects(fixture.bdd(a, 'loopback-slot'), /無效/);
 });

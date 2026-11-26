@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import Ajv from 'ajv/dist/2020.js';
 import { readContract } from '../scripts/lib/parallel-contracts.mjs';
 
 const guide = readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
@@ -13,6 +14,12 @@ function fixture(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return join(dir, 'contract.json');
 }
+
+test('documented resource release conforms to its published schema', () => {
+  const schema = JSON.parse(readFileSync(new URL('../schemas/resource-release.schema.json', import.meta.url), 'utf8'));
+  const validate = new Ajv().compile(schema);
+  assert.ok(validate(examples[2]), JSON.stringify(validate.errors));
+});
 
 test('reads documented UTF-8 assignment and result with or without a BOM', t => {
   const file = fixture(t);

@@ -31,6 +31,11 @@ function listPaths(repo, ...args) {
   return git(repo, ['ls-files', '-z', ...args, '--', '.bdd/']).stdout.split('\0').filter(Boolean);
 }
 
+export function isIgnoredPath(repo, relative) {
+  const file = './' + relative.split(path.sep).join('/');
+  return git(repo, ['check-ignore', '-q', '--', file], [0, 1]).status === 0;
+}
+
 function findFailures(repo) {
   const files = [...new Set([...probes, ...listPaths(repo, '--cached', '--others')])].sort();
   const failures = [];

@@ -175,7 +175,7 @@ export async function appendIndexEvents(index, stat, events) {
   }
 }
 
-// Keep the PowerShell module's Add-ArchiveIndexEvent entry point on the shared writer lock.
+// Append a JSON event from standard input under the same lock used by archive and recompress.
 if (isCliEntry(import.meta)) {
   try {
     const index = path.resolve(process.argv[2], 'index.jsonl');

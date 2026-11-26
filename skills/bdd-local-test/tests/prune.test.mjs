@@ -86,6 +86,18 @@ test('retains a tracked evidence file whose topic contains git pathspec characte
   assert.deepEqual(fs.readFileSync(path.join(f.evidence, 'a.txt')), payload);
 });
 
+test('only an active local archive can be explicitly trusted without upload verification', async t => {
+  const f = await fixture(t);
+  await f.publish();
+  const [created] = fs.readFileSync(f.index, 'utf8').split('\n');
+  fs.writeFileSync(f.index, created + '\n');
+  assert.equal((await f.command('--apply')).items[0].action, 'keep');
+  assert.equal((await f.command('--allow-local-only')).items[0].action, 'prune');
+  fs.appendFileSync(f.index, JSON.stringify({ event: 'status', archive: f.zip, status: 'superseded' }) + '\n');
+  assert.equal((await f.command('--allow-local-only', '--apply')).items[0].action, 'keep');
+  assert.deepEqual(fs.readFileSync(path.join(f.evidence, 'a.txt')), payload);
+});
+
 test('keeps evidence added while the original directory is being staged', async t => {
   const f = await fixture(t);
   await f.publish();

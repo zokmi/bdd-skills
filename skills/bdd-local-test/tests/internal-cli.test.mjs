@@ -116,7 +116,9 @@ test('CLI evidence capture leaves no file when masks do not match or capture fai
 test('gitignore checks without writing, preserves bytes, and is idempotent', t => {
   const { repo, run } = fixture(t);
   const ignore = path.join(repo, '.gitignore');
-  const original = Buffer.from('\uFEFF# 原規則\r\n/local');
+  assert.equal(run('--check')[0], 1);
+  assert.equal(fs.existsSync(ignore), false);
+  const original = Buffer.from('\uFEFF# 原規則\r\n.bdd/');
   fs.writeFileSync(ignore, original);
   assert.equal(run('--check')[0], 1);
   assert.deepEqual(fs.readFileSync(ignore), original);
@@ -124,7 +126,9 @@ test('gitignore checks without writing, preserves bytes, and is idempotent', t =
   assert.equal(status, 0);
   assert.equal(applied.updated, true);
   assert.deepEqual(fs.readFileSync(ignore).subarray(0, original.length), original);
+  const installed = fs.readFileSync(ignore);
   assert.equal(run()[1].updated, false);
+  assert.deepEqual(fs.readFileSync(ignore), installed);
 });
 
 test('gitignore reports tracked output and rolls back a conflicting nested rule', t => {
@@ -137,10 +141,14 @@ test('gitignore reports tracked output and rolls back a conflicting nested rule'
   fs.writeFileSync(path.join(repo, '.bdd/modules/.gitignore'), '*.feature\n');
   assert.equal(run()[0], 2);
   assert.equal(fs.existsSync(path.join(repo, '.gitignore')), false);
+  fs.writeFileSync(path.join(repo, '.gitignore'), '# preserved\n');
+  assert.equal(run()[0], 2);
+  assert.equal(fs.readFileSync(path.join(repo, '.gitignore'), 'utf8'), '# preserved\n');
   fs.unlinkSync(path.join(repo, '.bdd/modules/.gitignore'));
   const [status, result] = run();
   assert.equal(status, 1);
   assert.deepEqual(result.trackedOutputs, ['.bdd/run/REPORT.md']);
+  assert.ok(fs.existsSync(output));
 });
 
 test('gitignore batches preserve Git negations, rule details, and index ordering across hundreds of paths', t => {

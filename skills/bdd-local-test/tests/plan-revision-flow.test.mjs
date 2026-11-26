@@ -49,7 +49,7 @@ function fixture(t) {
     })),
   };
   assert.deepEqual(group.revision, { head: git('rev-parse', 'HEAD'), dirtySha256: null });
-  const plan = { contractVersion: 2, runId: a.runId, groups: [group] };
+  const plan = { contractVersion: 3, scope: 'non-batch', runId: a.runId, groups: [group] };
   const planFile = path.join(temp, 'plan.json');
   const templateFile = path.join(temp, 'template.json');
   const assignedFile = path.join(coord, 'assignment.json');
@@ -119,6 +119,8 @@ test('old v2 records cannot turn an ID absent at the recorded commit into passin
   const a = JSON.parse(f.usePlan(0, '--template', f.templateFile));
   f.record(a);
   // Older recorders trusted the explicit ID in <feature>::<ID>.
+  f.plan.contractVersion = 2;
+  delete f.plan.scope;
   f.group.scenarios[0].id = 'SS-99';
   save(f.planFile, f.plan);
   a.scenarios = f.group.scenarios;
@@ -216,6 +218,7 @@ test('dispatch and summary use the physical checkout when directory names differ
 test('v1 plan records remain readable and fresh dispatch requires a candidate-bound plan', t => {
   const f = fixture(t);
   f.plan.contractVersion = 1;
+  delete f.plan.scope;
   delete f.group.revision;
   save(f.planFile, f.plan);
   const sha256 = createHash('sha256').update(fs.readFileSync(f.planFile)).digest('hex');
@@ -227,4 +230,19 @@ test('v1 plan records remain readable and fresh dispatch requires a candidate-bo
   assert.equal(summary.eligibleForReview, true);
   assert.match(summary.limitation, /v1.*candidate/i);
   assert.match(fs.readFileSync(path.join(f.temp, 'legacy', 'SUMMARY.md'), 'utf8'), /v1.*candidate/i);
+});
+
+test('v2 results remain reviewable but cannot be dispatched without declaring the selection scope', t => {
+  const f = fixture(t);
+  f.plan.contractVersion = 2;
+  delete f.plan.scope;
+  save(f.planFile, f.plan);
+  const sha256 = createHash('sha256').update(fs.readFileSync(f.planFile)).digest('hex');
+  f.record({ ...f.template, scenarios: f.group.scenarios, approvedPlan: { path: f.planFile, sha256 } });
+  for (const args of [['--template', f.templateFile], ['--report'], ['--assignment', f.assignedFile]]) {
+    assert.match(f.usePlan(2, ...args), /v2.*batch selection/);
+  }
+  const history = f.summarize(0, 'historical-v2');
+  assert.equal(history.eligibleForReview, true);
+  assert.match(history.limitation, /v2.*batch selection/);
 });

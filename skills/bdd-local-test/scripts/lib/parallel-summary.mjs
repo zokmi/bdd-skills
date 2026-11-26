@@ -189,13 +189,16 @@ export function summarize(assignments, destination, planFile) {
       let status = 'not-run';
       const actual = results.get(id);
       if (!actual) issues.push('Missing or unacceptable scenario result: ' + a.groupId + '/' + label(s));
+      else if (plan?.scope === 'batch' && (actual.feature !== s.feature || actual.id !== s.id)) {
+        issues.push('Result path or ID differs from the batch assignment: ' + label(actual));
+      }
       else if (actual.kind !== s.kind) issues.push('Scenario kind mismatch: ' + label(s));
       else status = actual.status;
       if (!plan) {
         scenarios.push({ groupId: a.groupId, repo: a.target.repo, ...s, status });
       } else if (bound) {
         const row = approved.rows.get(id);
-        if (row && sameApprovedScenario(row, s)) row.status = status;
+        if (row && sameApprovedScenario(row, s, plan.scope === 'batch')) row.status = status;
       }
     }
     for (const [id, s] of results) if (!assigned.has(id)) issues.push('Unexpected result scenario: ' + label(s));
@@ -206,7 +209,8 @@ export function summarize(assignments, destination, planFile) {
     contractVersion: 1, runId, eligibleForReview: scenarios.length > 0 && !issues.length && total.passed === scenarios.length,
     ...(plan && { approvedPlan: plan.reference }), counts: total, issues, groups, scenarios,
     limitation: 'Structural acceptance only: main agent must review evidence content, environment, dependencies and final integration. Resource release is not inferred.' +
-      (plan?.contractVersion === 1 ? ' The historical v1 plan did not record the reviewed candidate revision.' : ''),
+      (plan?.contractVersion === 1 ? ' The historical v1 plan did not record the reviewed candidate revision.' : '') +
+      (plan?.contractVersion === 2 ? ' The historical v2 plan did not bind a batch selection.' : ''),
   };
 }
 

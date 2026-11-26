@@ -50,6 +50,16 @@ test('status and concurrent marks retain existing ledger fields and detect later
   assert.deepEqual(fs.readdirSync(dir).sort(), ['evidence', 'masking.json']);
 });
 
+test('an exemption requires a reason and applying a mask requires configured rectangles', async t => {
+  const { images, ledger, run } = fixture(t);
+  const file = path.join(images, 'chart.png');
+  fs.writeFileSync(file, 'original');
+  await assert.rejects(run('--mark', '--method', 'exempt'), /--note/);
+  await assert.rejects(run('--apply'), /mask\.rects/);
+  assert.equal(fs.existsSync(ledger), false);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'original');
+});
+
 test('a restored Windows evidence directory retains its spelling for masking and summary verification', async t => {
   const { dir, images, ledger, run } = fixture(t);
   const restored = path.join(dir, 'EVIDENCE');

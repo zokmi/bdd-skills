@@ -6,6 +6,7 @@ import { captureApprovedRevision } from './approved-revision.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, parseFeature, readFeature } from './module-index.mjs';
 import { git, repoIdentity, treeEntriesAt, dirtyPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
+import { captureWorktreeSnapshot, pinWorktreeSnapshot } from './worktree-snapshot.mjs';
 
 function readDocument(file) {
   let raw;
@@ -21,7 +22,7 @@ function readDocument(file) {
 
 // Cooperating writers append under the same lock. Rename publishes the complete
 // JSON in one filesystem operation, so readers see either the old or new rounds.
-async function appendRound(file, round) {
+async function appendRound(file, round, root) {
   const lock = file + '.lock';
   const deadline = Date.now() + 10000;
   let fd;
@@ -41,6 +42,7 @@ async function appendRound(file, round) {
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;
+    if (round.worktreeSnapshot) pinWorktreeSnapshot(root, round.worktreeSnapshot);
     fs.renameSync(lock, file);
     published = true;
   } finally {
@@ -84,14 +86,15 @@ async function record(file, opts) {
   const result = Object.fromEntries(['passed', 'failed', 'blocked', 'not-run'].map(name =>
     [name === 'not-run' ? 'notRun' : name, intOption(opts[name] ?? '0', name)]));
   const root = repoRoot('.');
-  const head = commit(root, opts.head ?? 'HEAD');
+  const currentHead = commit(root, 'HEAD');
+  const head = opts.head && opts.head !== 'HEAD' ? commit(root, opts.head) : currentHead;
   const revision = opts['capture-revision'] ? captureApprovedRevision(root) : null;
   if (revision && revision.head !== head) throw new Error('記錄受測快照時，指定的 HEAD 須與實際 checkout 相同');
   const base = opts.base ? commit(root, opts.base) : null;
   const refs = (opts.commits || []).flatMap(s => s.split(/[,\s]+/)).filter(Boolean);
   const { shas, paths } = testedChanges(root, refs, base, head);
   const hasScenarios = opts['changed-scenarios']?.length || opts['regression-scenarios']?.length;
-  const historicalHead = hasScenarios && opts.head && opts.head !== 'HEAD' && !revision && head !== commit(root, 'HEAD') ? head : null;
+  const historicalHead = hasScenarios && head !== currentHead ? head : null;
   const scenarios = [
     ...scenarioRecords(root, opts['changed-scenarios'], 'changed', historicalHead),
     ...scenarioRecords(root, opts['regression-scenarios'], 'regression', historicalHead),
@@ -107,7 +110,16 @@ async function record(file, opts) {
     files: Object.fromEntries(paths.map(p => [p, blobs[p]])), scenarios, result, note: opts.note || '',
   };
   if (revision) round.revision = revision;
-  await appendRound(file, round);
+  if (head === currentHead) {
+    round.worktreeSnapshot = captureWorktreeSnapshot(root, head, file, opts.issue);
+    if (revision) {
+      const actual = captureApprovedRevision(root);
+      if (actual.head !== revision.head || actual.dirtySha256 !== revision.dirtySha256) {
+        throw new Error('受測版本在工作樹快照擷取期間變更，請重試');
+      }
+    }
+  }
+  await appendRound(file, round, root);
   return round;
 }
 
@@ -186,10 +198,11 @@ export async function verificationCommand(args) {
   const list = { type: 'string', multiple: true };
   const flag = { type: 'boolean' };
   const { values: v } = parseArgs({ args, options: {
-    dir: str, record: flag, check: flag, 'capture-revision': flag, base: str, commits: list, head: str, passed: str, failed: str,
+    dir: str, record: flag, check: flag, 'capture-revision': flag, issue: str, base: str, commits: list, head: str, passed: str, failed: str,
     blocked: str, 'not-run': str, note: str, 'changed-scenarios': list, 'regression-scenarios': list, 'search-depth': str,
   } });
   if (!v.dir || Boolean(v.record) === Boolean(v.check)) throw new Error('請指定 --dir，並擇一指定 --record 或 --check');
+  if (v.issue !== undefined && (!v.record || !/^\d+$/.test(v.issue))) throw new Error('--issue 須與 --record 一起指定數字單號');
   if (v['capture-revision'] && !v.record) throw new Error('--capture-revision 適用於 --record');
   const file = path.join(v.dir, 'verification.json');
   if (v.record) {

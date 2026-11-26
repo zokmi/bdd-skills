@@ -4,8 +4,22 @@
   "title": "Approved parallel BDD plan",
   "type": "object",
   "properties": {
-    "contractVersion": { "enum": [1, 2] },
+    "contractVersion": { "enum": [1, 2, 3] },
     "runId": { "type": "string", "pattern": "\\S" },
+    "scope": { "enum": ["batch", "non-batch"] },
+    "selections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "pattern": "\\S" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "required": ["path", "sha256"],
+        "additionalProperties": false
+      }
+    },
     "groups": {
       "type": "array",
       "minItems": 1,
@@ -43,7 +57,21 @@
   },
   "required": ["contractVersion", "runId", "groups"],
   "additionalProperties": false,
-  "if": { "properties": { "contractVersion": { "const": 2 } } },
-  "then": { "properties": { "groups": { "items": { "required": ["revision"] } } } },
-  "else": { "properties": { "groups": { "items": { "not": { "required": ["revision"] } } } } }
+  "allOf": [
+    {
+      "if": { "properties": { "contractVersion": { "const": 1 } } },
+      "then": { "properties": { "groups": { "items": { "not": { "required": ["revision"] } } } } },
+      "else": { "properties": { "groups": { "items": { "required": ["revision"] } } } }
+    },
+    {
+      "if": { "properties": { "contractVersion": { "const": 3 } } },
+      "then": { "required": ["scope"] },
+      "else": { "not": { "anyOf": [{ "required": ["scope"] }, { "required": ["selections"] }] } }
+    },
+    {
+      "if": { "required": ["scope"], "properties": { "scope": { "const": "batch" } } },
+      "then": { "required": ["selections"] },
+      "else": { "not": { "required": ["selections"] } }
+    }
+  ]
 }

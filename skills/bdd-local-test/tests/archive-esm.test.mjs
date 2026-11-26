@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -7,10 +7,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { repository, resolveArchiveRoot } from '../scripts/lib/archive-store.mjs';
+import { expandArchive } from '../scripts/lib/extract.mjs';
+import { openZip, writeZip } from '../scripts/lib/zip-io.mjs';
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true }).trim();
+const bluePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lEQVR4nO3RMQ0AMAzEQLf8OacQ3CWbD8BHcg4Mm+7qOh340A9UiVSJVIlUiVSJVIlUiVSJVIlUiVSJMA+hxgE/8m7SpQAAAABJRU5ErkJggg==', 'base64');
 
 async function fixture(t) {
   const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'bdd-native-archive-')));
@@ -70,6 +74,63 @@ test('concurrent archives preserve both index events and supersede exactly one p
   assert.deepEqual((await readdir(f.root)).sort(), ['index.jsonl', 'one.zip', 'two.zip']);
 });
 
+test('archive and recompress validate matching image bytes by extension before writing ZIP aliases', async t => {
+  const helper = fileURLToPath(new URL('../scripts/lib/bdd_webp.py', import.meta.url));
+  const pillow = [['python'], ['python3'], ['py', '-3']].some(([exe, ...args]) => {
+    const probe = spawnSync(exe, [...args, helper, 'check'], { encoding: 'utf8', windowsHide: true });
+    return probe.status === 0 && JSON.parse(probe.stdout).ok;
+  });
+  if (!pillow) return t.skip('Requires Python with Pillow WebP support');
+  const f = await fixture(t);
+  const second = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGOs1nVmIAUwkaSaYVQDcYCJSHVwMKqBGEByKAEAAk8BC72JhXYAAAAASUVORK5CYII=', 'base64');
+  const samples = { 'a-wrong.jpg': bluePng, 'b-first.png': bluePng, 'c-second.png': second, 'd-first-copy.png': bluePng, 'z-wrong.jpg': second };
+  for (const [name, bytes] of Object.entries(samples)) await writeFile(path.join(f.evidence, name), bytes);
+  const sha = bytes => createHash('sha256').update(bytes).digest('hex').toUpperCase();
+  const run = async (...args) => JSON.parse((await exec(process.execPath, [cli, ...args], {
+    windowsHide: true, env: { ...process.env, BDD_WEBP_ENCODER: 'pillow' },
+  })).stdout);
+  await run('mask-evidence', '--dir', f.dir, '--mark', '--method', 'exempt', '--note', 'synthetic images');
+  for (const operation of ['archive', 'recompress']) {
+    await t.test(operation, async () => {
+      const archive = path.join(f.root, operation + '.zip');
+      if (operation === 'archive') {
+        await run('archive', '--dir', f.dir, '--archive-root', f.root, '--destination', archive);
+      } else {
+        await f.command('--destination', archive); // Original ZIP deduplicates the PNG and JPEG names before conversion.
+        const original = await expandArchive({ archive, to: path.join(f.base, 'original') });
+        assert.equal(original.manifest.aliases['evidence/b-first.png'], 'evidence/a-wrong.jpg');
+        assert.equal(original.manifest.aliases['evidence/z-wrong.jpg'], 'evidence/c-second.png');
+        assert.equal((await run('recompress', '--archive', archive)).changed, true);
+      }
+      const { manifest, folder } = await expandArchive({ archive, to: path.join(f.base, 'restore-' + operation) });
+      assert.equal(manifest.webp.encoder, 'pillow');
+      assert.equal(manifest.webp.converted, 3);
+      assert.deepEqual(manifest.webp.skipped, ['a-wrong.jpg', 'z-wrong.jpg'].map(name => ({ file: 'evidence/' + name, reason: 'encoder-failed' })));
+      for (const [name, original] of Object.entries(samples)) {
+        const saved = 'evidence/' + name.replace(/\.png$/, '.webp');
+        const bytes = await readFile(path.join(folder, saved));
+        const record = manifest.files[saved];
+        assert.equal(record.sha256, sha(bytes));
+        if (name.endsWith('.jpg')) {
+          assert.equal(record.sha256, sha(original));
+          assert.deepEqual(bytes, original);
+        } else {
+          assert.equal(record.originalName, 'evidence/' + name);
+          assert.equal(record.originalSha256, sha(original));
+          assert.equal(record.lossless, true);
+          assert.equal(bytes.toString('ascii', 8, 12), 'WEBP');
+        }
+      }
+      assert.equal(manifest.aliases['evidence/d-first-copy.webp'], 'evidence/b-first.webp');
+      const zip = await openZip(archive);
+      try {
+        const physical = zip.entries.map(entry => entry.name).filter(name => /\.(jpg|png|webp)$/.test(name)).map(name => path.posix.basename(name));
+        assert.deepEqual(physical.sort(), ['a-wrong.jpg', 'b-first.webp', 'c-second.webp', 'z-wrong.jpg']);
+      } finally { await zip.close(); }
+    });
+  }
+});
+
 test('archiving the same group for different issues keeps each issue independently active', async t => {
   const f = await fixture(t);
   const archive = async (issue, label, ...args) => {
@@ -112,8 +173,7 @@ test('restored parallel results retain usable masked evidence after WebP convers
   const recordedPath = 'evidence/原圖.png';
   result.scenarios[0].evidence = [recordedPath];
   result.scenarios[0].actual = 'Observed ' + recordedPath;
-  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lEQVR4nO3RMQ0AMAzEQLf8OacQ3CWbD8BHcg4Mm+7qOh340A9UiVSJVIlUiVSJVIlUiVSJVIlUiVSJMA+hxgE/8m7SpQAAAABJRU5ErkJggg==', 'base64');
-  await writeFile(path.join(f.dir, recordedPath), image);
+  await writeFile(path.join(f.dir, recordedPath), bluePng);
   await run('mask-evidence', '--dir', f.dir, '--mark', '--pattern', '原圖.png', '--method', 'exempt', '--note', 'Solid blue fixture');
   const attempt = path.join(f.dir, 'coordination', 'attempt-1');
   await mkdir(attempt, { recursive: true });
@@ -131,6 +191,16 @@ test('restored parallel results retain usable masked evidence after WebP convers
   assert.equal(restored.scenarios[0].actual, result.scenarios[0].actual);
   const summary = name => run('parallel-summary', '--assignment', assignmentFile, '--output-dir', path.join(f.base, name));
   assert.equal((await summary('restored')).eligibleForReview, true);
+  const existingWebp = await f.command('--destination', path.join(f.root, 'webp-only.zip'));
+  assert.equal(existingWebp.webpEncoder, null);
+  assert.doesNotMatch(existingWebp.warnings.join(' '), /webpUnavailable/);
+  await writeFile(path.join(f.evidence, 'next.png'), bluePng);
+  await run('mask-evidence', '--dir', f.dir, '--mark', '--pattern', 'next.png', '--method', 'css');
+  const next = await run('archive', '--dir', f.dir, '--archive-root', f.root, '--destination', path.join(f.root, 'next.zip'));
+  assert.equal(next.masked, true);
+  assert.equal(next.webpConverted, 1);
+  const validated = await expandArchive({ archive: next.archive, to: path.join(f.base, 'next-round') });
+  assert.equal(validated.manifest.aliases['evidence/原圖.webp'], 'evidence/next.webp');
   // Older converted archives kept the original path in the result and the mapping in masking.json.
   await writeFile(resultFile, JSON.stringify(result));
   assert.equal((await summary('historical')).eligibleForReview, true);
@@ -159,4 +229,105 @@ test('a malformed index or unfinished mask operation leaves the archive unpublis
   await writeFile(path.join(f.dir, 'masking.json.lock'), 'pending');
   await assert.rejects(f.command('--destination', archive), /稍後重試/);
   assert.deepEqual(await readdir(f.root), ['index.jsonl']);
+});
+
+test('archive honors root precedence, rejects every worktree and preserves existing destinations', async t => {
+  const f = await fixture(t);
+  const secondary = path.join(f.base, 'other-checkout');
+  git(f.repo, 'worktree', 'add', '--quiet', '--detach', secondary);
+  const missing = path.join(secondary, '.bdd/missing/nested');
+  const { repo, worktrees } = repository(missing);
+  assert.equal(repo, secondary);
+  assert.deepEqual(worktrees, [f.repo, secondary]);
+  const configRoot = path.join(f.base, 'from-config');
+  const envRoot = path.join(f.base, 'from-env');
+  const inherited = process.env.BDD_ARCHIVE_ROOT;
+  t.after(() => {
+    if (inherited === undefined) delete process.env.BDD_ARCHIVE_ROOT;
+    else process.env.BDD_ARCHIVE_ROOT = inherited;
+  });
+  delete process.env.BDD_ARCHIVE_ROOT;
+  assert.equal(resolveArchiveRoot({ worktrees, outputDir: missing }).root, path.join(os.homedir(), 'bdd-archives', path.basename(f.repo)));
+  const settings = { config: { archiveRoot: configRoot } };
+  assert.equal(resolveArchiveRoot({ settings, worktrees }).root, configRoot);
+  process.env.BDD_ARCHIVE_ROOT = envRoot;
+  assert.equal(resolveArchiveRoot({ settings, worktrees }).root, envRoot);
+  assert.equal(resolveArchiveRoot({ archiveRoot: f.root, settings, worktrees }).root, f.root);
+  for (const tree of worktrees) {
+    await assert.rejects(f.command('--destination', path.join(tree, 'sub/archive.zip')), /worktree/);
+  }
+  const dest = path.join(f.root, 'existing.zip');
+  await mkdir(f.root, { recursive: true });
+  await writeFile(dest, 'preserve');
+  await assert.rejects(f.command('--destination', dest), /已存在/);
+  assert.equal(await readFile(dest, 'utf8'), 'preserve');
+});
+
+test('archive validates masking, encoder settings and explicit exceptions before publication', async t => {
+  const f = await fixture(t);
+  const image = 'evidence/chart.png', imagePath = path.join(f.dir, image);
+  const settings = path.join(f.repo, '.bdd/config.json');
+  await writeFile(imagePath, 'original');
+  await assert.rejects(f.command(), /遮罩/);
+  await exec(process.execPath, [cli, 'mask-evidence', '--dir', f.dir, '--mark', '--pattern', '*.png', '--method', 'exempt', '--note', 'synthetic chart']);
+  await writeFile(imagePath, 'changed');
+  await assert.rejects(f.command(), /遮罩/);
+  await assert.rejects(f.command('--allow-unmasked-reason', ' '), /理由/);
+  assert.deepEqual(await readdir(f.base), ['repo']);
+  const unmasked = await f.command('--allow-unmasked-reason', 'local review');
+  const restored = await expandArchive({ archive: unmasked.archive, to: path.join(f.base, 'restored') });
+  assert.equal(restored.manifest.unmaskedReason, 'local review');
+  assert.deepEqual(restored.manifest.unmasked, [image]);
+  assert.match(unmasked.warnings.join('\n'), /webpUnavailable/);
+  assert.match(path.basename(unmasked.archive), new RegExp('123-.*-' + f.head.slice(0, 7) + '-'));
+  await writeFile(settings, JSON.stringify({ mask: { required: false }, webp: 'off', maxAttachmentBytes: 10 }));
+  const off = await f.command('--destination', path.join(f.root, 'off.zip'));
+  assert.equal(off.masked, false);
+  assert.equal(off.exceedsAttachmentLimit, true);
+  assert.match(off.warnings.join('\n'), /未登記遮罩/);
+  assert.doesNotMatch(off.warnings.join('\n'), /webpUnavailable/);
+  await writeFile(settings, JSON.stringify({ webp: 'wrong' }));
+  await assert.rejects(f.command(), /webp/);
+});
+
+test('archive snapshots checked versioned features once and supports historical issue-local features', async t => {
+  const f = await fixture(t);
+  const record = path.join(f.dir, 'verification.json');
+  const doc = JSON.parse(await readFile(record));
+  const [scenario] = doc.rounds[0].scenarios;
+  const save = scenarios => writeFile(record, JSON.stringify({ rounds: [{ head: f.head, scenarios }] }));
+  for (const [blob, error] of [[null, /尚未提交/], ['0'.repeat(40), /不符/]]) {
+    await save([{ ...scenario, blob }]);
+    await assert.rejects(f.command(), error);
+  }
+  await save([scenario, { ...scenario, role: 'regression' }]);
+  const saved = await f.command();
+  const r = await expandArchive({ archive: saved.archive, to: path.join(f.base, 'snapshots') });
+  assert.deepEqual(await readdir(path.join(r.folder, 'features/reports')), ['01.feature']);
+  await save([]);
+  await assert.rejects(f.command(), /情境/);
+  await writeFile(path.join(f.dir, 'scenario.feature'), 'Feature: historical');
+  const old = await f.command('--destination', path.join(f.root, 'historical.zip'));
+  const restored = await expandArchive({ archive: old.archive, to: path.join(f.base, 'old') });
+  assert.deepEqual(restored.manifest.features, []);
+  assert.equal(await readFile(path.join(restored.folder, 'scenario.feature'), 'utf8'), 'Feature: historical');
+  await rm(record);
+  await assert.rejects(f.command(), /verification\.json/);
+});
+
+test('archive flattens evidence.zip without replacing loose files that have different content', async t => {
+  const f = await fixture(t);
+  const legacy = path.join(f.dir, 'evidence.zip');
+  const name = 'legacy.txt', data = Buffer.from('old evidence');
+  await writeZip(legacy, [{ name, data }]);
+  const loose = path.join(f.evidence, name);
+  await writeFile(loose, 'other');
+  await assert.rejects(f.command(), /不同|覆蓋/);
+  assert.equal(await readFile(loose, 'utf8'), 'other');
+  await writeFile(loose, data);
+  const saved = await f.command();
+  const restored = await expandArchive({ archive: saved.archive, to: path.join(f.base, 'restored') });
+  assert.deepEqual(restored.manifest.flattenedFrom, ['evidence.zip']);
+  assert.equal(Object.hasOwn(restored.manifest.files, 'evidence.zip'), false);
+  assert.deepEqual(await readFile(path.join(restored.folder, 'evidence', name)), data);
 });

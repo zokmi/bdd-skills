@@ -10,8 +10,8 @@
 
 先完成 [worktree 隔離與路由探測](worktree-loopback.md)。從同一 worktree 執行：
 
-```powershell
-node "<skill>/scripts/route-snippet.mjs" --prepared "<本輪準備結果 JSON>" | Set-Content -Encoding utf8 "<本輪輸出目錄>/route.js"
+```sh
+node "<skill>/scripts/route-snippet.mjs" --prepared "<本輪準備結果 JSON>" > "<本輪輸出目錄>/route.js"
 playwright-cli -s=<名稱> run-code --filename="<本輪輸出目錄>/route.js"
 ```
 

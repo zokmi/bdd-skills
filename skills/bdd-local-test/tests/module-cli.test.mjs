@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { moduleIndex, nextId } from '../scripts/lib/module-index.mjs';
 import { lint } from '../scripts/lib/module-lint.mjs';
 import { buildQualityPlan } from '../scripts/lib/quality-plan.mjs';
@@ -103,6 +104,29 @@ test('successive feedback commits select their own cases and reviewed dependenci
   const featureOnly = plan(secondHead);
   assert.equal(featureOnly.bddStatus, 'PENDING');
   assert.deepEqual(ids(featureOnly), ['PY-02']);
+
+  const selectionPath = path.join(repo, priorOutput, 'second-selection.json');
+  const selectionArgs = ['--run-id', '42-R2', '--output', selectionPath];
+  const reference = plan(secondHead, ...selectionArgs);
+  const selectionBytes = fs.readFileSync(reference.path);
+  const saved = JSON.parse(selectionBytes);
+  assert.equal(reference.sha256, createHash('sha256').update(selectionBytes).digest('hex'));
+  assert.equal(saved.runId, '42-R2');
+  assert.equal(saved.repo, fs.realpathSync.native(repo));
+  assert.deepEqual(ids(saved), ['PY-02']);
+  assert.deepEqual(saved.revision, run('parallel-plan', '--revision', repo));
+  assert.ok(saved.revision.dirtySha256);
+  const invalidOutput = (file, base) => spawnSync(process.execPath, [cli, 'quality-plan', '--base', base,
+    '--issue', '42', '--review-reason', 'batch two', '--static-passed', '--impact-complete',
+    '--run-id', '42-R2', '--output', file], { cwd: repo, encoding: 'utf8' });
+  assert.notEqual(invalidOutput(selectionPath, secondHead).status, 0);
+  assert.deepEqual(fs.readFileSync(selectionPath), selectionBytes);
+  const visibleFile = path.join(repo, 'selected.json');
+  assert.notEqual(invalidOutput(visibleFile, secondHead).status, 0);
+  assert.equal(fs.existsSync(visibleFile), false);
+  const blockedFile = path.join(repo, priorOutput, 'blocked.json');
+  assert.match(invalidOutput(blockedFile, initial).stderr, /BLOCKED/);
+  assert.equal(fs.existsSync(blockedFile), false);
 
   // A saved feedback snapshot can be ahead of a checkout restored to an earlier revision.
   const savedReview = commit('save corrected scenario before returning to the integration checkout');
@@ -227,6 +251,22 @@ test('mapped plans retain English aliases and flag partially indexed feature fil
   const index = moduleIndex(repo);
   assert.deepEqual(lint(index), []);
   assert.equal(nextId(index.modules[0]), 'OR-06');
+  const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-full-selection-'));
+  t.after(() => fs.rmSync(artifacts, { recursive: true, force: true }));
+  const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
+  const exportFull = name => spawnSync(process.execPath, [cli, 'quality-plan', '--repo', repo, '--base', 'HEAD',
+    '--issue', '1', '--full', '--review-reason', 'full regression', '--static-passed', '--run-id', '1-R2',
+    '--output', path.join(artifacts, name)], { encoding: 'utf8' });
+  const full = exportFull('complete.json');
+  assert.equal(full.status, 0, full.stderr);
+  const bound = JSON.parse(fs.readFileSync(JSON.parse(full.stdout).path));
+  assert.deepEqual(bound.selected.flatMap(f => f.scenarios.flatMap(s => s.ids)).sort(),
+    ['OR-01', 'OR-02', 'OR-03', 'OR-04', 'OR-05']);
+  const savedFeature = fs.readFileSync(path.join(repo, legacyFile));
+  fs.appendFileSync(path.join(repo, legacyFile), '\n"""\norphaned doc string');
+  assert.notEqual(exportFull('incomplete.json').status, 0);
+  assert.equal(fs.existsSync(path.join(artifacts, 'incomplete.json')), false);
+  fs.writeFileSync(path.join(repo, legacyFile), savedFeature);
   fs.appendFileSync(path.join(repo, legacyFile), '\n@OR-06 @#6\nScenario Template: alias without a method');
   assert.deepEqual(lint(moduleIndex(repo)).map(problem => problem.rule), ['missing-method-tag']);
 });
@@ -270,14 +310,8 @@ test('reviewed file-to-scenario mappings narrow only fully covered modules', t =
     { path: 'src/orders.js', id: 'OR-01' }, { path: 'src/shared.js', id: 'OR-01' },
   ]);
   assert.deepEqual(mapped.scenarioImpact.find(m => m.module === 'api/invoices').unmappedPaths, ['src/shared.js']);
-  if (process.platform === 'win32') {
-    const wrapper = fileURLToPath(new URL('../scripts/bdd-quality-plan.ps1', import.meta.url));
-    const script = "& $env:BDD_PLAN_WRAPPER -Repo $env:BDD_PLAN_FIXTURE -Base HEAD -ReviewRisk MEDIUM -ReviewReason fixture -StaticPassed -ImpactComplete -ImpactScenario @('src/shared.js=OR-01','src/orders.js=OR-01','src/orders.js=OR-05')";
-    const powershellPlan = JSON.parse(execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8', env: { ...process.env, BDD_PLAN_FIXTURE: repo, BDD_PLAN_WRAPPER: wrapper },
-    }));
-    assert.deepEqual(ids(powershellPlan, 'api/orders'), ['OR-01', 'OR-02', 'OR-03', 'OR-05']);
-  }
+  const multipleIds = plan(...mapping, '--impact-scenario', 'src/orders.js=OR-05');
+  assert.deepEqual(ids(multipleIds, 'api/orders'), ['OR-01', 'OR-02', 'OR-03', 'OR-05']);
   const wholeIssue = ['--issue', '4', '--issue-scope', 'issue'];
   assert.deepEqual(ids(plan(...wholeIssue, ...mapping), 'api/orders'), ['OR-01', 'OR-02', 'OR-03', 'OR-04']);
   assert.deepEqual(ids(plan(...wholeIssue, ...mapping.slice(0, 2)), 'api/orders'), all);
@@ -353,7 +387,8 @@ test('module impact and quality plans include both rename endpoints and staged-o
   for (const [name, prefix] of [['orders', 'OR'], ['news', 'NW']]) {
     const mod = path.join(repo, '.bdd/modules/api', name);
     fs.mkdirSync(mod, { recursive: true });
-    fs.writeFileSync(path.join(mod, 'MODULE.md'), '---\nprefix: ' + prefix + '\npaths:\n  - src/' + name + '/**\n---\n');
+    const glob = name === 'news' ? 'src/news/*.js' : 'src/orders/**';
+    fs.writeFileSync(path.join(mod, 'MODULE.md'), '---\nprefix: ' + prefix + '\npaths:\n  - ' + glob + '\n---\n');
     fs.writeFileSync(path.join(mod, 'read.feature'), '@' + prefix + '-01 @#1 @API\nScenario: read');
     fs.mkdirSync(path.join(repo, 'src', name), { recursive: true });
   }
@@ -371,6 +406,10 @@ test('module impact and quality plans include both rename endpoints and staged-o
   const paths = [newPath, oldPath, stagedPath];
   const modules = run('modules', '--base', base);
   assert.deepEqual(modules.modules, [{ name: 'api/news', files: [newPath] }, { name: 'api/orders', files: [oldPath, stagedPath] }]);
+  const byPath = run('modules', '--path', 'SRC/ORDERS/nested/entry.js', '--path', newPath,
+    '--path', '.bdd/42-run/REPORT.md', '--path', 'src/news/deep/entry.js', '--path', 'other.txt');
+  assert.deepEqual(byPath.modules.map(m => m.name), ['api/news', 'api/orders']);
+  assert.deepEqual(byPath.unmatched, ['other.txt', 'src/news/deep/entry.js']);
   const plan = run('quality-plan', '--base', base, '--review-risk', 'MEDIUM', '--review-reason', 'reviewed callers', '--impact-complete', '--static-passed');
   assert.deepEqual(plan.paths, paths);
   assert.deepEqual(plan.selected.map(row => row.module), modules.modules.map(row => row.name));
@@ -400,10 +439,19 @@ test('native module queries and quality plans share the same scenario index', t 
     return result.stdout && JSON.parse(result.stdout);
   }
   assert.deepEqual(run(0, 'modules', '--lint').problems, []);
+  run(2, 'modules');
+  run(2, 'modules', '--next-id', '--module', 'missing');
   assert.equal(run(0, 'modules', '--next-id', '--module', 'api/shared/orders').next, 'OR-10');
   assert.deepEqual(run(0, 'modules', '--path', 'src/訂單1.js', '--path', 'new file').unmatched, ['new file']);
+  const readme = path.join(repo, 'README.md');
+  fs.writeFileSync(readme, 'documentation only');
+  const fast = run(0, 'quality-plan', '--base', 'HEAD', '--review-risk', 'LOW', '--review-reason', 'docs only', '--static-passed');
+  assert.deepEqual([fast.level, fast.bddStatus, fast.selected], ['FAST', 'SKIPPED', []]);
+  fs.unlinkSync(readme);
   fs.mkdirSync(path.join(repo, 'src'));
   fs.writeFileSync(path.join(repo, 'src/訂單1.js'), 'test');
+  git('config', 'core.quotepath', 'true');
+  assert.deepEqual(run(0, 'modules', '--base', 'HEAD').modules[0].files, ['src/訂單1.js']);
   const plan = (...extra) => run(0, 'quality-plan', '--base', 'HEAD', '--review-risk', 'MEDIUM',
     '--review-reason', 'reviewed', '--static-passed', '--impact-complete', '--issue', '8', '--issue-scope', 'issue', ...extra);
   const targeted = plan();
@@ -413,6 +461,15 @@ test('native module queries and quality plans share the same scenario index', t 
     { line: 6, title: 'core', tags: ['@OR-02', '@#1', '@core', '@DB', '@UI'], ids: ['OR-02'], methods: ['DB', 'UI'] },
   ]);
   assert.equal(plan('--full').selected[0].scenarios.length, 3);
+  const normal = (...extra) => run(0, 'quality-plan', '--base', 'HEAD', '--review-reason', 'reviewed',
+    '--static-passed', '--impact-complete', ...extra);
+  assert.equal(normal('--review-risk', 'MEDIUM').level, 'TARGETED');
+  assert.equal(normal('--review-risk', 'MEDIUM', '--issue', '99', '--issue-scope', 'issue').selected[0].scenarios.length, 3);
+  assert.equal(normal('--review-risk', 'HIGH').level, 'FULL');
+  const config = path.join(repo, '.bdd/config.json');
+  fs.writeFileSync(config, '{}');
+  assert.equal(normal('--review-risk', 'MEDIUM').level, 'FULL');
+  fs.unlinkSync(config);
   fs.appendFileSync(feature, '\n# Reviewed the changed order handler and existing feature');
   const sharedPlan = plan();
   assert.equal(sharedPlan.level, 'TARGETED');
@@ -422,4 +479,8 @@ test('native module queries and quality plans share the same scenario index', t 
   assert.equal(plan().bddStatus, 'BLOCKED');
   run(2, 'modules', '--lint', '--next-id');
   run(1, 'quality-plan', '--base', 'HEAD');
+  const emptyModule = path.join(repo, '.bdd/modules/empty');
+  fs.mkdirSync(emptyModule);
+  fs.writeFileSync(path.join(emptyModule, 'MODULE.md'), '---\nprefix: MT\npaths:\n  - other/**\n---\n');
+  assert.equal(run(0, 'modules', '--next-id', '--module', 'empty').next, 'MT-01');
 });

@@ -76,6 +76,7 @@ export function parseFeature(bytes, feature, hashFeatures = false) {
   const trailingIds = scenarioIds(tags);
   if (trailingIds.length) unindexedScenarios.push({ line: lastTagLine, ids: trailingIds, unattached: true });
   if (unindexedScenarios.length) result.unindexedScenarios = unindexedScenarios;
+  if (docString) result.unterminatedDocString = true;
   if (unindexedScenarios.length || !scenarios.length || docString) result.requiresFullFeature = true;
   if (hashFeatures) result.sha256 = createHash('sha256').update(bytes).digest('hex').toUpperCase();
   return result;
