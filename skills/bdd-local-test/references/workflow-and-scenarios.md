@@ -38,7 +38,7 @@ git branch -r | head -20
 
 ### 1-1. 比對既有驗證紀錄（同步後自動複測）
 
-資料夾裡已有 `verification.json`，或使用者提到剛做過 cherry-pick／merge／跨 repo 同步時，**先比對，不要直接沿用舊報告**：
+接續 BDD 驗收或查核舊報告時，若已有 `verification.json` 或剛做過 cherry-pick／merge／跨 repo 同步，先在目標版本比對。僅要求合併 develop 時，直接依[合併檢核](closeout.md)處理。
 
 ```bash
 node "<skill 目錄>/scripts/bdd.mjs" verification --check --dir "<輸出資料夾>"
@@ -58,7 +58,7 @@ node "<skill 目錄>/scripts/bdd.mjs" verification --check --dir "<輸出資料�
 |---------|------|------|
 | `current` | 同 repo、同 HEAD、受測檔案無未提交異動 | 可追溯原輪次結果。新回饋新增或改變的斷言仍要實測。 |
 | `still-valid` | 同 repo，HEAD 前進了但受測 commit 都在、受測檔案內容沒變 | 保留原輪次、原受測 SHA 與結果，可另記比對所用的新 HEAD。同單新回饋的本輪統計只計本次實測。 |
-| `rerun` | 跨 repo、cherry-pick、受測檔案有變、或有 commit 缺漏 | 舊結果失效；從步驟 2 確認範圍，依 `SKILL.md` 的驗證階段安排完整重跑。合併模式整合前只驗修正與相關回歸，候選整合後才完整驗證；feature／限定實測報告在目前工作區完整驗證。 |
+| `rerun` | 跨 repo、cherry-pick、受測檔案有變、或有 commit 缺漏 | 舊 BDD 結果失效。從步驟 2 確認本次要求驗收的範圍，在指定版本實測。 |
 | `no-record` | 舊報告沒有紀錄檔 | 視同 `rerun`；舊報告的結果無法證明是哪個版本驗到的 |
 
 接續同一批時，`current` 或 `still-valid` 仍須依原清單處理未完成項目。收到同單另一批回饋時，先重建本批範圍；原輪未解問題保留原狀，只把本批直接涉及、再次失敗或已解除相關阻塞的情境列入複測。`rerun` 描述原證據的有效性，另依本批 diff 決定本輪測案。
@@ -125,5 +125,3 @@ git status --porcelain
 
 審核通過後給使用者一份**情境清單摘要**（檔案、編號、一行標題、標籤，以及審核輪次與必修／建議的處理結果），然後進入執行。
 使用者若只要情境不要執行，就在這裡停，REPORT.md 全部標「未執行」。
-
-合併模式的完整驗證時機依 [整合與封存](closeout.md) 執行；rerun 集中在整合後、推送前，不在整合前多跑一輪。current／still-valid 未涵蓋所有共用程式與環境，不能代替整合驗證。

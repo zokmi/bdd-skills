@@ -65,7 +65,7 @@ node "<skill 目錄>/scripts/bdd.mjs" modules --lint
 node "<skill 目錄>/scripts/bdd.mjs" modules --path "src/orders/list.ts" --path "src/orders/detail.ts"
 ```
 
-有問題時 exit 1 並列出：編號重複、前綴重複、編號前綴不符、缺單號或驗證手段標籤、用回已移除的編號、情境檔所在目錄沒有 MODULE.md、MODULE.md 格式錯誤。在〈3-1〉送審前與〈7-1〉合併後各跑一次，**有問題不進入執行、不推 develop**。
+情境文件送審前執行 `modules --lint`。exit 1 會列出編號或前綴重複、編號前綴不符、缺單號或驗證手段標籤、重用已移除編號、缺 MODULE.md 或格式錯誤。修正後再送審。
 
 ## 並行分支撞號
 
@@ -74,7 +74,7 @@ node "<skill 目錄>/scripts/bdd.mjs" modules --path "src/orders/list.ts" --path
 1. 〈7-1〉把功能分支合併進最新的 `origin/develop` 時處理。
 2. 合併衝突**全部**落在 `.bdd/modules/` 底下時，自行解：`.feature` 兩邊的情境都保留，本分支新增的情境改用 `--next-id` 取得的新號；`MODULE.md` 的 `issues`、`removed` 取聯集。只要同時有任何 `.bdd/modules/` 以外的檔案衝突，整個合併就照現行規則停下來回報，連 `.bdd/modules/` 的衝突也先不動。
 3. 沒有文字衝突、但 `--lint` 報 `duplicate-id` 時，同樣把本分支新增的改號。
-4. 改號寫進 REPORT〈情境修訂〉（例如「`SS-13`→`SS-15`（與 #5401 撞號）」）；合併後重跑那一輪的證據用新編號，舊輪次證據保留原檔名。
+4. 改號後以 `modules --lint` 核對衝突處理結果。已有 REPORT 時在〈情境修訂〉記錄新舊編號（例如「`SS-13`→`SS-15`（與 #5401 撞號）」）。既有 BDD 證據保留實測當時的編號。
 
 ## 遷移舊資料（使用者要求時）
 

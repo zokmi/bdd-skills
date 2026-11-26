@@ -9,6 +9,8 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 實測優先使用內建 localhost 轉送、API 與選配 SQL Server 工具。從受測 worktree 的 `.bdd/config.json` 取得設定，僅在工具缺少情境能力時新增本輪腳本。參閱[內建實測工具](references/test-kit.md)。
 
+**合併回 develop** 時直接走[合併檢核](references/closeout.md#develop-合併檢核)。在實際整合候選版本取得全單元測試通過或編譯成功，任一項成功即可。合併本身不觸發 BDD，不要求 feature 有全過紀錄。已完成的 feature BDD 保留原輪結果與受測 SHA。
+
 ## 同單多次回饋
 
 收到同一 issue 的新回饋時，預設只驗本批。以本次指定的註記、對話或改動為起點，同單接續回饋用 `--previous-verification` 讀取上批實測時保存的工作樹快照。依該基準的差異選入直接修正、必要前置及受影響回歸。先前已驗且本次未受影響的項目保留在原輪次；只有受影響、問題重現或使用者點名的歷史項目才重新選入。送審與派工用本輪 `runId` 和選測檔逐一核對 Feature 與情境 ID。報告與已授權的 issue 回覆都標明批次來源、受測版本及本批結果。[選測與擴大範圍](references/scenario-priority.md#同單多批回饋)
@@ -25,7 +27,7 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 - 依 [版控分工](references/version-control.md)，Git 只保存模組情境、`MODULE.md` 與共用設定；報告、驗證與遮罩紀錄保存在本機，依審核通過的清單保存截圖，不新增到 Git、不另建純報告提交。既有追蹤輸出先核對非圖片紀錄及 Redmine 附件，再依明確授權遷移。
 - 「那麼」以需求為準，不照抄錯誤實作；發現不符時標 `@已知缺陷`，實測讓它失敗。只有走真實路徑驗到的結果才能記「通過」；模擬回應、假 token 或旁證不能代替端對端驗證。
 - BDD 的 `@UI` 情境以 Microsoft Playwright CLI 操作與取證。每組從受測工作區以唯一 session 名稱執行 `playwright-cli -s=<名稱>` 的各項命令。共用 session 的 UI 操作序列執行。CLI、瀏覽器或路由隔離無法就緒時，排查後將受影響的 UI 情境列「阻塞」。`@API`／`@DB` 情境使用各自的真實驗證工具。
-- 報告只對記錄的 repo、commit 與工作區狀態有效。同步或受測檔案變更時先用 `node bdd.mjs verification --check` 判定；`rerun` 代表舊結果失效，完整重跑的時機依下節驗證階段決定，不在合併前後各跑一輪。
+- 需要引用或接續 BDD 驗收時，用 `node bdd.mjs verification --check` 核對報告所屬的 repo、commit 與工作區狀態。`rerun` 影響該次 BDD 驗收，不會新增 develop 合併條件。
 - **資料庫環境確認是實測前的必要關卡**：依 [執行前的安全確認](references/local-execution.md) 展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，收到使用者針對該目標的明確確認後，才可開始 UI／API／DB 實測、啟動可能連庫寫入的服務、執行會存取資料庫的工程檢查或派子代理執行上述工作。本機與唯讀情境同樣須確認；只告知、已提問、沉默或「測到全過」不算確認。同任務目標與授權範圍未變的複測沿用既有明確確認；目標或範圍改變時重新確認。缺帳密不得繞過驗證，相關情境列「阻塞」。
 - **情境文件異動自動檢查**：新增、修改、刪除、改名或整併 `.feature`，以及修改影響情境歸屬／規則的 `MODULE.md` 後，自動依 [bdd-scenario-audit](../bdd-scenario-audit/SKILL.md) 派未參與撰寫的唯讀子代理檢查，不另問是否執行。先跑 `node bdd.mjs modules --lint`；與下述獨立審核可合併派工並分別記錄結論。必修修正後複審，無子代理時記阻塞，不以自行檢查代替獨立通過。
 - 依[送審前準備](references/scenario-review.md#送審前選取範圍與編製清單)選取本輪情境並列出每個斷言的手段與證據。符合小型 TARGETED 條件時派一名唯讀規劃者一次完成，其餘實測輪次依序派兩次準備。情境與清單交未參與規劃或執行的子代理獨立審核，適用審核通過後才派工實測。
@@ -38,7 +40,7 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 - 階段與最終回寫都要按本批或整單的核准範圍[逐條回覆驗收標準](references/closeout.md#逐條回覆驗收標準)，列出本版實測結果，呈現方式依 issue-writing skill 的驗證完成模板。每次回寫後，由未參與撰寫或寫入的唯讀子代理依 [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md) 從原單核對線上回覆、實際調整與驗證證據。取得 PASS 後才依[收尾指引](references/closeout.md)判定是否停止本輪服務，並於分支方式未定時詢問。回覆需要更正時，修正後重新回讀、送審。
 - 用檔案編輯工具寫 `.feature` 與 `REPORT.md`；內容常含引號與反引號，避免用會被 shell 解析的 heredoc。
 
-## 修改完成時的驗證入口
+## 開發階段的 BDD 驗證入口
 
 以一組相關修改為單位固定基準與候選版本，執行靜態檢查並 Review Diff，再按 [品質閘門](references/quality-gate.md) 選擇 FAST、TARGETED 或 FULL。只有確認不影響行為的純文件改動可走 FAST。局部行為改動選 TARGETED。確認高風險或依 PR、Release、明確全套要求時採 FULL。普通回饋缺少批次基準、影響映射或相依分析時，維持本批範圍並依 `blockers` 補正；執行前須解除 `BLOCKED`。詳見[批次範圍](references/scenario-priority.md#同單多批回饋)。
 

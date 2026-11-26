@@ -2,6 +2,13 @@
   "skill_name": "bdd-local-test",
   "evals": [
     {
+      "id": 69,
+      "prompt": "feature 的 12 個 BDD 情境全過，現在只要合併 develop。已在最終候選跑過兩條受影響的單元測試，都成功；專案共有 80 條單元測試。該候選的編譯曾失敗。可否推送？若接著跑完全部 80 條且全過，編譯尚未重跑呢？",
+      "expected_output": "第一次先保留候選，記錄局部測試與編譯失敗，繼續執行全套單元測試或取得成功的編譯結果。同一候選的 80 條全過後即可依授權推送，並如實列出先前的編譯失敗。保留 feature 原輪 12/12，不新增 develop BDD 輪次。",
+      "assertions": ["部分單元測試成功且編譯失敗時不推送", "同一候選全套單元測試通過即可放行，無須等待編譯也成功", "記錄兩項實際結果與候選 SHA", "未將 feature BDD 或局部單元測試算作 develop BDD"],
+      "files": []
+    },
+    {
       "id": 68,
       "prompt": "同單兩批共用 HEAD。上批以工作樹實測時，排序檔與後台顯示均有未提交修改，verification.json 已保存。本批把排序檔還原成 HEAD 並改了匯出；後台顯示沒有再動。本批應測 OR-01 與 EX-03，但送審清單列的是 OR-01 與上批的 UI-02。請準備派工。",
       "expected_output": "以 --previous-verification 讀取上批實測工作樹，納入排序還原及匯出的差異。以本輪 runId 保存選測檔，將選測檔引用帶入 v3 批次核准清單。指出漏列 EX-03、多列 UI-02，停止產生派工檔。修正清單並重新送審，整輪核對通過後再派工。",
@@ -80,8 +87,8 @@
     },
     {
       "id": 57,
-      "prompt": "已授權更新 Redmine #5410，最終整合候選版本、資料庫與實測範圍均已核准。本單驗收情境與其他必測回歸可獨立執行，回歸很慢，現在有空閒實測子代理，PM 想先知道本單結果。請安排派工、Issue 回寫與後續回歸。若階段註記送出後回讀暫時失敗，怎麼繼續？",
-      "expected_output": "先派子代理驗證本單的需求和驗收項目，將結果與證據依本單範圍獨立審核。主代理確認寫入範圍後，派專責子代理依 Redmine 規範追加已驗證的本單結果，註明其他回歸待驗並回讀核對。回讀暫時失敗先重讀，只補缺項。將實際階段註記及證據交獨立子代理執行 Issue 回覆內容審核，PASS 後才派單外回歸。整合完整通過後推送並核對遠端，按最終版本完成正式交付及其回覆內容審核。",
+      "prompt": "已授權更新 Redmine #5410、推送 develop，並另行指定在最終整合候選執行 BDD；該候選已編譯成功，資料庫與實測範圍均已核准。本單驗收情境與其他必測回歸可獨立執行，回歸很慢，現在有空閒實測子代理，PM 想先知道本單結果。請安排派工、Issue 回寫與後續回歸。若階段註記送出後回讀暫時失敗，怎麼繼續？",
+      "expected_output": "先派子代理驗證本單的需求和驗收項目，將結果與證據依本單範圍獨立審核。主代理確認寫入範圍後，派專責子代理依 Redmine 規範追加已驗證的本單結果，註明其他回歸待驗並回讀核對。回讀暫時失敗先重讀，只補缺項。將實際階段註記及證據交獨立子代理執行 Issue 回覆內容審核，PASS 後才派單外回歸。候選編譯已成功，完成另行指定的 BDD 後推送並核對遠端，按最終版本完成正式交付及其回覆內容審核。",
       "assertions": ["依需求與驗收條件選出本單優先項目", "空閒名額不搶跑其他回歸", "由專責子代理回寫並回讀", "回讀失敗先核對再補缺項，仍失敗則列阻塞", "階段回覆審核 PASS 只放行回歸，正式回覆另審"],
       "files": []
     },
@@ -171,23 +178,23 @@
     },
     {
       "id": 30,
-      "prompt": "worktree 修正完成，已指定合併 develop。Check=rerun，全部有 60 個情境，其中修正與相關回歸只有 8 個；兩組子代理可用。請測到全部通過並交付。",
-      "expected_output": "先派工 8 個開發回饋情境，通過後提交並候選整合；在候選 commit 完整跑 60 個一次，推送同一 HEAD 後只核對 SHA。不因 rerun 或子代理可用先在功能 worktree 全跑。",
-      "assertions": ["實測入口先確認階段", "整合前只跑 8 個必要情境", "整合後完整 60 個一次", "推送後不重跑"],
+      "prompt": "worktree 修正完成，已指定合併 develop。Check=rerun，全部有 60 個情境，其中修正與相關回歸只有 8 個；兩組子代理可用。除了合併，請另在最終候選實測這 60 個 BDD 情境並交付。",
+      "expected_output": "在最終候選執行使用者另行指定的 60 個 BDD 情境一次，依實測規則先驗核心修正及必要回歸。合併檢查採同一候選的全套單元測試通過或編譯成功。完成指派後推送同一 HEAD 並核對遠端 SHA。",
+      "assertions": ["依另行指定的候選與範圍派工 BDD", "不因 rerun 先在功能 worktree 全跑 60 個", "BDD 與單元測試或編譯各自如實記錄", "推送後不重跑"],
       "files": []
     },
     {
       "id": 31,
-      "prompt": "worktree 新增情境完成，沒有 verification.json，也還沒決定轉 feature 或合併；修正與相關回歸已通過。請繼續測到全過。",
-      "expected_output": "本次無 issue 回寫授權。no-record 不直接觸發完整測試。先依本機條件保存本輪成果並停服，再詢問兩種交付方式。若選合併則候選整合後完整驗證，若選 feature 則在功能工作區完整驗證。",
+      "prompt": "worktree 新增情境完成，沒有 verification.json，也還沒決定轉 feature 或合併；修正與相關回歸已通過。請繼續收尾。",
+      "expected_output": "本次無 issue 回寫授權。先依本機條件保存本輪成果並停服，再詢問兩種交付方式。若選合併，只在候選取得全套單元測試通過或編譯成功的結果；no-record 不觸發合併 BDD。若選 feature，依功能工作區的正式分支驗收流程辦理。",
       "assertions": ["未選模式前不開完整驗證", "沿用相關回歸結果進模式確認", "不自動合併或推送"],
       "files": []
     },
     {
       "id": 32,
-      "prompt": "候選整合 worktree 的乾淨 commit 已完整 BDD 通過，推送 develop 相同 HEAD 成功。現在切回 develop 目錄，程式、情境與環境皆未變。",
-      "expected_output": "只核對遠端 SHA 與已驗證版本，沿用候選結果，不因換目錄或推送新增 BDD 輪次；若遠端前進需重新整合才重新驗證。",
-      "assertions": ["不因 worktree 或分支名稱重跑", "不以 current 代替尚未完成的整合驗證", "遠端改變版本才重新整合驗證"],
+      "prompt": "候選整合 worktree 的乾淨 commit 已編譯成功，推送 develop 相同 HEAD 成功。現在切回 develop 目錄，程式、情境與環境皆未變。",
+      "expected_output": "核對遠端 SHA 與已編譯的候選相同即可收尾，保留原編譯紀錄。換目錄和推送相同 HEAD 都不新增單元測試、編譯或 BDD 輪次。",
+      "assertions": ["核對同一候選的編譯結果與遠端 SHA", "不因 worktree 或分支名稱重跑", "未宣稱 develop BDD 通過"],
       "files": []
     },
     {
@@ -268,12 +275,12 @@
     },
     {
       "id": 3,
-      "prompt": "#94541 已經從元利 cherry-pick 到產品 repo 的 develop 了，.bdd/94541-resign-rollback-detach 也一起帶過來，幫我確認一下在這邊還是正常的。",
-      "expected_output": "先以 node bdd.mjs verification --check 比對 verification.json；本案例已同步至目標 develop，現在驗證整合版本，因此跨 repo（rerun）後直接完整重跑所有情境，不是所有 rerun 都立即全跑。重新做環境安全確認；證據加 R<n>_ 前綴不覆蓋舊證據；REPORT 版本紀錄新增一列、填同步對照表（來源 SHA→本 repo SHA 與對應方式）；最後以 --record 追加一輪紀錄。",
+      "prompt": "#94541 已經從元利 cherry-pick 到產品 repo 的 develop 了，.bdd/94541-resign-rollback-detach 也一起帶過來。請在產品 repo 實測這份報告的全部 BDD 情境。",
+      "expected_output": "先以 node bdd.mjs verification --check 比對 verification.json。跨 repo 的 rerun 表示原證據不足，依本次明確要求在目標 repo 實測報告的全部情境。重新做環境安全確認，證據加 R<n>_ 前綴保存舊證據。REPORT 版本紀錄新增一列，填同步對照表（來源 SHA→本 repo SHA 與對應方式），以 --record 追加一輪紀錄。",
       "files": [],
       "assertions": [
         "執行前有跑 node bdd.mjs verification --check 並依 verdict 決定重測",
-        "判定 rerun 後重跑全部情境，而非只挑部分情境",
+        "依明確指定的 BDD 範圍在目標 repo 跑完報告內全部情境",
         "沒有直接沿用來源 repo 的通過結果",
         "重新確認目標 repo 的連線字串與資料庫是否為測試環境",
         "新一輪證據檔名帶 R<輪次>_ 前綴，舊證據保留",
@@ -360,7 +367,7 @@
     {
       "id": 10,
       "prompt": "#5410 又改了賽制管理列表（organizer/schedule-settings 已有模組情境 SS-01～SS-12），幫我寫情境、本機測到全部通過並收尾。",
-      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410）。執行 node bdd.mjs modules --lint 並送子代理審核，verification.json 的 scenarios 區分 changed 與 regression。本輪只有單號，沒有 issue 回寫授權。完成相關回歸、保存本機成果並依本機條件停服後再詢問分支。若選合併，在最新整合候選完整驗證，再依授權處理 develop 與 worktree。",
+      "expected_output": "在 .bdd/modules/organizer/schedule-settings/ 修改或新增情境（新編號接 SS-13 起、標 @#5410）。執行 node bdd.mjs modules --lint 並送子代理審核，verification.json 的 scenarios 區分 changed 與 regression。本輪只有單號，沒有 issue 回寫授權。完成指定 BDD、保存本機成果並依本機條件停服後再詢問分支。若選合併，在最新整合候選取得全套單元測試通過或編譯成功的結果，再依授權處理 develop 與 worktree。",
       "files": [],
       "assertions": [
         "情境寫在 .bdd/modules/organizer/schedule-settings/，issue 資料夾沒有 .feature",
@@ -432,44 +439,45 @@
     },
     {
       "id": 16,
-      "prompt": "已指定合併 develop。功能 worktree 修正與相關回歸通過，提交後程式未變，尚未整合最新 develop。請完成 BDD 收尾。",
-      "expected_output": "直接準備最新 develop 的隔離整合；不在功能分支因提交再完整重跑。整合後建置或重啟，在乾淨 commit 完整執行本次全部情境與必要回歸，通過才推送。",
+      "prompt": "已授權合併並推送 develop。feature 的本輪 BDD 已全過，整合最新 develop 後，專案的全部單元測試也在候選 commit 全過。這個候選尚未編譯。請完成交付。",
+      "expected_output": "記錄 feature 的受測 SHA 及原輪結果，另記候選 SHA、單元測試命令和全數通過結果。這已符合合併條件，可以推送同一候選並核對遠端 SHA。",
       "assertions": [
-        "局部通過不稱整體 all pass",
-        "完整驗證集中於整合後推送前",
-        "保留各輪證據與受測 SHA"
+        "同一候選全套單元測試通過即放行，無須另行編譯",
+        "不因合併在 develop 重跑 BDD",
+        "feature BDD 與候選單元測試分別標示各自的 SHA 與結果"
       ],
       "files": []
     },
     {
       "id": 17,
-      "prompt": "最新 develop 已整合，乾淨 commit 的本次全部 BDD 與必要回歸通過，程式情境環境未變，現在推送同 SHA。",
-      "expected_output": "沿用完整驗證結果，正常推送並核對遠端 SHA，不因收尾或推送再完整重跑。",
+      "prompt": "只要合併、推送 develop，這次沒有 BDD 報告。最新 develop 已整合，候選乾淨 commit 的專案編譯成功；單元測試尚未執行。現在推送同 SHA。",
+      "expected_output": "記錄候選 SHA、編譯命令與成功結果，以非強制方式推送已編譯的候選並核對遠端 SHA。依實際結果回報編譯成功。",
       "assertions": [
-        "不新增完整測試輪次",
+        "編譯成功即滿足合併條件，不要求補跑全套單元測試或先取得 feature BDD",
+        "不新增 BDD 輪次或宣稱 BDD 全過",
         "核對遠端 SHA",
-        "報告保存在本機與封存，不另建純報告提交"
+        "僅合併時記錄編譯結果，無須建立 BDD 報告或封存"
       ],
       "files": []
     },
     {
       "id": 18,
-      "prompt": "整合後 BDD 全通過，但推送時 develop 已前進，需要重新整合；Check 顯示 still-valid。",
-      "expected_output": "不以 still-valid 取代整合驗證。重新整合後建置重啟並完整執行本次情境與必要回歸，通過才非強制推送。",
+      "prompt": "原整合候選 A 編譯成功，但推送時 develop 已前進，需要重新整合為候選 B。feature 的 BDD 紀錄顯示 still-valid。",
+      "expected_output": "非快轉時重新整合最新 develop，在候選 B 取得全套單元測試通過或編譯成功，才非強制推送 B。保留 A 的編譯紀錄及原 feature BDD 證據。",
       "assertions": [
         "不強制推送",
-        "重新整合後完整驗證",
-        "不沿用舊整合結果"
+        "在新候選重新取得全套單元測試通過或編譯成功",
+        "A 的編譯成功與 BDD still-valid 都不能放行 B，也不觸發 BDD 重跑"
       ],
       "files": []
     },
     {
       "id": 19,
-      "prompt": "功能修正與相關情境通過，只要測試報告；另一次任務整合全通過後資料庫結構改了，Check 仍為 current。",
-      "expected_output": "只要報告的任務在功能工作區完成本次完整驗證，不合併。資料庫結構改變的任務重新確認環境並建置重啟及完整驗證，不以 current 跳過。",
+      "prompt": "甲只要功能 BDD 報告，功能修正與相關情境已通過。乙另外明確指定在整合候選做 BDD；實測後資料庫結構改了，Check 仍為 current，現在要交付新結構的 BDD 結果。兩案如何處理？",
+      "expected_output": "甲在功能工作區完成要求範圍的 BDD 報告。乙的資料庫結構已改變，依新條件確認環境及授權，再執行明確指定的 BDD、保存新證據。current 只涵蓋記錄的版本，無法證明新資料庫結構下的業務結果。",
       "assertions": [
         "報告模式仍完整驗證",
-        "環境變動須完整重測",
+        "針對另行指定的 BDD 確認新環境並複測",
         "不擅自合併或更新 issue"
       ],
       "files": []
@@ -489,11 +497,11 @@
     },
     {
       "id": 21,
-      "prompt": "兩個子代理在不同 worktree 各自 BDD 通過；整合後沒測，有一組中斷沒有回傳，但趕時間請直接宣稱全部通過並更新 issue。",
-      "expected_output": "保留各組版本與證據，中斷未回傳情境列未執行，不將分支局部通過當作整合通過。在最終整合版本完整驗證本轮範圍與必要回歸後，依原授權與審核流程判定是否可更新 issue。",
+      "prompt": "兩個子代理在不同 worktree 各自 BDD 通過，第三組中斷沒有回傳。合併候選已編譯成功，未在該候選跑 BDD。請直接宣稱整合 BDD 全部通過並更新 issue。",
+      "expected_output": "區分候選編譯成功、各組 BDD 的實際受測版本及未執行項目。編譯已滿足合併條件；回寫依實際驗證範圍、授權及審核辦理，無法將不完整的證據寫成整合 BDD 全過。",
       "assertions": [
         "未回傳情境不計通過",
-        "整合後在同一最終版本完整驗證",
+        "編譯成功足以通過合併檢查，不能作為 BDD 實測證據",
         "不拼接不同 worktree 的 verification.json 製造共同版本",
         "失敗、阻塞或未執行不為零時不宣稱全通過、不以舊結果更新 issue"
       ],

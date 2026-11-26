@@ -181,7 +181,7 @@ node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-pl
 
 ## 主代理採納條件
 
-先核對契約版本與派工身分，再核對情境集合、證據、修改權、verification 實際版本與服務版本。共用 Git 儲存庫的 linked worktree 依受測 SHA 與服務版本核對，同一份 feature 的同一情境編號只計一次。不同 repo／版本分開保留；最終整合版依原流程完整驗證。資源釋放狀態另行核對，不因測試通過就認定可重啟或清理。
+先核對契約版本與派工身分，再核對情境集合、證據、修改權、verification 實際版本與服務版本。共用 Git 儲存庫的 linked worktree 依受測 SHA 與服務版本核對，同一份 feature 的同一情境編號只計一次。不同 repo／版本分開保留。資源釋放狀態另行核對，不因測試通過就認定可重啟或清理。
 
 ## Schema 與唯讀彙整
 
