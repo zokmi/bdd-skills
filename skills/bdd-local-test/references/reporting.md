@@ -9,19 +9,27 @@
 在〈環境〉與〈修正與複測〉註明實際使用的瀏覽器工具、localhost 網址、每輪修正與複測結果。
 每輪於〈BDD 執行模式〉記錄子代理並行／子代理分批／混合、分組依據、實際代理與派工／結果契約位置；只有一個名額而逐組派工時標「子代理分批」，不宣稱同時執行。因無子代理工具或使用者明確禁用而停止時，記錄阻塞原因；不得記為主代理序列實測。只整理既有報告或只產情境時標「未實測」，不虛構派工或新一輪結果。
 
+同一張 issue 接到新回饋時，在〈驗證階段與範圍〉指明本批回饋、調整前的基準 commit、候選版本及受影響行為。通過、失敗、阻塞與未執行各欄只計本批選入的情境。前批未受影響的結果保留在原輪次；引用時附原版本。若前批仍有未解問題，保留其狀態，只有本批涉及的項目才進入本輪清單。
+
+兩批共用同一個 HEAD 且含未提交調整時，另記上批已保存的差異、這次選入的路徑與情境編號；用 `--capture-revision` 保存實測候選的工作區雜湊。雜湊用來核對版本，批次邊界以兩批間可查證的差異及回饋內容為準。
+
 **報告必須註記 git commit**：標題表格的「repo」「測試版本」寫完整資訊，〈版本紀錄〉逐輪列出 repo、分支、受測 HEAD（短 SHA）、
 工作區是否乾淨與結果統計，〈受測 commit〉列出本輪涵蓋的每個 commit（短 SHA＋標題）。
 測的是含未提交異動的工作區時照實寫「`<SHA>` + 未提交異動（檔案…）」，不要只寫 SHA 讓人以為測的是乾淨版本。
 同步後複測的輪次，另填〈同步對照〉：來源 repo／commit → 本 repo 對應 commit 與對應方式（`patch`／`subject`／`missing`）。
 
-報告寫完後，**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）：
+**每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）。使用 v2 核准清單的派工，在該輪實測結束時從受測工作區執行以下指令並加上 `--capture-revision`（PowerShell 入口為 `-CaptureRevision`），再切換版本或清理測資。這會在該輪保存實際 checkout 的 HEAD 與未提交內容雜湊。
 
 ```bash
-node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料夾>" --base "<基準分支>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本單新增或修改的 .feature，多個以 ; 分隔>" --regression-scenarios "<回歸的 .feature>::<編號>,<編號>" --note "<一句話，例如：自 yuanlih 同步後複測>"
+node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料夾>" --base "<本輪基準 commit>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本批調整的 .feature>::<實測編號>" --regression-scenarios "<回歸的 .feature>::<實測編號>,<實測編號>" --note "<回饋批次與本輪實測範圍>"
 ```
 
 `--changed-scenarios`／`--regression-scenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。
-情境檔要先 commit。保留本輪非圖片紀錄時，從受測 commit 取出對應版本的情境。
+同一檔案混有前批情境時，明列本輪實際測過的編號。選測與開發回饋可使用尚未提交的情境檔，報告標明這次實際讀取的版本及差異。需要可從 Git 還原的正式證據時，先將情境檔納入候選 commit，再依該版本的核准清單驗證本輪選入的編號。封存會從該受測 commit 取回情境。
+
+以 `--base` 記錄時，受測檔案涵蓋逐次提交碰過的路徑、每次合併相對第一個父提交的變動，以及從共同祖先到受測 HEAD 的整合差異。改了又還原的檔案與改名前後的路徑都納入比對。以 `--commits` 指定清單時，沿用清單內的提交範圍。`--check` 會核對缺少檔案範圍標記的舊輪次。若發現漏記路徑或無法重建範圍，回傳 `rerun` 並列出原因，保留原始紀錄。
+
+`verification.json` 的 `fileModes` 保存受測檔案與情境檔在 Git 中的類型及執行權限。即使檔案內容相同，移除腳本執行權限也會要求複測。比對舊輪次時，工具會從可取得的原受測 commit 讀取檔案模式。
 
 同一輸出資料夾有多個寫入者時，`verification --record` 會依序追加輪次。若程序中斷後回報 `verification.json.lock` 逾時，先確認所有寫入程序均已結束，將殘留鎖檔移到另一位置保留，再核對 `verification.json` 最後一輪，只重記尚未保存的結果。
 
@@ -36,4 +44,4 @@ node "<skill 目錄>/scripts/bdd.mjs" verification --record --dir "<輸出資料
 範圍不是 `<基準>..HEAD`（例如使用者指定了 commit、或在別的分支上 cherry-pick 過來的一串）時，
 改用 `--commits <sha1>,<sha2>` 明列。`verification.json`、`REPORT.md`、`masking.json` 與本輪證據均為執行產物，不新增到 Git；非圖片紀錄保存於本機輸出，只有 issue 交付需要的圖片在附件核對且 Issue 回覆內容審核通過後清理本機副本，代理即時驗證截圖判讀後立即刪除。Git 僅保存 `.bdd/modules/` 的 `.feature`、`MODULE.md` 與不含敏感或個人設定的共用 `.bdd/config.json`。版控與既有追蹤檔的遷移方式見 [版控分工](version-control.md)。
 程式同步到其他 repo 或 worktree 時，另行複製本輪輸出或從封存包還原，再執行版本比對；不能因 Git 沒帶入報告就視為沒有驗證紀錄。已授權更新 issue 時，依交付模板上傳必要的逐項證據；只要報告或未授權更新 issue 時，保存在本機並回報位置，不自行上傳。記錄前工作區若有受測檔案的未提交異動，腳本會記在 `dirtyPaths`，
-之後的比對一律判 `rerun`——所以正式結案的那一輪，應在受測異動都 commit 之後再跑。
+該輪之後的比對會判 `rerun`。加上 `--capture-revision` 時，若實測快照包含 Git 可見的未提交內容，即使異動落在列出的路徑之外也須複測。正式結案的那一輪應在受測異動都 commit 之後再跑。

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { commit } from './git-changes.mjs';
@@ -75,14 +76,14 @@ export async function commitInfo(root, shas) {
   });
 }
 
-export function changedPaths(root, shas) {
-  const files = new Set();
-  for (const output of readCommitBatches(root, ['show', '--format=', '--name-only', '-z'], shas)) {
-    for (const p of output.split('\0')) {
-      if (p && !p.startsWith('.bdd/')) files.add(p);
-    }
+function changedPaths(root, shas, rangeDiff) {
+  const files = new Set(rangeDiff?.split('\0'));
+  const args = ['show', '--format=', '--name-only', '-z'];
+  if (rangeDiff !== undefined) args.push('--no-renames', '--diff-merges=first-parent');
+  for (const output of readCommitBatches(root, args, shas)) {
+    for (const p of output.split('\0')) files.add(p);
   }
-  return [...files].sort((a, b) => a.localeCompare(b));
+  return [...files].filter(p => p && !p.startsWith('.bdd/')).sort((a, b) => a.localeCompare(b));
 }
 
 // Keep native Git command lines below the Windows argument length limit.
@@ -96,15 +97,19 @@ function* batches(paths) {
   if (batch.length) yield batch;
 }
 
-export function blobsAt(root, head, paths) {
+export function treeEntriesAt(root, head, paths) {
   const blobs = Object.fromEntries(paths.map(p => [p, null]));
+  const modes = { ...blobs };
   for (const batch of batches(paths)) {
     for (const row of git(root, ['ls-tree', '-z', head, '--', ...batch]).split('\0').filter(Boolean)) {
       const tab = row.indexOf('\t');
-      blobs[row.slice(tab + 1)] = row.slice(0, tab).split(' ')[2];
+      const [mode, , oid] = row.slice(0, tab).split(' ');
+      const name = row.slice(tab + 1);
+      modes[name] = mode;
+      blobs[name] = oid;
     }
   }
-  return blobs;
+  return { blobs, modes };
 }
 
 export function dirtyPaths(root, paths) {
@@ -120,18 +125,40 @@ export function dirtyPaths(root, paths) {
   return [...dirty];
 }
 
+const fullCommitId = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
+
 export function isAncestor(root, source, head) {
-  if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(source)) throw new Error('紀錄的 commit SHA 無效');
+  if (!fullCommitId.test(source)) throw new Error('紀錄的 commit SHA 無效');
   if (git(root, ['cat-file', '-e', source + '^{commit}'], [0, 1, 128]) === null) return false;
   return git(root, ['merge-base', '--is-ancestor', source, head], [0, 1]) !== null;
 }
 
+function reachableCommits(root, head, commits) {
+  const reachable = new Set([head]);
+  const requested = [...new Set(commits.map(entry => entry.sha))].filter(sha => sha !== head);
+  if (!requested.length) return reachable;
+  if (!requested.every(sha => typeof sha === 'string' && fullCommitId.test(sha))) throw new Error('紀錄的 commit SHA 無效');
+  const types = git(root, ['cat-file', '--batch-check=%(objecttype)'], [0],
+    requested.map(sha => sha + '^{commit}').join('\n') + '\n').trimEnd().split(/\r?\n/);
+  const existing = requested.filter((_, index) => types[index] === 'commit');
+  if (!existing.length) return reachable;
+  // The union of the selected histories minus HEAD is empty iff every tip is reachable.
+  const outside = git(root, ['rev-list', '--max-count=1', '--stdin'], [0], ['^' + head, ...existing].join('\n') + '\n').trim();
+  for (const sha of existing) {
+    if (!outside || (sha !== outside && git(root, ['merge-base', '--is-ancestor', sha, head], [0, 1]) !== null)) {
+      reachable.add(sha);
+    }
+  }
+  return reachable;
+}
+
 export async function mapCommits(root, head, last, depth) {
   const mapping = [];
+  const reachable = reachableCommits(root, head, last.commits);
   let index;
   for (const entry of last.commits) {
     let status = 'same', target = entry.sha;
-    if (!isAncestor(root, entry.sha, head)) {
+    if (!reachable.has(entry.sha)) {
       if (!index) {
         const paths = Object.keys(last.files);
         // Git reads pathspecs after a standalone "--" on stdin. POSIX names
@@ -165,8 +192,30 @@ export async function mapCommits(root, head, last, depth) {
   return mapping;
 }
 
-export function testedCommits(root, references, base, head) {
-  if (references.length) return references.map(ref => commit(root, ref));
+export function testedChanges(root, references, base, head) {
+  if (references.length) {
+    const shas = references.map(ref => commit(root, ref));
+    return { shas, paths: changedPaths(root, shas) };
+  }
   if (!base) throw new Error('記錄模式需要 --base 或 --commits');
-  return git(root, ['rev-list', '--no-merges', '--reverse', base + '..' + head, '--']).trim().split(/\r?\n/).filter(Boolean);
+  const history = git(root, ['rev-list', '--parents', '--reverse', base + '..' + head, '--']).trim()
+    .split(/\r?\n/).filter(Boolean).map(line => line.split(' '));
+  // rev-list treats a shallow boundary as a root even if the base object exists.
+  const roots = history.filter(row => row.length === 1);
+  if (roots.length && git(root, ['rev-parse', '--is-shallow-repository']).trim() === 'true') {
+    const shallowFile = git(root, ['rev-parse', '--git-path', 'shallow']).trimEnd();
+    const cutoffs = new Set(readFileSync(path.resolve(root, shallowFile), 'utf8').trim().split(/\r?\n/));
+    if (roots.some(([sha]) => cutoffs.has(sha))) throw new Error('受測範圍的提交歷程不完整，請取得缺少的 Git 歷程');
+  }
+  // Keep patch/subject mapping limited to ordinary commits. Merge resolutions
+  // still contribute paths, including edits subsequently reverted in the range.
+  const shas = history.filter(row => row.length <= 2).map(row => row[0]);
+  let rangeDiff = '';
+  if (history.length !== shas.length) {
+    const ancestor = git(root, ['merge-base', base, head], [0, 1])?.trim();
+    // A merge can keep the first parent's tree and still differ from the
+    // incoming baseline. Capture that net delta from their common ancestor.
+    if (ancestor) rangeDiff = git(root, ['diff', '--no-renames', '--name-only', '-z', ancestor, head, '--']);
+  }
+  return { shas, paths: changedPaths(root, history.map(row => row[0]), rangeDiff) };
 }

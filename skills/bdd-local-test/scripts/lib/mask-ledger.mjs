@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const isEvidenceImage = file => /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(file);
 // A Windows archive may have recorded evidence/ even when its ZIP uses EVIDENCE/.
-const pathKey = name => process.platform === 'win32' ? name.toLowerCase() : name.replace(/^evidence\//i, 'evidence/');
+export const evidencePathKey = name => process.platform === 'win32' ? name.toLowerCase() : name.replace(/^evidence\//i, 'evidence/');
 const keys = Symbol('evidence paths');
 
 export function evidenceFolder(root) {
@@ -43,7 +43,7 @@ export function parseMaskLedger(text) {
   ledger.files ??= {};
   ledger[keys] = new Map();
   for (const name of Object.keys(ledger.files)) {
-    const key = pathKey(name);
+    const key = evidencePathKey(name);
     if (ledger[keys].has(key)) throw new Error('Duplicate evidence path in masking.json: ' + name);
     ledger[keys].set(key, name);
   }
@@ -51,12 +51,12 @@ export function parseMaskLedger(text) {
 }
 
 export function maskRecord(ledger, relative) {
-  const name = ledger[keys].get(pathKey(relative));
+  const name = ledger[keys].get(evidencePathKey(relative));
   return name === undefined ? undefined : ledger.files[name];
 }
 
 export function setMaskRecord(ledger, relative, record) {
-  const key = pathKey(relative);
+  const key = evidencePathKey(relative);
   const before = ledger[keys].get(key);
   if (before && before !== relative) delete ledger.files[before];
   ledger.files[relative] = record;
@@ -64,7 +64,7 @@ export function setMaskRecord(ledger, relative, record) {
 }
 
 export function deleteMaskRecord(ledger, relative) {
-  const key = pathKey(relative);
+  const key = evidencePathKey(relative);
   const name = ledger[keys].get(key);
   if (name !== undefined) delete ledger.files[name];
   ledger[keys].delete(key);

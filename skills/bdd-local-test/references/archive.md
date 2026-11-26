@@ -121,9 +121,11 @@ node "<skill 目錄>/scripts/bdd.mjs" archive --dir <最終 .bdd/單號-主題>
 5. **轉無損 WebP**：只有 `evidence/` 內有 PNG／JPG／BMP 時才偵測 Pillow。轉成無損 WebP 後，解碼回來逐像素比對一致且檔案變小才採用，其餘保留原檔並記在 manifest 的 `webp.skipped`。ZIP 內的 `masking.json` 改以 `.webp` 登記（保留 `derivedFrom`），`.md` 檔裡的截圖連結改成 `.webp`；工作區的原檔都不動。有待轉圖片但找不到 Pillow 時，保留原格式並記錄 `webpUnavailable`。
 6. **去重**：內容相同的檔案只存一份，其餘記在 `bdd-manifest.json` 的 `aliases`。
 7. 打包成暫存檔，逐檔核對 SHA-256 後才搬到封存庫；任何失敗都不留半成品。
-8. 在 `index.jsonl` 追加 `created`，並把同 repo 同主題、尚未被取代的舊封存標為 `superseded`。
+8. 在 `index.jsonl` 追加 `created`。同 repo、同單號及同主題的下一份封存會取代前一份。分組封存以組別為主題，每張單的同名組別各自保留有效的版本。
 
-受測 SHA 預設取 `verification.json` 最後一輪的 `head`，單號取資料夾名稱開頭的數字；必要時以 `--commit`、`--issue` 指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
+讀取舊索引時，若建立紀錄可證明自動取代事件把兩張不同單號的封存連在一起，會略過該事件，依其餘紀錄還原狀態與附件。手動標記與單號無從判定的歷史取代仍按原紀錄處理。
+
+受測 SHA 預設取 `verification.json` 最後一輪的 `head`。單號取主題目錄名稱開頭的數字，分組目錄 `.bdd/<單號>-<主題>/groups/<組別>` 則從上層主題目錄取得。必要時可用 `--commit`、`--issue` 明確指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
 
 ZIP 內第一層是輸出資料夾名稱，`bdd-manifest.json` 記錄每個檔案的 SHA-256、大小、aliases、受測 commit、是否已遮罩。只用系統內建解壓縮也能看到報告與所有不重複的截圖；要完整還原（含 aliases）用：
 
@@ -132,6 +134,8 @@ node "<skill 目錄>/scripts/bdd.mjs" extract --archive <zip> --to <repo>/.bdd
 ```
 
 還原時不覆蓋既有檔案（同內容略過、不同內容停止），也不解出 manifest，所以還原後的資料夾可以直接接續下一輪並再次封存。
+
+封存或重新壓縮時，若圖片轉成 WebP，封存內的 `coordination/attempt-<N>/result.json` 也會同步更新逐情境的 `evidence` 路徑。還原早期封存後，若結果仍引用已轉檔的原圖，彙總會核對 `masking.json` 的 `derivedFrom` 與 WebP 實際雜湊，再採用對應圖片。
 
 若遮罩或封存程序意外中止，後續寫入可能提示 `masking.json.lock` 或 `index.jsonl.lock` 仍被占用。先確認同一輸出資料夾或封存庫的寫入程序已結束，再將殘留鎖檔移到封存來源以外留存。遮罩可用 `--status` 核對圖片，封存則比對目標 ZIP 的 SHA-256 與索引的 `created` 紀錄後再重試。
 

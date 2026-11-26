@@ -15,8 +15,7 @@
         patch    SHA 不同但 patch-id 相同（cherry-pick 過來，內容一致）
         subject  只找到同標題的 commit，內容有差異（通常是解衝突或手動改寫）
         missing  找不到，這個異動沒有同步過來
-    - 受測檔案在目前 HEAD 的 blob 是否與紀錄時相同
-    - 本輪跑過的模組情境檔（scenarios）在目前 HEAD 的 blob 是否與紀錄時相同
+    - 受測檔案與本輪跑過的模組情境檔在目前 HEAD 的 blob、檔案類型及執行權限是否與紀錄時相同
 
   判定（verdict）：
     current       同 repo、同 HEAD、相關檔案無未提交異動 → 報告仍有效
@@ -32,8 +31,11 @@
 .PARAMETER Check
   比對模式。
 
+.PARAMETER CaptureRevision
+  記錄模式。將實測 checkout 的 HEAD 與未提交變更雜湊寫入本輪紀錄，供 v2 核准清單彙總核對。
+
 .PARAMETER Base
-  記錄模式：受測範圍的基準（取 Base..Head 的非 merge commit）。
+  記錄模式：受測範圍的基準。列出 Base..Head 的非 merge commit，檔案範圍另含每次合併相對第一個父提交的變動及自共同祖先到 Head 的整合差異。
 
 .PARAMETER Commits
   記錄模式：直接指定受測 commit（逗號分隔），優先於 -Base。
@@ -77,7 +79,8 @@ param(
     [string]$Note = '',
     [string[]]$ChangedScenarios = @(),
     [string[]]$RegressionScenarios = @(),
-    [int]$SearchDepth = 3000
+    [int]$SearchDepth = 3000,
+    [switch]$CaptureRevision
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,6 +89,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $cliArgs = @('verification', "--dir=$Dir", "--head=$Head", "--passed=$Passed", "--failed=$Failed",
     "--blocked=$Blocked", "--not-run=$NotRun", "--search-depth=$SearchDepth")
 if ($Record) { $cliArgs += '--record' }
+if ($CaptureRevision) { $cliArgs += '--capture-revision' }
 if ($Check) { $cliArgs += '--check' }
 if ($Base) { $cliArgs += "--base=$Base" }
 if ($Note) { $cliArgs += "--note=$Note" }

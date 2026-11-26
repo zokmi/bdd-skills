@@ -3,11 +3,12 @@ import path from 'node:path';
 import { EOL } from 'node:os';
 import { parseArgs } from 'node:util';
 import { commit, repoRoot } from './git-changes.mjs';
+import { checkScenarioIds, declaredScenarioIds, parseFeature } from './module-index.mjs';
 import { git, repoIdentity } from './verification-git.mjs';
 import { readContract } from './parallel-contracts.mjs';
 import {
   approvedRepoKey, approvedScenarioKey as scenarioKey, compareApprovedPlan,
-  loadApprovedPlan, matchesPlanReference, sameApprovedScenario,
+  loadApprovedPlan, matchesApprovedTarget, matchesPlanReference, sameApprovedScenario,
 } from './parallel-plan.mjs';
 import { artifact, checkModifiedPaths, checkSeparateDirectories, evidenceChecker, pathKey, readJson } from './summary-evidence.mjs';
 
@@ -17,7 +18,7 @@ const key = (...parts) => JSON.stringify(parts.map(s => s.toLowerCase()));
 const roundKey = (feature, id, role) => JSON.stringify([pathKey(feature), id.toLowerCase(), role]);
 const label = s => s.feature + '|' + s.id;
 
-function verificationRound(root, a, r, repo) {
+function verificationRound(root, a, r, repo, approvedRevision) {
   if (!r.verification) throw new Error('Missing verification reference');
   const verification = readJson(artifact(root, r.verification.path));
   if (!Array.isArray(verification?.rounds)) throw new Error('Invalid verification roundIndex');
@@ -27,6 +28,10 @@ function verificationRound(root, a, r, repo) {
   if (!Array.isArray(round.dirtyPaths) || !Array.isArray(round.scenarios) ||
       !round.result || typeof round.result !== 'object' || Array.isArray(round.result)) {
     throw new Error('Incomplete verification round structure');
+  }
+  if (approvedRevision && (round.revision?.head !== approvedRevision.head ||
+      round.revision?.dirtySha256 !== approvedRevision.dirtySha256)) {
+    throw new Error('Recorded candidate revision is missing or differs from the approved plan. Record the tested checkout with --capture-revision.');
   }
   if (round.head !== a.target.head || !r.execution.serviceVersion || r.execution.serviceVersion !== a.target.serviceVersion) {
     throw new Error('Actual version differs from assignment or is unknown');
@@ -40,7 +45,7 @@ function verificationRound(root, a, r, repo) {
   if (!repo) throw new Error('Cannot verify assignment repo identity');
   let workDir;
   try { workDir = repoRoot(a.target.workDir); } catch { throw new Error('Assignment workDir differs from repo'); }
-  if (path.relative(fs.realpathSync.native(repo), fs.realpathSync.native(workDir))) throw new Error('Assignment workDir differs from repo');
+  if (approvedRepoKey(repo) !== approvedRepoKey(workDir)) throw new Error('Assignment workDir differs from repo');
   let head;
   try { head = commit(repo, round.head); } catch { throw new Error('Recorded HEAD is not an existing full commit SHA'); }
   if (head !== round.head) throw new Error('Recorded HEAD is not an existing full commit SHA');
@@ -49,7 +54,7 @@ function verificationRound(root, a, r, repo) {
   return round;
 }
 
-function checkScenarios(root, a, r, round) {
+function checkScenarios(root, a, r, round, repo, historicalFeatures) {
   artifact(root, r.artifacts.report);
   if (r.artifacts.masking) artifact(root, r.artifacts.masking);
   checkModifiedPaths(r.modifiedPaths, a.permissions.editablePaths);
@@ -65,6 +70,14 @@ function checkScenarios(root, a, r, round) {
     if (results.has(scenarioKey(s))) throw new Error('Duplicate result scenario: ' + label(s));
     results.set(scenarioKey(s), s);
     if (!recorded.has(roundKey(s.feature, s.id, s.kind))) throw new Error('Scenario absent from verification round: ' + label(s));
+    if (historicalFeatures) {
+      const key = JSON.stringify([repo, round.head, s.feature]);
+      if (!historicalFeatures.has(key)) {
+        const source = git(repo, ['cat-file', 'blob', round.head + ':' + s.feature]);
+        historicalFeatures.set(key, declaredScenarioIds(parseFeature(source, s.feature)));
+      }
+      checkScenarioIds(historicalFeatures.get(key), [s.id], s.feature);
+    }
     for (const reference of s.evidence) checkEvidence(reference, s.status === 'passed');
     if (s.status === 'passed' && (!s.expected || !s.actual)) throw new Error('Passed scenario lacks expected/actual: ' + label(s));
     total[s.status]++;
@@ -81,7 +94,7 @@ function checkScenarios(root, a, r, round) {
   return results;
 }
 
-function groupResults(root, a, group, issues, versions, repo, repoId) {
+function groupResults(root, a, group, issues, versions, { repo, repoId }, approvedRevision, historicalFeatures) {
   const resultPath = path.join(path.dirname(group.assignment), 'result.json');
   let result;
   try {
@@ -97,10 +110,10 @@ function groupResults(root, a, group, issues, versions, repo, repoId) {
   }
   if (result.taskStatus !== 'completed' || result.blockers.length) issues.push(a.groupId + ': Task incomplete or unresolved blockers');
   try {
-    const round = verificationRound(root, a, result, repo);
+    const round = verificationRound(root, a, result, repo, approvedRevision);
     group.version = { repo: round.repo, head: round.head, serviceVersion: result.execution.serviceVersion };
     versions.add(JSON.stringify([repoId, round.head, result.execution.serviceVersion]));
-    return checkScenarios(root, a, result, round);
+    return checkScenarios(root, a, result, round, repo, approvedRevision && historicalFeatures);
   } catch (err) {
     issues.push(a.groupId + ': ' + err.message);
     return new Map(result.scenarios.filter(s => s.status === 'blocked' && s.reason).map(s => [scenarioKey(s), s]));
@@ -122,7 +135,7 @@ export function summarize(assignments, destination, planFile) {
       scenarios.push(row);
       rows.set(scenarioKey(s), row);
     }
-    approvedGroups.set(group.groupId, { repo: approvedRepoKey(group.repo), rows, submissions: 0 });
+    approvedGroups.set(group.groupId, { repo: approvedRepoKey(group.repo), revision: group.revision, rows, submissions: 0 });
   }
   for (const a of records) {
     const group = approvedGroups.get(a.groupId);
@@ -132,6 +145,7 @@ export function summarize(assignments, destination, planFile) {
   const versions = new Set();
   const identities = new Set();
   const repos = new Map();
+  const historicalFeatures = new Map();
   const total = counts();
   let runId = plan?.runId;
   for (const [index, file] of assignments.entries()) {
@@ -147,25 +161,25 @@ export function summarize(assignments, destination, planFile) {
     groups.push(group);
     const target = path.resolve(a.target.repo);
     if (!repos.has(target)) {
-      let identity = { repo: null, repoId: pathKey(target) };
+      let identity = { repo: null, repoId: target };
       try {
         const repo = repoRoot(target);
         const metadata = git(repo, ['rev-parse', '--git-common-dir']).trimEnd();
-        identity = { repo, repoId: pathKey(fs.realpathSync.native(path.resolve(repo, metadata))) };
+        identity = { repo, repoId: approvedRepoKey(path.resolve(repo, metadata)) };
       } catch { /* Keep known blockers even when the checkout is missing. */ }
       repos.set(target, identity);
     }
-    const { repo, repoId } = repos.get(target);
-    const results = groupResults(root, a, group, issues, versions, repo, repoId);
-    const assigned = new Set();
+    const checkout = repos.get(target);
     const approved = approvedGroups.get(a.groupId);
+    const results = groupResults(root, a, group, issues, versions, checkout, approved?.revision, historicalFeatures);
+    const assigned = new Set();
     const bound = approved?.submissions === 1 && a.runId === runId && matchesPlanReference(plan, a) &&
-      approved.repo === approvedRepoKey(a.target.repo);
+      approved.repo === approvedRepoKey(a.target.repo) && matchesApprovedTarget(approved.revision, a.target);
     for (const s of a.scenarios) {
       const id = scenarioKey(s);
       if (assigned.has(id)) issues.push('Duplicate assigned scenario: ' + label(s));
       assigned.add(id);
-      const globalId = JSON.stringify([repoId, id]);
+      const globalId = JSON.stringify([checkout.repoId, id]);
       if (seen.has(globalId)) {
         issues.push('Repeated cross-group scenario requires manual review: ' + label(s));
         // A stray submission cannot reserve a scenario owned by an approved group.
@@ -191,7 +205,8 @@ export function summarize(assignments, destination, planFile) {
   return {
     contractVersion: 1, runId, eligibleForReview: scenarios.length > 0 && !issues.length && total.passed === scenarios.length,
     ...(plan && { approvedPlan: plan.reference }), counts: total, issues, groups, scenarios,
-    limitation: 'Structural acceptance only: main agent must review evidence content, environment, dependencies and final integration. Resource release is not inferred.',
+    limitation: 'Structural acceptance only: main agent must review evidence content, environment, dependencies and final integration. Resource release is not inferred.' +
+      (plan?.contractVersion === 1 ? ' The historical v1 plan did not record the reviewed candidate revision.' : ''),
   };
 }
 
@@ -200,7 +215,7 @@ function writeSummary(dir, summary) {
   const lines = [
     '# Parallel BDD summary', '', 'Run: ' + summary.runId, 'Eligible for evidence review: ' + (summary.eligibleForReview ? 'True' : 'False'),
     'Passed: ' + c.passed + '; failed: ' + c.failed + '; blocked: ' + c.blocked + '; not-run: ' + c['not-run'], '',
-    'Main agent must review evidence content and final integration; this is not an all-pass declaration.', '', '## Adoption issues', '',
+    summary.limitation, '', '## Adoption issues', '',
     ...summary.issues.map(issue => '- ' + issue),
   ];
   const json = JSON.stringify(summary, null, 2);

@@ -9,6 +9,10 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 實測優先使用內建 localhost 轉送、API 與選配 SQL Server 工具。從受測 worktree 的 `.bdd/config.json` 取得設定，僅在工具缺少情境能力時新增本輪腳本。參閱[內建實測工具](references/test-kit.md)。
 
+## 同單多次回饋
+
+收到同一 issue 的新回饋時，預設只驗本批。以本次指定的註記、對話或改動為起點，以本批修改前的狀態界定 diff，選入直接修正、必要前置及受影響回歸。先前已驗且本次未受影響的項目保留在原輪次；只有受影響、問題重現或使用者點名的歷史項目才重新選入。報告與已授權的 issue 回覆都標明批次來源、受測版本及本批結果。[選測與擴大範圍](references/scenario-priority.md#同單多批回饋)
+
 ## 共同規則
 
 - **情境範圍**：BDD 文件描述模組對使用者或外部角色承諾的可觀察業務行為，以角色、前置條件、操作或觸發事件、成功與異常結果為主。外部系統 API、事件與排程的業務流程同樣適用，不限畫面操作。純重構、部署設定、SQL migration、工具與文件調整等工程項目，依風險列入驗證清單與報告，不逐項轉成 `.feature`。`@UI`／`@API`／`@DB` 是驗證手段，情境範圍依業務承諾判定；詳細界線見 [情境寫法](references/feature-guide.md)。
@@ -27,16 +31,16 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 - **並行準備服務與測資**：實測範圍審核 PASS 且環境確認完成後，當前批次同時需要準備服務與建立測資且有兩個名額時，同批派兩名子代理分別負責。測資代理先做不依賴服務的工作，依賴本輪服務的項目收到就緒資訊後再操作。各情境在所需服務與測資就緒後開始實測。只有一名子代理時依相依順序完成，詳見[分工與交接](references/parallel-bdd.md#並行準備服務與測資)。
 - 依審核通過的清單擷取並遮罩登記情境截圖，保存在本輪 `evidence/` 並於報告連結。issue 交付使用該階段受測版本的必要截圖，回讀確認附件可讀且回覆內容審核通過後依收尾指引清除交付副本。代理驗證時為查看畫面而暫存的其他截圖，讀取結果並記下必要的文字斷言後立即刪除，不放入持久 evidence、報告圖片連結或封存。全通過表示失敗、阻塞、未執行皆為 0，且每個情境都經真實路徑驗證。
 - issue 必要截圖與 worktree 清理依 [整合與交付](references/closeout.md) 執行；其他代理即時驗證截圖判讀後立即刪除，不因 issue 交付未完成而保留。
-- 每輪實測先驗證核心異動及其必要前置。依需求、實際 diff 和斷言辨認核心異動；有指定 issue 時，先跑本單的核心異動，再跑本單其餘驗收項目。無單號也依實際變更優先驗證核心異動。
-- 主代理從派工起[持續追蹤驗證進度](references/parallel-bdd.md#回報與收尾)。本單驗收或最終完整驗證的項目全數 PASS 且證據齊備時，自動派獨立子代理審核結果報告。指定 issue 且已授權回寫時，依 [Issue 優先驗證與回寫](references/execution-workflow.md#issue-優先驗證與回寫) 或[最終交付條件](references/closeout.md#共用-issue-交付最終完整驗證後自動執行)接續一致性審核。兩項審核均 PASS 後，直接派專責子代理更新 issue 並回讀核對。
-- Redmine 階段與最終回寫都要[逐條回覆驗收標準](references/closeout.md#逐條回覆驗收標準)，每條寫本版實測結果，畫面截圖內嵌在對應條目下。每次回寫後，由未參與撰寫或寫入的唯讀子代理依 [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md) 從原單核對線上回覆、實際調整與驗證證據。取得 PASS 後才依[收尾指引](references/closeout.md)判定是否停止本輪服務，並於分支方式未定時詢問。回覆需要更正時，修正後重新回讀、送審。
+- 每輪實測先驗證核心異動及其必要前置。依需求、實際 diff 和斷言辨認核心異動；有指定 issue 時，先跑本批核心異動，再跑本輪核准的其餘驗收項目。無單號也依實際變更優先驗證核心異動。
+- 主代理從派工起[持續追蹤驗證進度](references/parallel-bdd.md#回報與收尾)。本批驗收或已指定的整單驗收項目全數 PASS 且證據齊備時，自動派獨立子代理審核結果報告。指定 issue 且已授權回寫時，依 [Issue 優先驗證與回寫](references/execution-workflow.md#issue-優先驗證與回寫) 或[最終交付條件](references/closeout.md#共用-issue-交付最終完整驗證後自動執行)接續一致性審核。兩項審核均 PASS 後，直接派專責子代理更新 issue 並回讀核對。
+- Redmine 階段與最終回寫都要[逐條回覆驗收標準](references/closeout.md#逐條回覆驗收標準)，按本批或整單的核准範圍寫本版實測結果，畫面截圖內嵌在對應條目下。每次回寫後，由未參與撰寫或寫入的唯讀子代理依 [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md) 從原單核對線上回覆、實際調整與驗證證據。取得 PASS 後才依[收尾指引](references/closeout.md)判定是否停止本輪服務，並於分支方式未定時詢問。回覆需要更正時，修正後重新回讀、送審。
 - 用檔案編輯工具寫 `.feature` 與 `REPORT.md`；內容常含引號與反引號，避免用會被 shell 解析的 heredoc。
 
 ## 修改完成時的驗證入口
 
-以一組相關修改為單位固定基準與候選版本，執行靜態檢查並 Review Diff，再按 [品質閘門](references/quality-gate.md) 選擇 FAST、TARGETED 或 FULL。只有確認不影響行為的純文件改動可走 FAST。局部行為改動選 TARGETED。高風險、PR、Release 或影響不明選 FULL。
+以一組相關修改為單位固定基準與候選版本，執行靜態檢查並 Review Diff，再按 [品質閘門](references/quality-gate.md) 選擇 FAST、TARGETED 或 FULL。只有確認不影響行為的純文件改動可走 FAST。局部行為改動選 TARGETED。確認高風險或依 PR、Release、明確全套要求時採 FULL。普通回饋缺少批次基準、影響映射或相依分析時，維持本批範圍並依 `blockers` 補正；執行前須解除 `BLOCKED`。詳見[批次範圍](references/scenario-priority.md#同單多批回饋)。
 
-依[情境等級與必測範圍](references/scenario-priority.md)為新增與實質修改的情境標 `@P0`／`@P1`／`@P2`。TARGETED 以品質計畫列出的候選為起點，核對變更檔案所影響的情境、受影響模組的 `@core`、本單情境、受影響 P0、變更類型必測項、必要回歸及技術驗證。最終候選版本也按同一規則核對。報告列出實測情境與略過理由。
+依[情境等級與必測範圍](references/scenario-priority.md)為新增與實質修改的情境標 `@P0`／`@P1`／`@P2`。TARGETED 以品質計畫列出的候選為起點，核對變更檔案所影響的情境、本批真正影響的 `@core` 路徑及相依情境、本批直接對應的情境、受影響 P0、變更類型必測項、必要回歸及技術驗證。最終候選版本也按同一規則核對。報告列出實測情境與略過理由。
 
 同一 UI 情境中，可用同一個 Playwright CLI session 的 `run-code` 批次執行相容的導航與 locator 檢查，逐項保留斷言與失敗位置。跨情境維持狀態隔離。
 

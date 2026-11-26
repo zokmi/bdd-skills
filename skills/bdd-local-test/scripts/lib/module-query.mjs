@@ -32,7 +32,7 @@ export function modulesCommand(args) {
     let paths = v.path || [];
     if (v.base) {
       const baseline = commit(repo, v.base);
-      paths = paths.concat(changedPaths(repo, baseline, 'HEAD', false));
+      paths = paths.concat(changedPaths(repo, baseline, 'HEAD'));
     }
     console.log(JSON.stringify({ repo, ...findImpact(index.modules, paths) }));
   }

@@ -7,11 +7,26 @@ node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <�
 ```
 
 - 只有靜態檢查通過才傳入 `--static-passed`。PR 候選、Release 或明確要求全套／全模組驗證時傳入 `--full`。
-- LOW 須確認執行行為不變。第一版只有純文件白名單可走 FAST。MEDIUM 為可界定的局部行為異動。認證授權、Schema、交易、資料完整性、核心依賴、安全、付款及不明影響一律 HIGH。
+- LOW 須確認執行行為不變。第一版只有純文件白名單可走 FAST。MEDIUM 為可界定的局部行為異動。實際改變認證授權、Schema、交易、資料完整性、核心依賴、安全或付款結算時，依系統性風險選 HIGH 並記錄依據。例如調整收據顯示的小數位可只驗證格式與直接使用者；若變更實際扣款金額或結算規則，應提升為 HIGH。本批與哪些情境相依尚未核對時，先以 BLOCKED 補齊映射。
 - 核對模組依賴、共用程式、route、endpoint、資料表讀寫及已知失敗紀錄。只有所有受影響模組都已由路徑匹配涵蓋才傳入 `--impact-complete`。如有外溢、映射缺漏或不確定，省略該參數。明確要求範圍以外的必要回歸須列在報告。
-- 小 issue 可加 `--issue <數字單號>`。TARGETED 在同一受影響模組已有本單 `@#<單號>` 和 `@core` 時選取兩者聯集。缺任一類標籤時保留該模組全部情境。可一併修改已對應模組中仍存在的 Feature；共用 BDD 設定、其他模組的 Feature 或刪除 Feature 仍走 FULL。派工前用 diff 與需求核對清單，補入所有本輪新增或修改的情境，以及未加標籤的必要回歸和依賴情境。情境有刪除時，核對原斷言仍有必要覆蓋。若無法確認清單涵蓋全部影響，改用 FULL。FULL 執行所有模組情境，`--issue` 不縮減其範圍。
-- 局部修正已能從檔案、端點及其呼叫端追到具體情境時，可在上述命令加上可重複的 `--impact-scenario "src/orders/submit.ts=OR-07"`。PowerShell 包裝入口使用 `-ImpactScenario @('src/orders/submit.ts=OR-07','src/orders/submit.ts=OR-11')`。左側填 Git 差異中的確切程式路徑，右側填該路徑對應模組內的情境編號。同一檔案或端點影響多個規則、共用呼叫端或模組時，逐一列入對應並以 `--review-reason` 記下檢閱依據。先核對原始需求、實際 diff 與依賴，確定完整後才提供 `--impact-complete`。無法辨識正確來源或情境編號的對應會報錯。
-- 提供映射後，TARGETED 逐模組核對來源。所有受影響來源都有對應時，取映射情境、該模組所有 `@core`、`@P0` 和本單情境聯集，無單號也可使用。檔案映射不足以判定其他 P0 與變更無關，因此採保守聯集。模組缺任一路徑對應或索引無法列舉時，保留該模組全部情境。當輪一併修改有明確映射模組內現存的 Feature 時，即使沒有單號也可保留該模組全部情境。刪除 Feature、修改無關模組 Feature 或共用設定仍採 FULL。核對輸出 `scenarioImpact` 的逐模組選取方式、來源對應、未映射路徑與異動 Feature；驗收條件或舊版無等級情境涉及的必要回歸仍由範圍審核補足。未傳映射時沿用上述單號選取規則。高風險、影響未確定、要求完整驗證及 lint 阻塞等條件維持原規則。
+
+### 同一張單的本次回饋
+
+提供 `--issue <單號>` 時，預設採 `--issue-scope batch`。將 `--base` 設為本次回饋修改前的 commit，如上一輪已驗證的版本。批次直接比較指定 commit 的內容與候選工作區，並納入相較基準有差異的暫存變更以及未被 Git 忽略的未追蹤檔。先前受測快照在另一分支時，可直接傳入其 commit；例如本次回饋還原了該快照修改的斷言，仍會選到該情境。
+
+```powershell
+node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <回饋前的commit> --issue 5410 --review-reason "核對金額修正及匯出呼叫端" --static-passed --impact-complete --impact-scenario "src/orders/calc.ts=OR-07" --impact-scenario "src/orders/calc.ts=EX-03"
+```
+
+- 計畫依編號比對基準版本與目前 Feature 的情境、標籤、步驟及範例列，選出新增或改動的情境。新增 Feature 可選出其中已索引的情境。改動共用前置條件、刪除情境或無法可靠辨識範圍時，檢閱全文，以 `--impact-scenario "異動路徑=現行情境編號"` 列出所有受影響的現行情境。
+- 兩批回饋都在同一個未提交工作區時，先對照上一輪保存的快照或差異，確認本批路徑與情境。逐一傳入 `--batch-path "src/orders/calc.ts"` 和本批的 `--impact-scenario`。同一個 Feature 同時有前一批和本批編輯時，將該 Feature 列為 `--batch-path`，再以 `--impact-scenario "<Feature路徑>=本批編號"` 指定每個應測情境。這種方式依人工核對的映射選取，僅接受 Git 確認有變更的路徑，PowerShell 使用 `-BatchPath @(...)`。輸出在 `batchPaths` 列出指定範圍，`allChangedPaths` 保留 Git 可見的全部差異；缺少足以辨識兩批的舊快照時，先確認範圍再派工。
+- 程式、設定及其他行為異動，以同一參數逐項連到直接影響及必要回歸。相依情境可來自其他模組；上例只選取計算與匯出這兩個已核對的情境。同單歷史情境、`@core` 或 `@P0` 依本批實際依賴加入映射。輸出的 `batchMappings` 保留人工核對的映射。
+- 缺少影響映射、尚未確認外溢範圍或靜態檢查未通過時，`bddStatus` 為 `BLOCKED`，依 `blockers` 補正後重新產生清單。批次預設風險為 MEDIUM。確認高風險時明確傳入 `--review-risk HIGH` 並在 `--review-reason` 說明，或依使用者要求傳入 `--full` 執行完整驗證。PowerShell 對應參數為 `-Issue`、`-IssueScope batch|issue` 及可傳多筆的 `-ImpactScenario`。
+
+### 整單檢查與無單號的模組選測
+
+- 明確需要整單檢查時使用 `--issue <單號> --issue-scope issue`。整單範圍掃描所有模組，納入目前仍存在的本單標籤情境。未改動的模組僅取符合單號的情境。即使本批沒有差異，仍可執行這些歷史情境。TARGETED 在同一受影響模組已有本單 `@#<單號>` 和 `@core` 時選取兩者聯集。缺任一類標籤時保留該模組全部情境。可一併修改已對應模組中仍存在的 Feature，包括 `<portal>/shared/<元件名>` 下的共用模組。共用 BDD 設定、其他模組的 Feature 或刪除 Feature 仍走 FULL。派工前核對實際異動、需補入的回歸、相依情境與刪除後的覆蓋。
+- 無單號或使用 `--issue-scope issue` 時，仍可用 `--impact-scenario "src/orders/submit.ts=OR-07"` 提供模組內的來源對應。所有受影響來源皆有映射時，TARGETED 取映射情境、該模組所有 `@core`、`@P0` 與本單情境聯集。模組有未映射來源、當輪修改 Feature 或索引不完整時保留整個模組。以 `scenarioImpact` 核對逐模組選取方式與缺漏。有單號的批次及整單規劃預設為 MEDIUM，無單號維持 HIGH。核對可界定的局部影響後使用 `--review-risk MEDIUM --impact-complete`。
 - 計畫的 Feature 雜湊與 Scenario 行號供追溯。派工前核對候選版本及工作區、展開 Background、Outline 和範例列，固定操作、斷言、清理、證據及隔離條件。一次解析並以同一份計畫執行。索引無法完整列舉的檔案會標出 `requiresFullFeature`，例如情境編號後的標題無法辨認時，`unindexedScenarios` 列出行號與編號。映射計畫在 `incompleteFeatures` 列出這些檔案。執行者須核對全文，把索引未能列出的情境與斷言補入派工清單。
 - 按 [情境等級與必測範圍](scenario-priority.md) 核對腳本候選清單。TARGETED 補入受影響的 P0、各變更類型必測項及必要回歸。FULL 加列各變更類型所需的技術驗證。
 - `PENDING` 是計畫狀態。完成報告使用 PASSED、FAILED、SKIPPED、BLOCKED、TIMEOUT。必要情境缺證據或未完成時閘門不通過。FAST 略過記錄理由。

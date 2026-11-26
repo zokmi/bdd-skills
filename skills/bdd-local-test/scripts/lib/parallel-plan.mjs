@@ -4,6 +4,9 @@ import path from 'node:path';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { readContract } from './parallel-contracts.mjs';
 import { approvedPlan, assignment } from './parallel-validators.mjs';
+import { captureApprovedRevision } from './approved-revision.mjs';
+import { repoRoot } from './git-changes.mjs';
+import { checkScenarioIds, declaredScenarioIds, readFeature } from './module-index.mjs';
 import { pathKey } from './summary-evidence.mjs';
 import { git } from './verification-git.mjs';
 
@@ -18,12 +21,19 @@ export function sameApprovedScenario(planned, actual) {
 // An assignment targets one checkout. Only duplicate scenario ownership spans linked worktrees.
 export function approvedRepoKey(repo) {
   if (typeof repo !== 'string' || !path.isAbsolute(repo)) return null;
-  return pathKey(fs.existsSync(repo) ? fs.realpathSync.native(repo) : path.resolve(repo));
+  // Native realpath resolves aliases while preserving distinct names in case-sensitive directories.
+  return fs.existsSync(repo) ? fs.realpathSync.native(repo) : path.resolve(repo);
 }
 
 export function matchesPlanReference(plan, actual) {
   return actual.approvedPlan?.sha256 === plan.reference.sha256 &&
     approvedRepoKey(actual.approvedPlan.path) === approvedRepoKey(plan.reference.path);
+}
+
+export function matchesApprovedTarget(revision, target) {
+  // Historical v1 plans only bound the scenario list and its assertions.
+  return !revision || (target.head === revision.head && Array.isArray(target.dirtyPaths) &&
+    Boolean(target.dirtyPaths.length) === (revision.dirtySha256 !== null));
 }
 
 function parseJson(bytes, file) {
@@ -86,6 +96,9 @@ function compareGroup(plan, group, actual, issues) {
     issues.push('Approved repo mismatch: ' + group.groupId);
   }
   if (!matchesPlanReference(plan, actual)) issues.push('Approved plan reference mismatch: ' + group.groupId);
+  if (!matchesApprovedTarget(group.revision, actual.target)) {
+    issues.push('Assignment HEAD or dirty state differs from the approved revision for group ' + group.groupId);
+  }
 
   const remaining = new Map(group.scenarios.map(s => [approvedScenarioKey(s), s]));
   for (const scenario of actual.scenarios) {
@@ -113,6 +126,42 @@ export function compareApprovedPlan(plan, assignments) {
   return issues;
 }
 
+// Review and dispatch concern the live checkout. Historical summaries compare the recorded versions.
+function liveRevisionIssues(groups, assignments = []) {
+  const issues = [];
+  const snapshots = new Map();
+  const featureIds = new Map();
+  for (const group of groups) {
+    const repo = approvedRepoKey(group.repo);
+    try {
+      if (!snapshots.has(repo)) snapshots.set(repo, captureApprovedRevision(group.repo));
+      const current = snapshots.get(repo);
+      if (current.head !== group.revision.head || current.dirtySha256 !== group.revision.dirtySha256) {
+        issues.push('Candidate revision changed for group ' + group.groupId + ' (' + group.repo + '). Review the updated plan before dispatch.');
+        continue;
+      }
+      for (const scenario of group.scenarios) {
+        const file = path.join(repo, scenario.feature);
+        if (!featureIds.has(file)) featureIds.set(file, declaredScenarioIds(readFeature(file, repo)));
+        checkScenarioIds(featureIds.get(file), [scenario.id], scenario.feature);
+      }
+    } catch (error) {
+      issues.push('Cannot confirm candidate revision for ' + group.groupId + ': ' + error.message);
+    }
+  }
+  for (const { groupId, target } of assignments) {
+    const repo = approvedRepoKey(target.repo);
+    const workDir = approvedRepoKey(target.workDir);
+    // A subdirectory is valid only when Git resolves it to the same checkout.
+    if (workDir && workDir === repo) continue;
+    try {
+      if (workDir && approvedRepoKey(repoRoot(target.workDir)) === repo) continue;
+    } catch { /* No checkout at the specified workDir. */ }
+    issues.push('Assignment workDir differs from the approved checkout: ' + groupId);
+  }
+  return issues;
+}
+
 function generateAssignment(plan, file) {
   const template = parseJson(fs.readFileSync(file), file);
   if (!template || typeof template !== 'object' || Array.isArray(template)) throw new Error('Expected an assignment template object');
@@ -123,7 +172,7 @@ function generateAssignment(plan, file) {
   if (!group) throw new Error('Group absent from approved plan: ' + template.groupId);
   const result = { ...template, scenarios: group.scenarios, approvedPlan: plan.reference };
   validate(assignment, result, 'assignment schema');
-  const issues = [];
+  const issues = liveRevisionIssues([group], [result]);
   compareGroup(plan, group, result, issues);
   if (issues.length) throw new Error(issues.join('\n'));
   return result;
@@ -146,6 +195,10 @@ function markdownCell(value) {
 function report(plan) {
   const rows = [
     '核准清單 SHA-256 `' + plan.reference.sha256 + '`', '',
+    ...plan.groups.map(g => '- ' + markdownCell(g.groupId) + '（' + markdownCell(g.repo) + '） ' +
+      '受審 commit `' + g.revision.head + '`，' +
+      (g.revision.dirtySha256 === null ? '工作區乾淨' : '未提交內容 SHA-256 `' + g.revision.dirtySha256 + '`')),
+    '',
     '| 組別 | 需求／驗收條件 | 情境編號與路徑 | 前置條件與實際觸發方式 | 預期結果 | 驗證手段與理由 | 預計證據 |',
     '|---|---|---|---|---|---|---|',
   ];
@@ -163,21 +216,33 @@ function report(plan) {
 export function parallelPlan(args) {
   try {
     const { values } = parseArgs({ args, options: {
-      plan: { type: 'string' }, template: { type: 'string' }, report: { type: 'boolean' },
+      plan: { type: 'string' }, revision: { type: 'string' }, template: { type: 'string' }, report: { type: 'boolean' },
       assignment: { type: 'string', multiple: true }, output: { type: 'string' },
     } });
+    if (values.revision !== undefined) {
+      if (!values.revision || Object.keys(values).length !== 1) throw new Error('Use --revision <checkout root> on its own.');
+      console.log(JSON.stringify(captureApprovedRevision(path.resolve(values.revision))));
+      return 0;
+    }
     if (!values.plan || [values.template, values.report, values.assignment].filter(Boolean).length !== 1) {
       throw new Error('Expected --plan and one of --template, --report, or --assignment.');
     }
     if (values.output !== undefined && (!values.output || !values.template)) throw new Error('--output requires --template and a new file path');
     const plan = loadApprovedPlan(values.plan);
+    if (plan.contractVersion === 1) {
+      throw new Error('Historical plan v1 lacks a reviewed candidate revision. Capture --revision for each checkout and submit a v2 plan for review.');
+    }
     if (values.template) {
       const json = JSON.stringify(generateAssignment(plan, values.template), null, 2);
       if (values.output) writeNewAssignment(values.output, json + '\n');
       else console.log(json);
-    } else if (values.report) console.log(report(plan));
-    else {
-      const issues = compareApprovedPlan(plan, values.assignment.map(file => readContract(file, 'assignment')));
+    } else if (values.report) {
+      const issues = liveRevisionIssues(plan.groups);
+      if (issues.length) throw new Error(issues.join('\n'));
+      console.log(report(plan));
+    } else {
+      const records = values.assignment.map(file => readContract(file, 'assignment'));
+      const issues = compareApprovedPlan(plan, records).concat(liveRevisionIssues(plan.groups, records));
       console.log(JSON.stringify({ runId: plan.runId, approvedPlan: plan.reference, issues }));
       if (issues.length) return 1;
     }

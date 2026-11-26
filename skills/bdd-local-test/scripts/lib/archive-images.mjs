@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { fileEntry, hashBytes, hashStream } from './archive-pack.mjs';
-import { deleteMaskRecord, maskRecord, setMaskRecord } from './mask-ledger.mjs';
+import { deleteMaskRecord, evidencePathKey, maskRecord, setMaskRecord } from './mask-ledger.mjs';
 import { decodeArchiveText } from './archive-text.mjs';
 
 const helper = fileURLToPath(new URL('./bdd_webp.py', import.meta.url));
@@ -77,11 +77,44 @@ function replaceData(entry, text) {
   return { ...entry, path: undefined, data, sha256: hashBytes(data), size: data.length };
 }
 
+function rewriteMarkdown(text, pairs) {
+  let count = 0;
+  for (const [from, to] of pairs) {
+    const parts = text.split(from);
+    if (parts.length === 1) continue;
+    count += parts.length - 1;
+    text = parts.join(to);
+  }
+  return count ? { text, count } : null;
+}
+
+function rewriteResult(text, convertedPaths) {
+  let result;
+  try { result = JSON.parse(text); } catch { return null; }
+  if (result?.contractVersion !== 1 || !Array.isArray(result.scenarios)) return null;
+  let count = 0;
+  for (const scenario of result.scenarios) {
+    if (!Array.isArray(scenario?.evidence)) continue;
+    scenario.evidence = scenario.evidence.map(ref => {
+      if (typeof ref !== 'string') return ref;
+      const [name] = ref.split('#', 1);
+      const relative = path.posix.normalize(name.replaceAll('\\', '/'));
+      const to = convertedPaths.get(evidencePathKey(relative));
+      if (!to) return ref;
+      count++;
+      return to + ref.slice(name.length);
+    });
+  }
+  return count ? { text: JSON.stringify(result, null, 2) + '\n', count } : null;
+}
+
 async function rewriteReferences(entries, ledger, converted, rewrittenLinks) {
   const pairs = new Map();
+  const convertedPaths = new Map();
   let ledgerChanged = false;
   for (const image of converted) {
     const { originalName, originalSha256 } = image.extra;
+    convertedPaths.set(evidencePathKey(originalName), image.name);
     pairs.set(originalName, image.name);
     pairs.set(urlPath(originalName), urlPath(image.name));
     const old = maskRecord(ledger, originalName);
@@ -93,20 +126,16 @@ async function rewriteReferences(entries, ledger, converted, rewrittenLinks) {
   for (const [i, entry] of entries.entries()) {
     if (ledgerChanged && entry.name.toLowerCase() === 'masking.json') {
       entries[i] = replaceData(entry, JSON.stringify(ledger, null, 2) + '\n');
-    } else if (entry.name.toLowerCase().endsWith('.md')) {
+    } else {
+      const result = /^coordination\/attempt-[1-9]\d*\/result\.json$/i.test(entry.name);
+      if (!result && !entry.name.toLowerCase().endsWith('.md')) continue;
       const bytes = await readFile(entry.path);
       if (hashBytes(bytes) !== entry.sha256) throw new Error(`封存時來源已變動：${entry.name}`);
-      let text = decodeArchiveText(bytes);
-      let count = 0;
-      for (const [from, to] of pairs) {
-        const parts = text.split(from);
-        if (parts.length === 1) continue;
-        count += parts.length - 1;
-        text = parts.join(to);
-      }
-      if (count) {
-        entries[i] = replaceData(entry, text);
-        rewrittenLinks[entry.name] = count;
+      const text = decodeArchiveText(bytes);
+      const revised = result ? rewriteResult(text, convertedPaths) : rewriteMarkdown(text, pairs);
+      if (revised) {
+        entries[i] = replaceData(entry, revised.text);
+        rewrittenLinks[entry.name] = revised.count;
       }
     }
   }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -68,6 +68,83 @@ test('concurrent archives preserve both index events and supersede exactly one p
   assert.equal(events[2].by, events[1].archive);
   assert.deepEqual(items.flatMap(i => i.superseded), [events[0].archive]);
   assert.deepEqual((await readdir(f.root)).sort(), ['index.jsonl', 'one.zip', 'two.zip']);
+});
+
+test('archiving the same group for different issues keeps each issue independently active', async t => {
+  const f = await fixture(t);
+  const archive = async (issue, label, ...args) => {
+    const source = path.join(f.repo, '.bdd', issue + '-topic', 'groups', 'api');
+    await mkdir(source, { recursive: true });
+    for (const name of ['REPORT.md', 'verification.json', 'evidence']) {
+      await cp(path.join(f.dir, name), path.join(source, name), { recursive: true });
+    }
+    return JSON.parse((await exec(process.execPath, [cli, 'archive', '--dir', source, '--archive-root', f.root,
+      '--destination', path.join(f.root, label + '.zip'), ...args])).stdout);
+  };
+  const first = await archive('101', 'first', '--issue', '101');
+  const other = await archive('202', 'other', '--issue', '202');
+  assert.deepEqual(other.superseded, []);
+  // Earlier group archives could have an empty issue, but kept the original source directory.
+  const events = (await readFile(first.index, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  events[0].issue = '';
+  await writeFile(first.index, events.map(event => JSON.stringify(event)).join('\n') + '\n');
+  const next = await archive('101', 'next');
+  assert.deepEqual(next.superseded, [first.archive]);
+  const published = (await readFile(first.index, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(published.find(event => event.archive === next.archive && event.event === 'created').issue, '101');
+});
+
+test('restored parallel results retain usable masked evidence after WebP conversion', async t => {
+  const f = await fixture(t);
+  const run = async (...args) => JSON.parse((await exec(process.execPath, [cli, ...args], { cwd: f.repo })).stdout);
+  const guide = await readFile(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const [assignment, result] = Array.from(guide.matchAll(/^\x60{3}json\r?\n([\s\S]*?)\r?\n\x60{3}/gm), m => JSON.parse(m[1]));
+  const feature = '.bdd/modules/reports/01.feature';
+  for (const s of [assignment.scenarios[0], result.scenarios[0]]) s.feature = feature;
+  await writeFile(path.join(f.repo, feature), 'Feature: Report\n@' + assignment.scenarios[0].id + '\nScenario: View report\n');
+  git(f.repo, '-c', 'user.name=bdd-test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'report scenario', '--', feature);
+  const head = git(f.repo, 'rev-parse', 'HEAD');
+  Object.assign(assignment.target, { repo: f.repo, workDir: f.repo, head });
+  assignment.outputDir = f.dir;
+  await run('verification', '--dir', f.dir, '--record', '--commits', head,
+    '--changed-scenarios', feature + '::' + assignment.scenarios[0].id, '--passed', '1');
+  result.verification.roundIndex = 1;
+  const recordedPath = 'evidence/原圖.png';
+  result.scenarios[0].evidence = [recordedPath];
+  result.scenarios[0].actual = 'Observed ' + recordedPath;
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAN0lEQVR4nO3RMQ0AMAzEQLf8OacQ3CWbD8BHcg4Mm+7qOh340A9UiVSJVIlUiVSJVIlUiVSJVIlUiVSJMA+hxgE/8m7SpQAAAABJRU5ErkJggg==', 'base64');
+  await writeFile(path.join(f.dir, recordedPath), image);
+  await run('mask-evidence', '--dir', f.dir, '--mark', '--pattern', '原圖.png', '--method', 'exempt', '--note', 'Solid blue fixture');
+  const attempt = path.join(f.dir, 'coordination', 'attempt-1');
+  await mkdir(attempt, { recursive: true });
+  const assignmentFile = path.join(attempt, 'assignment.json');
+  const resultFile = path.join(attempt, 'result.json');
+  await writeFile(assignmentFile, JSON.stringify(assignment));
+  await writeFile(resultFile, JSON.stringify(result));
+  const zip = await run('archive', '--dir', f.dir, '--archive-root', f.root, '--destination', path.join(f.root, 'converted.zip'));
+  if (!zip.webpEncoder) return t.skip('Requires Python with Pillow WebP support');
+  assert.equal(zip.webpConverted, 1);
+  await rename(f.dir, path.join(f.base, 'before-extraction'));
+  await run('extract', '--archive', zip.archive, '--to', path.dirname(f.dir));
+  const restored = JSON.parse(await readFile(resultFile, 'utf8'));
+  assert.deepEqual(restored.scenarios[0].evidence, ['evidence/原圖.webp']);
+  assert.equal(restored.scenarios[0].actual, result.scenarios[0].actual);
+  const summary = name => run('parallel-summary', '--assignment', assignmentFile, '--output-dir', path.join(f.base, name));
+  assert.equal((await summary('restored')).eligibleForReview, true);
+  // Older converted archives kept the original path in the result and the mapping in masking.json.
+  await writeFile(resultFile, JSON.stringify(result));
+  assert.equal((await summary('historical')).eligibleForReview, true);
+  const ledgerFile = path.join(f.dir, 'masking.json');
+  const ledger = JSON.parse(await readFile(ledgerFile, 'utf8'));
+  const webpRecord = ledger.files['evidence/原圖.webp'];
+  webpRecord.derivedFrom.name = 'evidence/unrelated.png';
+  await writeFile(ledgerFile, JSON.stringify(ledger));
+  const issue = pattern => err => JSON.parse(err.stdout).issues.some(s => pattern.test(s));
+  await assert.rejects(summary('wrong-source'), issue(/Missing artifact/));
+  webpRecord.derivedFrom.name = recordedPath;
+  await writeFile(ledgerFile, JSON.stringify(ledger));
+  await writeFile(path.join(f.evidence, '原圖.webp'), 'changed bytes');
+  await assert.rejects(summary('changed'), issue(/Invalid image masking/));
 });
 
 test('a malformed index or unfinished mask operation leaves the archive unpublished', async t => {

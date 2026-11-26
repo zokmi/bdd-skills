@@ -9,7 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { readArchiveStates } from '../scripts/lib/archive-index.mjs';
+import { previousArchives, readArchiveStates } from '../scripts/lib/archive-index.mjs';
 import { archiveIndexCommand } from '../scripts/lib/archive-manager.mjs';
 
 const exec = promisify(execFile);
@@ -67,6 +67,43 @@ test('resolves literal home paths for an archive root and a repository', async t
   await writeFile(path.join(repo, '.bdd', 'config.json'), JSON.stringify({ archiveRoot: '~/store' }));
   assert.equal((await run('--list', '--archive-root', '~/store')).archiveRoot, root);
   assert.equal((await run('--list', '--repo', '~/repo')).archiveRoot, root);
+});
+
+test('replays only proven cross-issue automatic replacements without changing the index', async t => {
+  const { dir, root, index } = await fixture(t);
+  await mkdir(root);
+  const repo = path.join(dir, 'repo');
+  const source = name => path.join(root, name + '.zip');
+  const created = (name, issue, at, extra = {}) => ({
+    event: 'created', archive: source(name), issue, topic: 'api', repo, at, ...extra,
+  });
+  const status = (name, value, at, extra = {}) => ({ event: 'status', archive: source(name), status: value, at, ...extra });
+  const events = [
+    created('first', '', '1', { sourceDir: path.join(repo, '.bdd', '101-a', 'groups', 'api') }),
+    status('first', 'uploaded-verified', '2', { attachments: ['att-1'] }),
+    created('same', '202', '3'), created('unknown', '', '4'), created('manual', '101', '5'),
+    created('later', '101', '6'), created('unlinked', '101', '6a'),
+    created('replacement', '202', '7'),
+    ...['first', 'same', 'unknown', 'later'].map(name => status(name, 'superseded', '7', { by: source('replacement') })),
+    status('manual', 'superseded', '8'),
+    status('unlinked', 'superseded', '8a', { by: source('replacement') }),
+    status('later', 'uploaded', '9', { attachments: ['late'] }),
+  ];
+  const original = events.map(e => JSON.stringify(e)).join('\n') + '\n';
+  await writeFile(index, original);
+  const expected = { first: 'uploaded-verified', same: 'superseded', unknown: 'superseded', manual: 'superseded', unlinked: 'superseded',
+    later: 'uploaded', replacement: 'local-only' };
+  const all = await readArchiveStates(index);
+  for (const [name, value] of Object.entries(expected)) {
+    const state = all.find(s => s.archive === source(name));
+    assert.equal(state.status, value, name);
+    assert.deepEqual(await readArchiveStates(index, { archive: source(name) }), [state]);
+  }
+  assert.equal(all[0].statusAt, '2');
+  assert.deepEqual(all[0].attachments, ['att-1']);
+  assert.deepEqual(await previousArchives(index, await fs.promises.stat(index), created('next', '101', '10')),
+    [source('first'), source('later')]);
+  assert.equal(await readFile(index, 'utf8'), original);
 });
 
 test('concurrent imports publish one event and retain the source until a requested move succeeds', async t => {

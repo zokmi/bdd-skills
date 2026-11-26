@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkModifiedPaths, checkSeparateDirectories } from '../scripts/lib/summary-evidence.mjs';
+import { checkModifiedPaths, checkSeparateDirectories, evidenceChecker } from '../scripts/lib/summary-evidence.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const docs = new URL('../references/parallel-bdd-contract.md', import.meta.url);
@@ -137,18 +137,22 @@ test('summary destination cannot alias group output through a directory link', t
 test('approved assignments account for the entire plan even when the caller omits a group', t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-approved-summary-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
-  const git = (...args) => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8' }).trim();
+  const repo = path.join(temp, 'checkout');
+  fs.mkdirSync(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
   git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'list.feature'), '@AA-01\nScenario: First\n@BB-01\nScenario: Second\n');
+  git('add', 'list.feature');
   git('-c', 'user.name=Fixture', '-c', 'user.email=bdd@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'fixture');
   const head = git('rev-parse', 'HEAD');
   const [baseAssignment, baseResult] = fs.readFileSync(docs, 'utf8').split('```json').slice(1).map(e => JSON.parse(e.split('```')[0]));
   const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
   const planFile = path.join(temp, 'approved.json');
   const plan = {
-    contractVersion: 1, runId: 'approved-run',
+    contractVersion: 2, runId: 'approved-run',
     groups: ['A', 'B'].map(groupId => ({
-      groupId, repo: temp, scenarios: [{
-        feature: 'list.feature', id: groupId + '-01', kind: 'changed',
+      groupId, repo, revision: { head, dirtySha256: null }, scenarios: [{
+        feature: 'list.feature', id: groupId.repeat(2) + '-01', kind: 'changed',
         assertions: [{ requirement: 'List items', action: 'Load the list', expected: 'One item', method: 'API', evidence: 'Response body' }],
       }],
     })),
@@ -164,7 +168,7 @@ test('approved assignments account for the entire plan even when the caller omit
     const coord = path.join(outputDir, 'coordination', 'attempt-1');
     fs.mkdirSync(coord, { recursive: true });
     const template = { ...baseAssignment, runId: plan.runId, groupId: group.groupId, outputDir,
-      target: { ...baseAssignment.target, repo: temp, workDir: temp, head }, resources: [] };
+      target: { ...baseAssignment.target, repo, workDir: repo, head }, resources: [] };
     delete template.scenarios;
     const templateFile = path.join(coord, 'template.json');
     write(templateFile, template);
@@ -176,7 +180,7 @@ test('approved assignments account for the entire plan even when the caller omit
       scenarios: [{ ...baseResult.scenarios[0], feature, id, kind, evidence: ['REPORT.md#result'] }],
       artifacts: { report: 'REPORT.md', masking: null }, resourceStates: [] });
     write(path.join(outputDir, 'verification.json'), { rounds: [{
-      repo: { name: path.basename(temp), url: '' }, head, dirtyPaths: [],
+      repo: { name: path.basename(repo), url: '' }, head, dirtyPaths: [], revision: group.revision,
       scenarios: [{ path: feature, ids: [id], role: kind }], result: { passed: 1, failed: 0, blocked: 0, notRun: 0 },
     }] });
     fs.writeFileSync(path.join(outputDir, 'REPORT.md'), '## Result\nOne item');
@@ -195,7 +199,7 @@ test('approved assignments account for the entire plan even when the caller omit
     assert.equal(incomplete.eligibleForReview, false);
     assert.deepEqual(incomplete.counts, { passed: 1, failed: 0, blocked: 0, 'not-run': 1 });
     assert.match(incomplete.issues.join('\n'), /\bB\b/);
-    assert.deepEqual(incomplete.scenarios.map(s => [s.groupId, s.id, s.status]), [['A', 'A-01', 'passed'], ['B', 'B-01', 'not-run']]);
+    assert.deepEqual(incomplete.scenarios.map(s => [s.groupId, s.id, s.status]), [['A', 'AA-01', 'passed'], ['B', 'BB-01', 'not-run']]);
   }
   assert.equal(summary('none', 1, [], '--plan', planFile).counts['not-run'], 2);
 
@@ -254,4 +258,22 @@ test('editable paths retain PowerShell string wildcard and literal rules', () =>
   checkModifiedPaths(['src/a/b.js', 'file3.txt', 'f*.js'], ['src/*.js', 'file[0-9].txt', 'f\x60*.js']);
   assert.throws(() => checkModifiedPaths(['filex.txt'], ['file[0-9].txt']), /Unauthorized/);
   assert.throws(() => checkModifiedPaths(['src/../outside'], ['*']), /Unsafe/);
+});
+
+test('Markdown evidence fragments must identify a report heading or explicit anchor', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-report-sections-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'REPORT.md'), [
+    '# SS-13', '## **訂單** [明細](list)', '## 訂單 明細', '### SS-13',
+    '補充佐證', '--------', '<a name="Stable-ID"></a>', '<span id="another"></span>',
+    '```md', '## sample', '<a id="example">', '```', '<!-- <a id="hidden"> -->',
+  ].join('\n'));
+  const check = evidenceChecker(root);
+  for (const fragment of ['ss-13', 'ss-13-1', '訂單-明細', encodeURIComponent('訂單-明細-1'), '補充佐證', 'Stable-ID', 'another']) {
+    check('REPORT.md#' + fragment, true);
+  }
+  check('REPORT.md', true);
+  for (const fragment of ['missing', 'sample', 'example', 'hidden', 'ss-13-2']) {
+    assert.throws(() => check('REPORT.md#' + fragment, true), /REPORT\.md#/);
+  }
 });
