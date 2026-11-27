@@ -382,6 +382,43 @@ test('checks reachable commits in a batch and preserves order and duplicate expl
   assert.ok(historyCalls.length <= 2, JSON.stringify(historyCalls));
 });
 
+test('unreachable commits without patch IDs use subjects and only mixed patches need history diffs', t => {
+  const { repo, output, git, base, run, args } = fixture(t);
+  git('commit', '--allow-empty', '-qm', 'release marker');
+  const marker = git('rev-parse', 'HEAD');
+  git('commit', '--allow-empty', '-qm', 'removed marker');
+  const missing = git('rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(repo, 'change'), 'tested\n');
+  git('add', 'change');
+  git('commit', '-qm', 'tested change');
+  const change = git('rev-parse', 'HEAD');
+  const round = run(0, '--record', '--commits', [base, marker, missing, change].join(','));
+  const [ancestor, empty, removed, patch] = round.commits;
+  assert.ok(ancestor.patchId && patch.patchId);
+  assert.equal(empty.patchId, '');
+  assert.equal(removed.patchId, '');
+  git('switch', '-qc', 'rewritten', base);
+  git('cherry-pick', '--no-commit', change);
+  git('commit', '-qm', 'release marker');
+  const replacement = git('rev-parse', 'HEAD');
+
+  function check(name, commits, expected, pipelines) {
+    fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify({ rounds: [{ ...round, commits }] }));
+    const trace = path.join(output, name + '.ndjson');
+    const checked = spawnSync(process.execPath, args('--check'), {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+    });
+    assert.equal(checked.status, 1, checked.stderr + checked.stdout);
+    assert.deepEqual(JSON.parse(checked.stdout).commits.map(c => [c.source, c.status, c.target]), expected);
+    const commands = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+      .filter(event => event.event === 'start').map(event => event.argv);
+    assert.equal(commands.filter(argv => argv.includes('show') && argv.includes('--patch')).length, pipelines);
+    assert.equal(commands.filter(argv => argv.includes('patch-id')).length, pipelines);
+  }
+  check('subjects', [ancestor, empty, removed], [[base, 'same', base], [marker, 'subject', replacement], [missing, 'missing', null]], 0);
+  check('mixed', [empty, patch], [[marker, 'subject', replacement], [change, 'patch', replacement]], 1);
+});
+
 test('mixed and truncated histories classify original SHAs, tag objects and missing objects independently', t => {
   const { repo, output, git, base, run, args } = fixture(t);
   // A single import keeps the deep history inexpensive on Windows.

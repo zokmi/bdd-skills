@@ -45,9 +45,11 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   fs.writeFileSync(path.join(group, 'REPORT.md'), 'report');
   const ledger = path.join(group, 'masking.json');
   json(ledger, { files: { [image]: { method: 'css', sha256: createHash('sha256').update('fixture').digest('hex').toUpperCase() } } });
-  function run(name, code, extra = []) {
+  function run(name, code, extra = [], trace) {
     const output = path.join(temp, name);
-    const result = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', output, '--assignment', assignment, ...extra], { encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', output, '--assignment', assignment, ...extra], {
+      encoding: 'utf8', env: trace ? { ...process.env, GIT_TRACE2_EVENT: trace } : process.env,
+    });
     assert.equal(result.status, code, result.stderr || result.stdout);
     if (code < 2) {
       const summary = JSON.parse(result.stdout);
@@ -99,19 +101,24 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   const aliased = run('shared-checkout', 1, ['--assignment', path.join(secondCoord, 'assignment.json')]);
   assert.equal(aliased.counts.passed, 1);
   assert.match(aliased.issues.join('\n'), /Repeated cross-group/);
-  const linked = path.join(temp, 'linked-checkout');
+  const linked = path.join(temp, 'linked checkout 中文');
   git('worktree', 'add', '--quiet', '--detach', linked, head);
-  Object.assign(otherAssignment.target, { repo: linked, workDir: linked });
+  const subdir = path.join(linked, 'nested');
+  fs.mkdirSync(subdir);
+  Object.assign(otherAssignment.target, { repo: subdir, workDir: linked });
   const secondRound = structuredClone(round);
   secondRound.repo.name = path.basename(linked);
+  secondRound.repo.url = 'https://example.invalid/linked-only.git';
+  git('config', 'extensions.worktreeConfig', 'true');
+  git('-C', linked, 'config', '--worktree', 'remote.origin.url', secondRound.repo.url);
   const secondResult = structuredClone(r);
   secondResult.groupId = otherAssignment.groupId;
   secondResult.verification.path = 'linked-verification.json';
-  function summarizePair(name, code) {
+  function summarizePair(name, code, trace) {
     json(path.join(group, secondResult.verification.path), { rounds: [secondRound] });
     json(path.join(secondCoord, 'assignment.json'), otherAssignment);
     json(path.join(secondCoord, 'result.json'), secondResult);
-    return run(name, code, ['--assignment', path.join(secondCoord, 'assignment.json')]);
+    return run(name, code, ['--assignment', path.join(secondCoord, 'assignment.json')], trace);
   }
   const repeated = summarizePair('linked-duplicate', 1);
   assert.deepEqual(repeated.issues, ['Repeated cross-group scenario requires manual review: ' + scenario.feature + '|' + scenario.id]);
@@ -120,10 +127,23 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   otherAssignment.scenarios[0].id = secondId;
   secondRound.scenarios[0].ids = [secondId];
   secondResult.scenarios[0].id = secondId;
-  const independent = summarizePair('linked-distinct', 0);
+  const trace = path.join(temp, 'linked-trace.ndjson');
+  const independent = summarizePair('linked-distinct', 0, trace);
   assert.equal(independent.eligibleForReview, true);
   assert.equal(independent.counts.passed, 2);
   assert.deepEqual(independent.groups.map(g => g.version.repo.name), [path.basename(temp), path.basename(linked)]);
+  assert.deepEqual(independent.groups.map(g => g.version.repo.url), ['', secondRound.repo.url]);
+  const discovery = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('--git-common-dir'));
+  assert.equal(discovery.length, 2);
+  assert.ok(discovery.every(event => event.argv.includes('--show-toplevel')), 'discover both paths in one Git process per checkout');
+  if (process.platform !== 'win32') {
+    const multiline = path.join(temp, 'linked\ncheckout');
+    git('worktree', 'move', linked, multiline);
+    Object.assign(otherAssignment.target, { repo: multiline, workDir: multiline });
+    secondRound.repo.name = path.basename(multiline);
+    assert.equal(summarizePair('linked-newline', 0).counts.passed, 2);
+  }
   const verificationPath = path.join(group, 'verification.json');
   json(verificationPath, { rounds: { 0: round } });
   assert.equal(run('invalid-rounds', 1).counts['not-run'], 1);

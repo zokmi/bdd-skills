@@ -188,10 +188,12 @@ export async function mapCommits(root, head, last, depth) {
           const subject = fields[i + 1].trim().toLowerCase();
           if (!subjects.has(subject)) subjects.set(subject, fields[i]);
         }
-        const ids = await patchIds(root, shas);
-        for (const sha of shas) {
-          const id = ids.get(sha);
-          if (id && !patches.has(id)) patches.set(id, sha);
+        if (last.commits.some(c => c.patchId && !reachable.has(c.sha))) {
+          const ids = await patchIds(root, shas);
+          for (const sha of shas) {
+            const id = ids.get(sha);
+            if (id && !patches.has(id)) patches.set(id, sha);
+          }
         }
         index = { patches, subjects };
       }

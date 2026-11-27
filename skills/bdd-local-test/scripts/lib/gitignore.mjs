@@ -36,14 +36,36 @@ export function isIgnoredPath(repo, relative) {
   return git(repo, ['check-ignore', '-q', '--', file], [0, 1]).status === 0;
 }
 
+function* ignoreFieldBatches(repo, files) {
+  let maxPaths = 4096;
+  for (let start = 0; start < files.length;) {
+    let end = start;
+    let bytes = 0;
+    while (end < files.length && end - start < maxPaths) {
+      const size = Buffer.byteLength(files[end]) + 1;
+      if (end > start && bytes + size > 256 * 1024) break;
+      bytes += size;
+      end++;
+    }
+    const input = files.slice(start, end).join('\0') + '\0';
+    let output;
+    try {
+      output = git(repo, ['check-ignore', '--no-index', '-z', '-v', '--non-matching', '--stdin'], [0, 1], input).stdout;
+    } catch (error) {
+      // Verbose output repeats the matching rule for each path. Long rules can exceed maxBuffer.
+      if (error.code !== 'ENOBUFS' || end - start === 1) throw error;
+      maxPaths = Math.ceil((end - start) / 2);
+      continue;
+    }
+    yield output.split('\0');
+    start = end;
+  }
+}
+
 function findFailures(repo) {
   const files = [...new Set([...probes, ...listPaths(repo, '--cached', '--others')])].sort();
   const failures = [];
-  for (let start = 0; start < files.length; start += 256) {
-    // The verbose NUL-delimited protocol includes explicit negations and
-    // leaves source, line and pattern empty for paths with no matching rule.
-    const input = files.slice(start, start + 256).join('\0') + '\0';
-    const fields = git(repo, ['check-ignore', '--no-index', '-z', '-v', '--non-matching', '--stdin'], [0, 1], input).stdout.split('\0');
+  for (const fields of ignoreFieldBatches(repo, files)) {
     for (let i = 0; i + 3 < fields.length; i += 4) {
       const [source, line, pattern, file] = fields.slice(i, i + 4);
       const expectedIgnored = !isSource(file);

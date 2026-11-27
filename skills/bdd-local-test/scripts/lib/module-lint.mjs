@@ -23,6 +23,7 @@ export function lint({ modules, orphans }) {
   for (const file of orphans) add('orphan-feature', null, file, null, '情境檔所在目錄沒有 MODULE.md');
   for (const m of modules) {
     const seen = new Map();
+    const removedIds = new Set(m.removed.map(id => id.toUpperCase()));
     for (const file of m.features()) {
       const feature = file.feature;
       for (const { line, title, ids, tags, methods } of reviewableScenarios(file)) {
@@ -36,7 +37,7 @@ export function lint({ modules, orphans }) {
         const location = feature + ':' + line;
         if (seen.has(id)) report('duplicate-id', '編號 ' + id + ' 重複於 ' + seen.get(id) + ' 與 ' + location);
         else seen.set(id, location);
-        if (m.removed.some(r => r.toUpperCase() === id)) report('reused-id', '編號 ' + id + ' 已在 MODULE.md 記為移除，不可再用');
+        if (removedIds.has(id)) report('reused-id', '編號 ' + id + ' 已在 MODULE.md 記為移除，不可再用');
         if (!tags.some(t => /^@#\d+$/.test(t))) report('missing-issue-tag', '情境缺少單號標籤（例如 @#5349）：' + title);
         if (!methods.length) report('missing-method-tag', '情境缺少 @UI／@API／@DB：' + title);
       }

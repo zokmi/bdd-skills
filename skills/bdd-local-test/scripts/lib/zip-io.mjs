@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { openReader, ZipWriter, fallbackCrc32 } from './zip-runtime.mjs';
-import { entryLimit } from './archive-limits.mjs';
+import { entryLimit, sequentialReadOptions } from './archive-limits.mjs';
 
 const crc32 = zlib.crc32 ?? fallbackCrc32;
 
@@ -69,7 +69,7 @@ export async function writeZip(target, entries) {
         size: stat?.size ?? entry.data.length,
       };
       writer.addReadStreamLazy(entry.name, options, cb => {
-        input = stat ? fs.createReadStream(entry.path) : Readable.from([entry.data]);
+        input = stat ? fs.createReadStream(entry.path, sequentialReadOptions(stat.size)) : Readable.from([entry.data]);
         input.on('error', error => writer.emit('error', error));
         cb(null, input);
       });

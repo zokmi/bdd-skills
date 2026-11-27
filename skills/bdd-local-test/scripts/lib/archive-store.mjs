@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { appendIndexEvents, previousArchives, withIndexLock } from './archive-index.mjs';
 import { git, hashBytes, hashStream } from './archive-pack.mjs';
-import { byteLimit, entryLimit, manifestLimit, safePathComponent } from './archive-limits.mjs';
+import { byteLimit, entryLimit, manifestLimit, safePathComponent, sequentialReadOptions } from './archive-limits.mjs';
 import { loadBddOutputConfig } from './bdd-output-config.mjs';
 
 async function statIfPresent(file) {
@@ -117,6 +117,7 @@ export async function writeVerifiedArchive(temporary, plan, manifest) {
   const expected = new Map(records.map(record => [record.name, record]));
   await writeZip(temporary, records);
   try {
+    const before = await lstat(temporary, { bigint: true });
     const zip = await openZip(temporary);
     try {
       for (const entry of zip.entries) {
@@ -128,9 +129,11 @@ export async function writeVerifiedArchive(temporary, plan, manifest) {
       }
       if (expected.size) throw new Error(`封存缺少檔案：${expected.keys().next().value}`);
     } finally { await zip.close(); }
-    const sha256 = await hashStream(createReadStream(temporary));
-    const sizeBytes = (await lstat(temporary)).size;
-    return { sha256, sizeBytes };
+    const sha256 = await hashStream(createReadStream(temporary, sequentialReadOptions(before.size)));
+    const after = await lstat(temporary, { bigint: true });
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+        before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new Error('核對期間封存檔已變動');
+    return { sha256, sizeBytes: Number(after.size) };
   } catch (error) {
     await unlink(temporary);
     throw error;

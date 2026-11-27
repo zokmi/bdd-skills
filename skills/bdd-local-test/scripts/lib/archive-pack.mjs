@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { entryLimit, safePathComponent } from './archive-limits.mjs';
+import { entryLimit, safePathComponent, sequentialReadOptions } from './archive-limits.mjs';
 import { stageSnapshots } from './archive-snapshots.mjs';
 
 export async function hashStream(stream) {
@@ -20,7 +20,7 @@ export async function fileEntry(name, filePath, extra = {}) {
   const stat = await lstat(filePath);
   if (!stat.isFile()) throw new Error(`來源不是一般檔案：${filePath}`);
   return { name, path: filePath, size: stat.size, mtime: stat.mtime,
-    sha256: await hashStream(createReadStream(filePath)), extra };
+    sha256: await hashStream(createReadStream(filePath, sequentialReadOptions(stat.size))), extra };
 }
 
 export async function sourceFiles(source) {

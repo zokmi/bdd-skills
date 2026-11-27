@@ -200,7 +200,7 @@ function sameProof(previous, current) {
 }
 
 async function assess(item, roots, context) {
-  const { repo, worktrees, states, index, accepted, apply } = context;
+  const { repo, worktrees, states, accepted } = context;
   checkPhysical(item.path);
   const before = snapshot(item.path, roots);
   item.bytes = before.bytes;
@@ -212,26 +212,67 @@ async function assess(item, roots, context) {
     try {
       const proof = await archiveCoverage(state, worktrees);
       for (const hash of proof.hashes) known.add(hash);
-      covered.push(proof);
+      covered.push({ state, version: proof.version });
     } catch { /* Other verified archives for this topic may still cover the evidence. */ }
   }
   if (!covered.length) throw new Error('同主題封存檔不存在、SHA-256 不符或沒有可驗證的 manifest');
   item.coveredBy = covered.map(c => c.state.archive);
   const missing = (await sourceHashes(item.path, before.files)).filter(hash => !known.has(hash));
   if (missing.length) throw new Error('有 ' + missing.length + ' 個證據檔的內容不在已核對的封存裡');
-  if (apply) {
-    await withIndexLock(index, async () => {
-      const latest = candidates(await readArchiveStates(index, { includeVerifiedOriginals: true }), item.topic, worktrees[0], accepted);
-      for (const { state, version } of covered) {
-        if (!sameProof(state, latest.find(s => samePath(s.archive, state.archive))) ||
-            !sameVersion(version, stat(state.archive))) throw new Error('封存檔或索引狀態已變動，請重試');
-        checkPhysical(state.archive);
-      }
-      applyPrune(repo, item.path, roots, before);
-    });
-  }
-  item.action = apply ? 'pruned' : 'prune';
+  item.action = 'prune';
   item.reason = accepted.length > 1 ? '證據內容全部收在本機封存庫的封存中' : '證據內容全部收在已上傳並確認的封存中';
+  return { item, roots, before, covered };
+}
+
+const maxBatchTopics = 4;
+
+function applyVerifiedTopic({ item, roots, before, covered }, states, { repo, worktrees, accepted }) {
+  const latest = candidates(states, item.topic, worktrees[0], accepted);
+  for (const { state, version } of covered) {
+    if (!sameProof(state, latest.find(s => samePath(s.archive, state.archive))) ||
+        !sameVersion(version, stat(state.archive))) throw new Error('封存檔或索引狀態已變動，請重試');
+    checkPhysical(state.archive);
+  }
+  applyPrune(repo, item.path, roots, before);
+  item.action = 'pruned';
+}
+
+function keepItem(item, error) {
+  if (error instanceof PruneFailure) throw error;
+  item.action = 'keep';
+  item.reason = error.message;
+}
+
+function indexUnchanged(index, version) {
+  try { return version && sameVersion(version, stat(index)); }
+  catch { return false; } // Reacquire and replay before attempting another topic.
+}
+
+async function applyBatch(pending, context) {
+  const { index } = context;
+  let next = 0;
+  while (next < pending.length) {
+    const first = next;
+    try {
+      await withIndexLock(index, async () => {
+        const version = stat(index);
+        const latest = await readArchiveStates(index, { includeVerifiedOriginals: true });
+        if (!indexUnchanged(index, version)) throw new Error('封存索引已變動，請重試');
+        const deadline = performance.now() + 1000;
+        do {
+          const plan = pending[next++];
+          try { applyVerifiedTopic(plan, latest, context); }
+          catch (error) { keepItem(plan.item, error); }
+          // Writers using the index lock cannot invalidate this read. Yield between
+          // topics after a slow deletion or if the index was edited outside the lock.
+        } while (next < pending.length && performance.now() < deadline && indexUnchanged(index, version));
+      });
+    } catch (error) {
+      if (next !== first) throw error; // Partial deletion or lock release failure: stop with its original error.
+      keepItem(pending[next++].item, error);
+    }
+  }
+  pending.length = 0;
 }
 
 export async function pruneCommand(args) {
@@ -252,6 +293,8 @@ export async function pruneCommand(args) {
     await outsideWorktrees(root, worktrees, []);
     const states = await readArchiveStates(index, { includeVerifiedOriginals: true });
     const accepted = values['allow-local-only'] ? ['uploaded-verified', 'uploaded', 'local-only'] : ['uploaded-verified'];
+    const context = { repo, worktrees, states, index, accepted };
+    const pending = [];
     summary.archiveRoot = root;
     summary.prunableBytes = 0;
     for (const dir of fs.readdirSync(bdd, { withFileTypes: true })) {
@@ -263,14 +306,16 @@ export async function pruneCommand(args) {
         checkPhysical(topic);
         const roots = evidenceRoots(topic);
         if (!roots.length) continue;
-        await assess(item, roots, { repo, worktrees, states, index, accepted, apply: applied });
+        const plan = await assess(item, roots, context);
+        if (applied) pending.push(plan);
       } catch (error) {
-        if (error instanceof PruneFailure) throw error;
-        item.reason = error.message;
+        keepItem(item, error);
       }
       summary.items.push(item);
-      if (item.action !== 'keep') summary.prunableBytes += item.bytes;
+      if (pending.length === maxBatchTopics) await applyBatch(pending, context);
     }
+    await applyBatch(pending, context);
+    for (const item of summary.items) if (item.action !== 'keep') summary.prunableBytes += item.bytes;
   }
   console.log(JSON.stringify(summary));
   return 0;

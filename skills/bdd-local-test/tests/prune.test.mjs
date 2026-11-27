@@ -114,6 +114,84 @@ test('keeps evidence added while the original directory is being staged', async 
   assert.deepEqual(fs.readdirSync(f.output).sort(), ['REPORT.md', 'evidence']);
 });
 
+async function batchFixture(t, count) {
+  const f = await fixture(t);
+  await f.publish();
+  const items = new Map([[topic, { zip: f.zip, evidence: f.evidence }]]);
+  for (let i = 1; i < count; i++) {
+    const name = 'batch-' + i, file = 'evidence/a.txt';
+    const zip = path.join(f.root, name + '.zip'), evidence = path.join(f.repo, '.bdd', name, 'evidence');
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, 'a.txt'), payload);
+    const manifest = { schema: 2, topic: name, files: { [file]: { sha256: sha(payload) } } };
+    await writeZip(zip, [{ name: name + '/' + file, data: payload },
+      { name: name + '/bdd-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]);
+    const created = { event: 'created', archive: zip, repo: f.repo, topic: name, sha256: sha(fs.readFileSync(zip)) };
+    const status = { event: 'status', archive: zip, status: 'uploaded-verified', attachments: ['1'] };
+    fs.appendFileSync(f.index, [created, status].map(event => JSON.stringify(event)).join('\n') + '\n');
+    items.set(name, { zip, evidence });
+  }
+  const ordered = fs.readdirSync(path.join(f.repo, '.bdd')).filter(name => items.has(name)).map(name => items.get(name));
+  return { ...f, ordered };
+}
+
+test('apply replays one authoritative index per small batch', async t => {
+  const f = await batchFixture(t, 8);
+  const parse = JSON.parse;
+  const firstEvent = fs.readFileSync(f.index, 'utf8').split('\n', 1)[0];
+  let replays = 0, summary;
+  t.mock.method(JSON, 'parse', (text, ...args) => {
+    if (text === firstEvent) replays++;
+    return parse(text, ...args);
+  });
+  t.mock.method(performance, 'now', () => 0);
+  t.mock.method(console, 'log', value => { summary = parse(value); });
+  await pruneCommand([...f.args, '--apply']);
+  assert.deepEqual(summary.items.map(i => i.action), Array(8).fill('pruned'));
+  assert.equal(replays, 3);
+  assert.equal(summary.prunableBytes, payload.length * 8);
+});
+
+test('changes during a batch retain revoked, edited or replaced evidence and allow other topics to finish', async t => {
+  const f = await batchFixture(t, 5);
+  const [first, revoked, edited, replaced, last] = f.ordered;
+  const rename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (source, target) => {
+    rename(source, target);
+    if (source !== first.evidence) return;
+    fs.appendFileSync(f.index, JSON.stringify({ event: 'status', archive: revoked.zip, status: 'superseded' }) + '\n');
+    fs.writeFileSync(path.join(edited.evidence, 'a.txt'), 'new evidence');
+    fs.writeFileSync(replaced.zip, 'replacement');
+  });
+  let summary;
+  t.mock.method(console, 'log', value => { summary = JSON.parse(value); });
+  await pruneCommand([...f.args, '--apply']);
+  assert.deepEqual(summary.items.map(i => i.action), ['pruned', 'keep', 'keep', 'keep', 'pruned']);
+  assert.deepEqual(fs.readFileSync(path.join(revoked.evidence, 'a.txt')), payload);
+  assert.equal(fs.readFileSync(path.join(edited.evidence, 'a.txt'), 'utf8'), 'new evidence');
+  assert.deepEqual(fs.readFileSync(path.join(replaced.evidence, 'a.txt')), payload);
+  assert.equal(fs.existsSync(last.evidence), false);
+  assert.equal(summary.prunableBytes, payload.length * 2);
+});
+
+test('a partially completed deletion stops the batch and leaves later topics untouched', async t => {
+  const f = await batchFixture(t, 4);
+  const [first, partial, ...later] = f.ordered;
+  fs.writeFileSync(path.join(partial.evidence, 'b.txt'), payload);
+  let attempted = 0;
+  const unlink = fs.unlinkSync;
+  t.mock.method(fs, 'unlinkSync', file => {
+    const relative = path.relative(path.dirname(partial.evidence), file);
+    if (relative.startsWith('.bdd-prune-') && ++attempted === 2) throw new Error('fixture deletion interrupted');
+    return unlink(file);
+  });
+  await assert.rejects(pruneCommand([...f.args, '--apply']), /已清理 1 個.*fixture deletion interrupted/);
+  assert.equal(fs.existsSync(first.evidence), false);
+  assert.equal(fs.readdirSync(partial.evidence).length, 1);
+  for (const item of later) assert.deepEqual(fs.readFileSync(path.join(item.evidence, 'a.txt')), payload);
+  assert.equal(fs.existsSync(f.index + '.lock'), false);
+});
+
 test('an imported WebP needs a verified local conversion to cover its original image', async t => {
   const f = await fixture(t);
   // These are matching 16×16 lossless images in their original and converted formats.

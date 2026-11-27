@@ -28,8 +28,11 @@ function metadata(file) {
   throw new Error('front matter 沒有結尾的 ---：' + file);
 }
 
-function readFeature(file, root, hashFeatures) {
-  return parseFeature(fs.readFileSync(file), relative(root, file), hashFeatures);
+function readFeature(file, root, hashFeatures, retainedSources) {
+  const feature = relative(root, file);
+  const bytes = fs.readFileSync(file);
+  if (retainedSources?.has(feature)) retainedSources.set(feature, bytes);
+  return parseFeature(bytes, feature, hashFeatures);
 }
 
 export function parseFeature(bytes, feature, hashFeatures = false) {
@@ -98,7 +101,7 @@ export function checkScenarioIds(available, selected, feature) {
   if (missing.length) throw new Error('情境檔 ' + feature + ' 找不到指定編號：' + missing.join('、'));
 }
 
-function moduleIndex(root, { hashFeatures = false, moduleName } = {}) {
+function moduleIndex(root, { hashFeatures = false, moduleName, retainedSources } = {}) {
   const base = path.join(root, '.bdd', 'modules');
   const modules = [];
   const orphans = [];
@@ -125,7 +128,7 @@ function moduleIndex(root, { hashFeatures = false, moduleName } = {}) {
         name: relative(base, dir), file, error, prefix: (fields.prefix || []).join(' '),
         paths: fields.paths || [], removed: (fields.removed || []).map(s => s.split(/\s+/)[0]),
         features() {
-          parsed ??= features.map(file => readFeature(file, root, hashFeatures));
+          parsed ??= features.map(file => readFeature(file, root, hashFeatures, retainedSources));
           return parsed;
         },
       });

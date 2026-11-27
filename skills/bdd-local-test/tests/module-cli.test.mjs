@@ -11,6 +11,7 @@ import { modulesCommand } from '../scripts/lib/module-query.mjs';
 import { lint } from '../scripts/lib/module-lint.mjs';
 import { buildQualityPlan } from '../scripts/lib/quality-plan.mjs';
 import { readGitBlobs } from '../scripts/lib/git-blobs.mjs';
+import { verificationCommand } from '../scripts/lib/verification.mjs';
 
 test('batched Git reads preserve empty, repeated and individually large blobs', t => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-git-blobs-'));
@@ -77,6 +78,70 @@ test('feedback selection reads old Feature blobs in one process and preserves ma
     .filter(event => event.event === 'start' && event.argv.includes('cat-file'));
   assert.equal(blobCalls.length, 1);
   assert.ok(blobCalls[0].argv.includes('--batch'));
+
+  const reads = [];
+  const readFile = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (file, ...args) => {
+    if (typeof file === 'string' && file.endsWith('.feature')) reads.push(path.basename(file));
+    return readFile(file, ...args);
+  });
+  assert.deepEqual(buildQualityPlan({ repo, base: 'HEAD', issue: '42', 'review-reason': 'reviewed changed specifications',
+    'impact-complete': true, 'static-passed': true }), plan);
+  assert.deepEqual(reads.sort(), ['a.feature', 'b.feature', 'c.feature', 'new.feature', '舊模式.feature'].sort());
+});
+
+test('record reuses stable working Feature IDs across roles and re-reads a replaced file', async t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-record-feature-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const repo = path.join(tmp, 'repo');
+  const output = path.join(tmp, 'output');
+  fs.mkdirSync(repo);
+  fs.mkdirSync(output);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'core.longpaths', 'true');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+    'commit', '--allow-empty', '-qm', 'baseline');
+  const feature = path.join(repo, 'orders.feature');
+  const content = id => 'Feature: Orders\n@' + id + '\nScenario: Order status\n';
+  fs.writeFileSync(feature, content('OR-01'));
+  fs.writeFileSync(path.join(repo, 'other.feature'), content('OT-01'));
+  const replacement = path.join(tmp, 'replacement');
+  fs.writeFileSync(replacement, content('OR-02'));
+  const fds = new Map();
+  const open = fs.openSync;
+  t.mock.method(fs, 'openSync', (file, ...args) => {
+    const fd = open(file, ...args);
+    fds.set(fd, file);
+    return fd;
+  });
+  let reads = 0;
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (file, ...args) => {
+    const name = typeof file === 'number' ? fds.get(file) : file;
+    const bytes = read(file, ...args);
+    if (typeof name === 'string' && path.basename(name) === 'orders.feature') reads++;
+    if (typeof name === 'string' && path.basename(name) === 'other.feature') fs.renameSync(replacement, feature);
+    return bytes;
+  });
+  let round;
+  t.mock.method(console, 'log', text => { round = JSON.parse(text); });
+  const cwd = process.cwd();
+  try {
+    process.chdir(repo);
+    assert.equal(await verificationCommand(['--record', '--dir', output, '--base', 'HEAD',
+      '--changed-scenarios', 'orders.feature::or-01,or-01;orders.feature;other.feature;orders.feature::OR-02',
+      '--regression-scenarios', 'orders.feature::OR-02;orders.feature']), 0);
+  } finally {
+    process.chdir(cwd);
+  }
+  assert.equal(reads, 2);
+  assert.deepEqual(round.scenarios.map(({ path, ids, role, blob }) => [path, ids, role, blob]), [
+    ['orders.feature', ['or-01', 'or-01'], 'changed', null], ['orders.feature', ['OR-01'], 'changed', null],
+    ['other.feature', ['OT-01'], 'changed', null], ['orders.feature', ['OR-02'], 'changed', null],
+    ['orders.feature', ['OR-02'], 'regression', null],
+    ['orders.feature', ['OR-02'], 'regression', null],
+  ]);
 });
 
 test('successive feedback commits select their own cases and reviewed dependencies', t => {
@@ -277,7 +342,7 @@ test('module lint checks localized scenarios and reports both locations of a dup
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const dir = '.bdd/modules/api/orders';
   fs.mkdirSync(path.join(repo, dir), { recursive: true });
-  fs.writeFileSync(path.join(repo, dir, 'MODULE.md'), '---\nprefix: OR\npaths:\n  - orders.js\n---');
+  fs.writeFileSync(path.join(repo, dir, 'MODULE.md'), '---\nprefix: OR\npaths:\n  - orders.js\nremoved:\n  - or-01\n  - OR-01\n---');
   const feature = dir + '/orders.feature';
   fs.writeFileSync(path.join(repo, feature), [
     'Feature: Orders', '@OR-01 @API @#1', '情境：已成立的訂單',
@@ -289,13 +354,15 @@ test('module lint checks localized scenarios and reports both locations of a dup
   const index = moduleIndex(repo);
   const problems = lint(index);
   assert.deepEqual(problems.map(p => [p.rule, p.file, p.line]), [
+    ['reused-id', feature, 3],
     ['duplicate-id', feature, 5],
+    ['reused-id', feature, 5],
     ['missing-issue-tag', feature, 7],
     ['missing-method-tag', feature, 7],
     ['scenario-id', feature, 9],
   ]);
-  assert.ok(problems[0].message.includes(feature + ':3'));
-  assert.ok(problems[0].message.includes(feature + ':5'));
+  assert.ok(problems[1].message.includes(feature + ':3'));
+  assert.ok(problems[1].message.includes(feature + ':5'));
   const [parsed] = index.modules[0].features();
   assert.equal(parsed.requiresFullFeature, true);
   assert.ok(parsed.unindexedScenarios.some(row => row.line === 11 && row.unattached));

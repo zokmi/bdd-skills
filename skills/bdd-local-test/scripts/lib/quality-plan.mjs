@@ -134,19 +134,18 @@ function scenarioSections(text, feature) {
   return { header, sections };
 }
 
-function changedScenarioIds(repo, feature, originalBytes) {
+function changedScenarioIds(feature, originalBytes, currentBytes) {
   if (!originalBytes) return { ids: feature.scenarios.flatMap(s => s.ids), needsMapping: Boolean(feature.requiresFullFeature) };
-  const currentText = fs.readFileSync(path.join(repo, feature.feature), 'utf8');
   const previousText = originalBytes.toString('utf8');
   const before = scenarioSections(previousText, parseFeature(previousText, feature.feature));
-  const after = scenarioSections(currentText, feature);
+  const after = scenarioSections(currentBytes.toString('utf8'), feature);
   if (!before || !after) return { ids: [], needsMapping: true };
   const ids = [...after.sections.keys()].filter(id => after.sections.get(id) !== before.sections.get(id));
   const removed = [...before.sections.keys()].some(id => !after.sections.has(id));
   return { ids, needsMapping: before.header !== after.header || removed };
 }
 
-function feedbackPlan(repo, opts, index, result) {
+function feedbackPlan(repo, opts, index, result, currentSources) {
   const reason = '只選取本批新增、修改的情境，以及已核對的來源與相依回歸映射';
   if (result.lint.length) return { ...result, level: 'TARGETED', reason, selected: [], bddStatus: 'BLOCKED',
     blockers: ['修正 lint 所列的模組與情境問題後重新選測'], batchMappings: [] };
@@ -193,7 +192,7 @@ function feedbackPlan(repo, opts, index, result) {
         continue;
       }
       const originalBytes = blobs[file] ? oldBlobs.next().value.bytes : null;
-      const delta = changedScenarioIds(repo, features.get(file).feature, originalBytes);
+      const delta = changedScenarioIds(features.get(file).feature, originalBytes, currentSources.get(file));
       for (const id of delta.ids) selectedIds.add(id);
       if (delta.needsMapping) requiredMappings.add(file);
     }
@@ -245,7 +244,9 @@ export function buildQualityPlan(v) {
   const paths = batchPaths && !v.full && risk !== 'HIGH' ? batchPaths : allPaths;
   const checks = v['engineering-checks'] === undefined ? undefined : validateEngineeringChecks(
     JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(v['engineering-checks']))), paths);
-  const index = moduleIndex(repo, { hashFeatures: true });
+  const compareFeatures = issueScope === 'batch' && !batchPaths && ((!v.full && risk !== 'HIGH') || checks);
+  const currentSources = compareFeatures ? new Map(paths.filter(p => /\.feature$/i.test(p)).map(p => [p, null])) : undefined;
+  const index = moduleIndex(repo, { hashFeatures: true, retainedSources: currentSources });
   const problems = lint(index);
   const impact = findImpact(index.modules, paths);
   const result = { head, base, ...(snapshot && { baseHead: snapshot.baseHead }), paths, risk: v['review-risk'] ?? risk, reviewReason: v['review-reason'],
@@ -254,7 +255,7 @@ export function buildQualityPlan(v) {
   const docsOnly = paths.every(isDocumentation);
   const fast = risk === 'LOW' && staticPassed && docsOnly && !checks;
   if (issueScope === 'batch' && !v.full && risk !== 'HIGH' && !(fast && !problems.length && paths.length)) {
-    return feedbackPlan(repo, v, index, result);
+    return feedbackPlan(repo, v, index, result, currentSources);
   }
   const affected = new Set(impact.modules.map(m => m.name));
   const scope = problems.length || issueScope === 'batch' ? [] : scenarioImpact(v['impact-scenario'], impact.modules, index, paths);
@@ -324,7 +325,7 @@ export function buildQualityPlan(v) {
   }
   if (checks) {
     // FULL adds regression scenarios and still needs coverage of the actual engineering batch.
-    const batch = feedbackPlan(repo, v, index, result);
+    const batch = feedbackPlan(repo, v, index, result, currentSources);
     return { ...result, level, reason, selected, bddStatus: batch.bddStatus,
       blockers: batch.blockers, batchMappings: batch.batchMappings };
   }

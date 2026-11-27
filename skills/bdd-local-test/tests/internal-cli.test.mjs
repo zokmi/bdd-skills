@@ -50,13 +50,13 @@ test('standalone ESM commands run through a linked installation directory', t =>
   }
 });
 
-function fixture(t) {
+function fixture(t, env = process.env) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd cli 測試-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', repo, ...args]);
   git('init', '-q');
   const run = (...args) => {
-    const result = spawnSync(process.execPath, [cli, 'gitignore', '--repo', repo, ...args], { encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [cli, 'gitignore', '--repo', repo, ...args], { encoding: 'utf8', env });
     assert.ok(result.stdout, result.stderr);
     return [result.status, JSON.parse(result.stdout)];
   };
@@ -165,13 +165,15 @@ test('gitignore reports tracked output and rolls back a conflicting nested rule'
 });
 
 test('gitignore batches preserve Git negations, rule details, and index ordering across hundreds of paths', t => {
-  const { repo, git, run } = fixture(t);
+  const env = { ...process.env };
+  const { repo, git, run } = fixture(t, env);
   const dir = path.join(repo, '.bdd', 'run');
   fs.mkdirSync(dir, { recursive: true });
   for (let i = 0; i < 280; i++) fs.writeFileSync(path.join(dir, i + '.txt'), '');
   fs.writeFileSync(path.join(dir, '報告 迴歸.txt'), '');
   fs.writeFileSync(path.join(repo, '.gitignore'), '/.bdd/run/*\n!/.bdd/run/報告 迴歸.txt\n');
   git('add', '-f', '--', '.bdd/run/9.txt', '.bdd/run/11.txt', '.bdd/run/20.txt');
+  env.GIT_TRACE2_EVENT = path.join(repo, 'trace.jsonl');
   const [status, result] = run('--check');
   assert.equal(status, 1);
   assert.deepEqual(result.trackedOutputs, ['.bdd/run/11.txt', '.bdd/run/20.txt', '.bdd/run/9.txt']);
@@ -179,4 +181,7 @@ test('gitignore batches preserve Git negations, rule details, and index ordering
   assert.deepEqual(failures, [{
     path: '.bdd/run/報告 迴歸.txt', expectedIgnored: true, rule: ['.gitignore:2:!/.bdd/run/報告 迴歸.txt\t.bdd/run/報告 迴歸.txt'],
   }]);
+  const starts = fs.readFileSync(env.GIT_TRACE2_EVENT, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('check-ignore') && event.argv.includes('--stdin'));
+  assert.equal(starts.length, 1);
 });

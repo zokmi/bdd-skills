@@ -87,8 +87,42 @@ function historicalScenarioIds(root, selections, { blobs, sizes }) {
   return ids;
 }
 
+function sameFeatureVersion(a, b) {
+  return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.size === b.size &&
+    a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
+function workingScenarioIds(root, rel, cache) {
+  const file = path.join(root, rel);
+  const stat = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
+  if (!stat?.isFile()) throw new Error('找不到情境檔：' + rel);
+  if (!cache.has(rel)) return declaredScenarioIds(readFeature(file, root));
+  const cached = cache.get(rel);
+  if (cached && sameFeatureVersion(cached.stat, stat)) return cached.ids;
+
+  const fd = fs.openSync(file, 'r');
+  try {
+    const before = fs.fstatSync(fd, { bigint: true });
+    const ids = declaredScenarioIds(parseFeature(fs.readFileSync(fd), rel));
+    // Bind the cached IDs to the file actually read, including a symlink's target.
+    const stable = sameFeatureVersion(before, fs.fstatSync(fd, { bigint: true }));
+    cache.set(rel, stable ? { stat: before, ids } : null);
+    return ids;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function scenarioRecords(root, selections, tree, historicalHead) {
   const historical = historicalHead ? historicalScenarioIds(root, selections, tree) : null;
+  const working = new Map();
+  if (!historical) {
+    const seen = new Set();
+    for (const { path } of selections) {
+      if (seen.has(path)) working.set(path, null);
+      seen.add(path);
+    }
+  }
   return selections.map(({ path: rel, ids, role }) => {
     const blob = tree.blobs[rel];
     let available;
@@ -97,9 +131,7 @@ function scenarioRecords(root, selections, tree, historicalHead) {
       available = historical.get(blob) ?? declaredScenarioIds(parseFeature(
         git(root, ['cat-file', 'blob', historicalHead + ':' + rel]), rel));
     } else {
-      const file = path.join(root, rel);
-      if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error('找不到情境檔：' + rel);
-      available = declaredScenarioIds(readFeature(file, root));
+      available = workingScenarioIds(root, rel, working);
     }
     if (ids !== null) checkScenarioIds(available, ids, rel);
     return { path: rel, blob, ids: ids ?? [...available], role };

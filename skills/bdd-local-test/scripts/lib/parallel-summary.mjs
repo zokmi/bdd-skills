@@ -20,6 +20,19 @@ const key = (...parts) => JSON.stringify(parts.map(s => s.toLowerCase()));
 const roundKey = (feature, id, role) => JSON.stringify([pathKey(feature), id.toLowerCase(), role]);
 const label = s => s.feature + '|' + s.id;
 
+function checkoutIdentity(target) {
+  const output = git(target, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], [0, 129]);
+  const paths = output?.split(process.platform === 'win32' ? /\r?\n/ : '\n');
+  if (paths?.length === 3 && paths[2] === '' && path.isAbsolute(paths[0]) && path.isAbsolute(paths[1])) {
+    return { repo: path.resolve(paths[0]), repoId: approvedRepoKey(paths[1]) };
+  }
+  // rev-parse writes unquoted lines. Query separately for paths containing
+  // newlines or Git versions that do not recognize --path-format.
+  const repo = repoRoot(target);
+  const metadata = git(repo, ['rev-parse', '--git-common-dir']).trimEnd();
+  return { repo, repoId: approvedRepoKey(path.resolve(repo, metadata)) };
+}
+
 function summaryGitQueries() {
   const observations = new Map();
   function lookup(parts, read) {
@@ -297,9 +310,7 @@ function collectSummary(assignments, destination, planFile, queries) {
     if (!repos.has(target)) {
       let identity = { repo: null, repoId: target };
       try {
-        const repo = repoRoot(target);
-        const metadata = git(repo, ['rev-parse', '--git-common-dir']).trimEnd();
-        identity = { repo, repoId: approvedRepoKey(path.resolve(repo, metadata)) };
+        identity = checkoutIdentity(target);
       } catch { /* Keep known blockers even when the checkout is missing. */ }
       repos.set(target, identity);
     }
