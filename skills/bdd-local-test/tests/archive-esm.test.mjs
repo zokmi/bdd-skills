@@ -129,7 +129,7 @@ test('dispatch text evidence binds custom report anchors and all referenced file
   const persist = () => writeFile(path.join(coord, 'result.json'), JSON.stringify(result));
   await persist();
   await writeFile(path.join(f.dir, 'REPORT.md'), '### 金額\n送出訂單後顯示 42。\n');
-  assert.equal((await f.command()).masked, true);
+  assert.equal((await f.command('--destination', path.join(f.root, 'scenario.zip'))).masked, true);
   result.scenarios[0].evidence.push('evidence/lost.log');
   await persist();
   await assert.rejects(f.command(), /lost\.log/);
@@ -151,7 +151,7 @@ test('dispatch text evidence binds custom report anchors and all referenced file
     evidence: ['REPORT.md#jobs'], reason: null }];
   await writeFile(path.join(f.dir, 'REPORT.md'), '## Jobs\nGenerated the matrix and found windows-build.\n');
   await persist();
-  assert.equal((await f.command()).masked, true);
+  assert.equal((await f.command('--destination', path.join(f.root, 'engineering-attempt.zip'))).masked, true);
   await rename(path.join(coord, 'result.json'), path.join(f.dir, 'result.json'));
   const assignment = JSON.parse(docs.split('```json')[1].split('```')[0]);
   assignment.scenarios = [];
@@ -159,7 +159,7 @@ test('dispatch text evidence binds custom report anchors and all referenced file
     expected: 'Generated matrix', evidence: 'REPORT.md#jobs' }];
   const assigned = path.join(f.dir, 'assignment.json');
   await writeFile(assigned, JSON.stringify(assignment));
-  assert.equal((await f.command()).masked, true);
+  assert.equal((await f.command('--destination', path.join(f.root, 'engineering-root.zip'))).masked, true);
   assignment.engineeringChecks[0].evidence = 'evidence/build.log';
   await writeFile(assigned, JSON.stringify(assignment));
   await assert.rejects(f.command(), /build\.log/);
