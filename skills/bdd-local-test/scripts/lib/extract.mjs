@@ -22,6 +22,10 @@ function zipPath(root, name) {
 function inspect(file, directory) {
   const parent = path.dirname(file);
   if (parent !== file) inspect(parent, true);
+  return inspectEntry(file, directory);
+}
+
+function inspectEntry(file, directory) {
   const stat = fs.lstatSync(file, { throwIfNoEntry: false });
   if (stat?.isSymbolicLink()) throw new Error('解壓路徑含重新解析點：' + file);
   if (stat && !(directory ? stat.isDirectory() : stat.isFile())) {
@@ -152,7 +156,10 @@ function ensureDirectory(dir, created) {
     created.push(dir);
   } catch (error) {
     if (error.code !== 'EEXIST' || !inspect(dir, true)) throw error;
+    return;
   }
+  // Creating a directory can race with replacement of the directory or an ancestor.
+  inspect(dir, true);
 }
 
 function publishFile(item) {
@@ -234,7 +241,7 @@ export async function expandArchive({ archive, to, evidenceZip = false, maxEntri
         await prepareMissing(item);
       }
       ensureDirectory(path.dirname(item.file), createdDirs);
-      inspect(item.file, false);
+      inspectEntry(item.file, false);
       let copied;
       try { copied = publishFile(item); }
       catch (error) {

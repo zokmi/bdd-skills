@@ -120,10 +120,12 @@ test('recorded worktrees retain rollback, untracked and scenario deltas across s
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).paths, []); // Unchanged untracked and staged-only versions are excluded.
-  const refQueries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
-    .filter(event => event.event === 'start' && (event.argv.includes(snapshot.ref) || event.argv.includes(headRef)));
+  const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start').map(event => event.argv);
+  const refQueries = queries.filter(argv => argv.includes(snapshot.ref) || argv.includes(headRef));
   assert.equal(refQueries.length, 1);
-  assert.ok(refQueries[0].argv.includes(snapshot.ref) && refQueries[0].argv.includes(headRef));
+  assert.ok(refQueries[0].includes(snapshot.ref) && refQueries[0].includes(headRef));
+  assert.ok(!queries.some(argv => argv.includes('diff') && argv.includes(snapshot.tree)), 'identical snapshots need no Git diff');
 
   write('src/prior.js', 'at HEAD\n');
   write('src/current.js', 'second batch\n');
@@ -218,28 +220,61 @@ test('records concurrent rounds without losing BOM-prefixed legacy data or top-l
 });
 
 test('brief checks retain the recorded outcome and return full diagnostics when verification must rerun', t => {
-  const { repo, git, base, run } = fixture(t);
+  const { repo, git, base, output, run } = fixture(t);
   const check = (code, ...flags) => run(code, '--check', ...flags);
-  assert.deepEqual(check(2, '--brief'), check(2));
+  const absent = check(2);
+  assert.deepEqual(check(2, '--brief'), absent);
+  assert.deepEqual(check(2, '--brief-rerun'), absent);
+  assert.equal(run(2, '--record', '--brief-rerun'), '');
   const source = path.join(repo, 'amount');
   fs.writeFileSync(source, 'first');
   git('add', 'amount');
   git('commit', '-qm', 'first change');
   fs.writeFileSync(source, 'second');
   git('commit', '-qam', 'second change');
-  run(0, '--record', '--base', base, '--passed', '2', '--failed', '1');
+  const round = run(0, '--record', '--base', base, '--passed', '2', '--failed', '1');
   for (const verdict of ['current', 'still-valid']) {
     if (verdict === 'still-valid') git('commit', '--allow-empty', '-qm', 'later commit');
     const full = check(0);
     assert.equal(full.verdict, verdict);
     assert.deepEqual(full.commits.map(commit => commit.status), ['same', 'same']);
     assert.equal(full.recorded.result.failed, 1);
-    assert.deepEqual(check(0, '--brief'), { verdict, recorded: full.recorded, current: full.current, sameCommitCount: 2 });
+    const brief = { verdict, recorded: full.recorded, current: full.current, sameCommitCount: 2 };
+    assert.deepEqual(check(0, '--brief'), brief);
+    assert.deepEqual(check(0, '--brief-rerun'), brief);
   }
   fs.appendFileSync(source, 'edited');
   const dirty = check(1);
   assert.deepEqual(dirty.dirtyPaths, ['amount']);
   assert.deepEqual(check(1, '--brief'), dirty);
+  const { commits, ...diagnostics } = dirty;
+  const verificationPath = path.join(output, 'verification.json');
+  assert.deepEqual(check(1, '--brief-rerun'), {
+    ...diagnostics, verificationPath, roundIndex: 0, sameCommitCount: commits.length, commitExceptions: [],
+  });
+
+  // A historical source can share a patch or title with a local change, or be entirely absent.
+  const entry = round.commits[0];
+  const exceptions = [
+    { ...entry, sha: '1'.repeat(base.length) },
+    { sha: '2'.repeat(base.length), subject: entry.subject },
+    { sha: '3'.repeat(base.length), subject: 'missing commit' },
+  ];
+  const recorded = [entry, exceptions[0], entry, ...exceptions.slice(1)];
+  fs.writeFileSync(verificationPath, JSON.stringify({ rounds: [round, { ...round, commits: recorded }] }));
+  const { commits: all, ...details } = check(1);
+  assert.deepEqual(all.map(c => c.status), ['same', 'patch', 'same', 'subject', 'missing']);
+  const compact = check(1, '--brief', '--brief-rerun');
+  assert.deepEqual(compact, {
+    ...details, verificationPath, roundIndex: 1, sameCommitCount: 2,
+    commitExceptions: [1, 3, 4].map(index => ({ index, ...all[index] })),
+  });
+  const saved = JSON.parse(fs.readFileSync(compact.verificationPath)).rounds[compact.roundIndex];
+  const restored = saved.commits.map(({ sha, subject }) => ({ source: sha, target: sha, subject, status: 'same' }));
+  for (const { index, ...mapping } of compact.commitExceptions) restored[index] = mapping;
+  assert.deepEqual(restored, all);
+  fs.writeFileSync(verificationPath, JSON.stringify({ rounds: [{ ...round, commits: exceptions }] }));
+  assert.deepEqual(check(1, '--brief-rerun'), check(1));
 });
 
 test('records scoped scenario IDs and tracks dirty, new and changed features from any repository directory', t => {

@@ -115,6 +115,63 @@ test('an alias that disappears during publication is restored from the verified 
   assert.deepEqual(fs.readFileSync(alias), data);
 });
 
+test('checks the shared parent once between publishing a source and its alias', async t => {
+  const opts = fixture(t);
+  await writeZip(opts.archive, archiveEntries());
+  const folder = path.join(opts.to, 'topic');
+  const source = path.join(folder, 'source.txt');
+  const alias = path.join(folder, 'copy.txt');
+  const lstat = fs.lstatSync, link = fs.linkSync;
+  let parentChecks = 0, aliasChecks;
+  t.mock.method(fs, 'lstatSync', (file, ...args) => {
+    if (file === folder) parentChecks++;
+    return lstat(file, ...args);
+  });
+  t.mock.method(fs, 'linkSync', (from, to) => {
+    if (to === source) parentChecks = 0;
+    if (to === alias) aliasChecks = parentChecks;
+    link(from, to);
+  });
+  await expandArchive(opts);
+  assert.equal(aliasChecks, 1);
+});
+
+test('rolls back when a parent is replaced by a directory link during publication', async t => {
+  for (const existing of [true, false]) {
+    await t.test(existing ? 'existing parent' : 'newly created parent', async t => {
+      const opts = fixture(t);
+      const first = path.join(opts.to, 'first.txt'), parent = path.join(opts.to, 'group');
+      const outside = path.join(path.dirname(opts.to), 'external');
+      fs.mkdirSync(opts.to);
+      fs.mkdirSync(outside);
+      if (existing) fs.mkdirSync(parent);
+      await writeZip(opts.archive, [{ name: 'first.txt', data }, { name: 'group/next.txt', data }]);
+      function replaceParent() {
+        fs.rmdirSync(parent);
+        fs.symlinkSync(outside, parent, process.platform === 'win32' ? 'junction' : 'dir');
+      }
+      if (existing) {
+        const link = fs.linkSync;
+        t.mock.method(fs, 'linkSync', (from, to) => {
+          link(from, to);
+          if (to === first) replaceParent();
+        });
+      } else {
+        const mkdir = fs.mkdirSync;
+        t.mock.method(fs, 'mkdirSync', (dir, ...args) => {
+          const result = mkdir(dir, ...args);
+          if (dir === parent) replaceParent();
+          return result;
+        });
+      }
+      await assert.rejects(expandArchive(opts), /解壓路徑含重新解析點/);
+      assert.deepEqual(fs.readdirSync(opts.to), ['group']);
+      assert.deepEqual(fs.readdirSync(outside), []);
+      fs.unlinkSync(parent);
+    });
+  }
+});
+
 test('a destination edited after verification keeps the edit and rolls back earlier publications', async t => {
   const opts = fixture(t);
   const fresh = path.join(opts.to, 'fresh'), existing = path.join(opts.to, 'existing');

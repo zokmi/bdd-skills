@@ -41,7 +41,7 @@ git branch -r | head -20
 接續 BDD 驗收或查核舊報告時，若已有 `verification.json` 或剛做過 cherry-pick／merge／跨 repo 同步，先在目標版本比對。僅要求合併 develop 時，直接依[合併檢核](closeout.md)處理。
 
 ```bash
-node "<skill 目錄>/scripts/bdd.mjs" verification --check --brief --dir "<輸出資料夾>"
+node "<skill 目錄>/scripts/bdd.mjs" verification --check --brief-rerun --dir "<輸出資料夾>"
 ```
 
 腳本在**目前所在的 repo** 執行 git 比對，`--dir` 可以指向別的 repo 裡的報告資料夾
@@ -52,7 +52,7 @@ node "<skill 目錄>/scripts/bdd.mjs" verification --check --brief --dir "<輸�
   `subject`（只找到同標題、內容有差異，通常是解衝突或手改）、`missing`（沒同步過來）。
 - 受測檔案在目前 HEAD 的內容是否與受測時相同。
 
-`--brief` 在 `current`／`still-valid` 回傳兩端版本、原輪結果與同 SHA 的 `sameCommitCount`。需要逐筆對照時省略 `--brief`。`rerun` 保留全部原因、commit 對照與異動路徑。
+`--brief-rerun` 與 `--brief` 可併用，在 `current`／`still-valid` 都回傳兩端版本、原輪結果與 `sameCommitCount`。遇到 `rerun` 時，`--brief-rerun` 保留全部原因與異動路徑，有同 SHA 的項目才將 `commits` 縮成 `sameCommitCount` 和 `commitExceptions`。還原時按 `verificationPath` 的 `rounds[roundIndex].commits` 順序讀取，以每筆例外的零起算 `index` 取回原對照。其餘項目沿用原 `subject`，`source` 與 `target` 均為原 `sha`，狀態為 `same`。只用 `--brief` 時，`rerun` 仍列出完整對照。
 
 依 `verdict` 處理，**不必再問使用者要不要重測**：
 

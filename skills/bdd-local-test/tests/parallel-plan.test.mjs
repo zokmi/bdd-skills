@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { compareApprovedPlan, loadApprovedPlan, parallelPlan } from '../scripts/lib/parallel-plan.mjs';
 
@@ -103,24 +103,48 @@ test('engineering-only feedback can be reviewed and assigned with its changed pa
   assert.notEqual(quality().status, 0);
 });
 
+const featurePath = '.bdd/modules/shop/order/list.feature';
+let seed;
+after(() => { if (seed) removeDirectory(seed.repo); });
+
+function removeDirectory(dir) {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+}
+
+function gitIn(repo, ...args) {
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+}
+
+function repositorySeed() {
+  if (seed) return seed;
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-approved-seed-'));
+  try {
+    gitIn(repo, 'init', '--quiet');
+    const featureFile = path.join(repo, featurePath);
+    fs.mkdirSync(path.dirname(featureFile), { recursive: true });
+    fs.writeFileSync(featureFile, '@OR-01\nScenario: First\n@OR-02\nScenario: Second\n');
+    gitIn(repo, 'add', '-f', '--', featurePath);
+    gitIn(repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
+      'commit', '--quiet', '--allow-empty', '-m', 'fixture');
+    seed = { repo, head: gitIn(repo, 'rev-parse', 'HEAD') };
+    return seed;
+  } catch (error) {
+    removeDirectory(repo);
+    throw error;
+  }
+}
+
 function fixture(t) {
+  const { repo: source, head } = repositorySeed();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-approved-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeDirectory(dir));
   const file = path.join(dir, 'approved.json');
   const repo = path.join(dir, 'checkout');
-  fs.mkdirSync(repo);
-  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
-  git('init', '--quiet');
-  const feature = '.bdd/modules/shop/order/list.feature';
-  fs.mkdirSync(path.dirname(path.join(repo, feature)), { recursive: true });
-  fs.writeFileSync(path.join(repo, feature), '@OR-01\nScenario: First\n@OR-02\nScenario: Second\n');
-  git('add', '-f', '--', feature);
-  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
-    'commit', '--quiet', '--allow-empty', '-m', 'fixture');
-  const head = git('rev-parse', 'HEAD');
+  fs.cpSync(source, repo, { recursive: true, verbatimSymlinks: true });
+  const git = (...args) => gitIn(repo, ...args);
   const groups = ['A', 'B'].map((groupId, i) => ({
     groupId, repo, revision: { head, dirtySha256: null }, scenarios: [{
-      feature, id: 'OR-0' + (i + 1), kind: 'changed',
+      feature: featurePath, id: 'OR-0' + (i + 1), kind: 'changed',
       assertions: [{ requirement: '列表', action: '按下儲存', expected: 'A|B\n<C>', method: 'UI', evidence: '狀態截圖' }],
     }],
   }));

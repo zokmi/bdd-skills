@@ -30,5 +30,5 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 ## 報告、接續與交付
 
 - 用檔案編輯工具撰寫 Feature 與 `REPORT.md`。每輪實測用 `verification --record --brief` 取得結果計數與輪次位置，完整的 `verification.json`、報告與必要證據存於 `.bdd/<單號>-<主題>/`。Git 只收模組情境、`MODULE.md` 與共用設定。既有追蹤輸出依授權遷移。[報告與驗證紀錄](references/reporting.md) · [版控分工](references/version-control.md)
-- 引用舊結果或在 cherry-pick／merge／跨 repo 同步後接續驗收，以 `node bdd.mjs verification --check --brief` 核對 repo、commit 及工作區狀態，依判定複測受影響項目。[範圍與版本比對](references/workflow-and-scenarios.md)
+- 引用舊結果或在 cherry-pick／merge／跨 repo 同步後接續驗收，以 `node bdd.mjs verification --check --brief-rerun` 核對 repo、commit 及工作區狀態，依判定複測受影響項目。[範圍與版本比對](references/workflow-and-scenarios.md)
 - 本批或指定整單全數通過且證據齊備時，自動派獨立子代理審核結果報告。已授權回寫 issue 時，再完成一致性審核。兩項都 PASS 後由專責子代理逐條回寫並回讀，附本批來源、版本、結果與證據。每次回寫或更正後，由未參與寫入者唯讀審核線上內容，PASS 後才依收尾條件處理服務與分支。只整理既有報告時，保留原輪結果並註明本次未新增實測。[階段與最終交付](references/closeout.md) · [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md)

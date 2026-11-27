@@ -153,6 +153,7 @@ export function previousWorktreeChanges(repo, head, file, issue) {
     throw new Error('所在 Git 儲存庫找不到上一輪登記的工作樹快照');
   }
   const tree = worktreeTree(repo, head, snapshot.outputDir);
-  const paths = splitPaths(git(repo, ['diff', '--no-renames', '--name-only', '-z', snapshot.tree, tree, '--']));
+  const paths = tree === snapshot.tree ? [] :
+    splitPaths(git(repo, ['diff', '--no-renames', '--name-only', '-z', snapshot.tree, tree, '--']));
   return { base: snapshot.tree, baseHead: snapshot.head, paths: paths.sort((a, b) => a.localeCompare(b)) };
 }

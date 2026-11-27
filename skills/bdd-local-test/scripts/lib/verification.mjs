@@ -289,16 +289,35 @@ async function check(last, depth) {
   };
 }
 
+function briefCheck(result, compactRerun, file, roundIndex) {
+  const { commits, ...diagnostics } = result;
+  if (result.verdict !== 'rerun') {
+    const { verdict, recorded, current } = result;
+    return { verdict, recorded, current, sameCommitCount: commits.length };
+  }
+  if (!compactRerun || !commits.some(entry => entry.status === 'same')) return result;
+  const commitExceptions = [];
+  for (const [index, entry] of commits.entries()) {
+    if (entry.status !== 'same') commitExceptions.push({ index, ...entry });
+  }
+  return {
+    ...diagnostics, verificationPath: path.resolve(file), roundIndex,
+    sameCommitCount: commits.length - commitExceptions.length, commitExceptions,
+  };
+}
+
 export async function verificationCommand(args) {
   const str = { type: 'string' };
   const list = { type: 'string', multiple: true };
   const flag = { type: 'boolean' };
   const { values: v } = parseArgs({ args, options: {
-    dir: str, record: flag, check: flag, brief: flag, 'capture-revision': flag, issue: str, base: str, commits: list, head: str, passed: str, failed: str,
+    dir: str, record: flag, check: flag, brief: flag, 'brief-rerun': flag, 'capture-revision': flag,
+    issue: str, base: str, commits: list, head: str, passed: str, failed: str,
     blocked: str, 'not-run': str, note: str, 'changed-scenarios': list, 'regression-scenarios': list,
     'engineering-check': list, 'engineering-assignment': str, 'search-depth': str,
   } });
   if (!v.dir || Boolean(v.record) === Boolean(v.check)) throw new Error('請指定 --dir，並擇一指定 --record 或 --check');
+  if (v['brief-rerun'] && !v.check) throw new Error('--brief-rerun 適用於 --check');
   if (v.issue !== undefined && (!v.record || !/^\d+$/.test(v.issue))) throw new Error('--issue 須與 --record 一起指定數字單號');
   if (v['capture-revision'] && !v.record) throw new Error('--capture-revision 適用於 --record');
   const checks = v['engineering-check'];
@@ -320,8 +339,7 @@ export async function verificationCommand(args) {
   }
   const depth = intOption(v['search-depth'] ?? '3000', 'search-depth');
   const result = await check(doc.rounds.at(-1), depth);
-  const { verdict, recorded, current, commits } = result;
-  const brief = v.brief && (verdict === 'current' || verdict === 'still-valid');
-  console.log(JSON.stringify(brief ? { verdict, recorded, current, sameCommitCount: commits.length } : result));
-  return verdict === 'rerun' ? 1 : 0;
+  const output = v.brief || v['brief-rerun'] ? briefCheck(result, v['brief-rerun'], file, doc.rounds.length - 1) : result;
+  console.log(JSON.stringify(output));
+  return result.verdict === 'rerun' ? 1 : 0;
 }
