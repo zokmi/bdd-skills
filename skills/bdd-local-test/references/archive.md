@@ -183,9 +183,11 @@ node "<skill 目錄>/scripts/bdd.mjs" archive-index --list --repo . --entry "<ar
 
 先重新核對上述〈執行前：核對 issue 交付〉，即使既有 ZIP 已是 `uploaded-verified` 也不能略過。預設合併收尾須同時滿足 issue 交付核對與下列封存涵蓋條件，才能套用清理計畫；不能僅憑腳本回傳 `prune` 就刪除。
 
+單一主題結案時，`--topic` 接受一個 `.bdd/` 直屬主題目錄的完整名稱，逐字比對。先預覽並核對計畫，再用相同名稱套用。名稱無效或找不到主題時會報錯停止。省略 `--topic` 會處理指定工作樹的全部主題。
+
 ```bash
-node "<skill 目錄>/scripts/bdd.mjs" prune --repo <worktree 或主 checkout>          # 只列計畫
-node "<skill 目錄>/scripts/bdd.mjs" prune --repo <worktree 或主 checkout> --apply   # 實際刪除
+node "<skill 目錄>/scripts/bdd.mjs" prune --repo . --topic "5410-orders"
+node "<skill 目錄>/scripts/bdd.mjs" prune --repo . --topic "5410-orders" --apply
 ```
 
 清理工具核對同一 repo、同主題且已登記為 `uploaded-verified` 的 ZIP，讀取封存中的實際內容並驗證 SHA-256。只有 `evidence/` 每個檔案與 `evidence.zip` 每個項目的內容都有對應副本，才可清理。對匯入後轉成 WebP 的原圖，還須有本工具逐像素驗證後寫入索引的來源雜湊。舊匯入缺少該紀錄時，保留無法以相同內容核對的原圖。

@@ -14,8 +14,10 @@ const stat = file => fs.lstatSync(file, { throwIfNoEntry: false, bigint: true })
 const sameIdentity = (a, b) => b && a.dev === b.dev && a.ino === b.ino && a.mode === b.mode;
 const sameVersion = (a, b) => sameIdentity(a, b) && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 
-function checkPhysical(file) {
-  if (!samePath(fs.realpathSync.native(file), file)) throw new Error('含符號連結或 junction，不自動清理：' + file);
+function checkPhysical(file, entry) {
+  if (entry?.isSymbolicLink() || !samePath(fs.realpathSync.native(file), file)) {
+    throw new Error('含符號連結或 junction，不自動清理：' + file);
+  }
 }
 
 function evidenceRoots(topic, entries = fs.readdirSync(topic)) {
@@ -166,7 +168,7 @@ function checkSnapshot(before, current, roots, moved = false) {
 }
 
 function applyPrune(repo, topic, roots, before) {
-  checkPhysical(topic);
+  checkPhysical(topic, stat(topic));
   checkTracked(repo, topic, roots);
   const latest = evidenceRoots(topic);
   if (latest.length !== roots.length || latest.some(name => !roots.includes(name))) throw new Error('證據入口已變動');
@@ -203,7 +205,7 @@ function applyPrune(repo, topic, roots, before) {
   } catch (error) {
     try {
       checkPhysical(stage);
-      checkPhysical(topic);
+      checkPhysical(topic, stat(topic));
       for (const name of moved.reverse()) {
         const saved = path.join(stage, name);
         if (!stat(saved)) continue;
@@ -237,7 +239,7 @@ function sameProof(previous, current) {
 
 async function assess(item, roots, context, preflight) {
   const { repo, worktrees, states, accepted } = context;
-  checkPhysical(item.path);
+  checkPhysical(item.path, stat(item.path));
   const before = snapshot(item.path, roots);
   item.bytes = before.bytes;
   checkTracked(repo, item.path, roots, preflight);
@@ -314,16 +316,24 @@ async function applyBatch(pending, context) {
 export async function pruneCommand(args) {
   const { values } = parseArgs({ args, options: {
     repo: { type: 'string' }, 'archive-root': { type: 'string' }, apply: { type: 'boolean' }, 'allow-local-only': { type: 'boolean' },
+    topic: { type: 'string', multiple: true },
   } });
   if (!values.repo) throw new Error('請以 --repo 指定工作區');
+  if (values.topic?.length > 1) throw new Error('--topic 只能指定一個主題目錄');
+  const topicName = values.topic?.[0];
   const { repo, worktrees } = repository(path.resolve(values.repo));
   const bdd = path.join(repo, '.bdd');
   const applied = Boolean(values.apply);
   const summary = { repo, applied, items: [] };
   const tree = stat(bdd);
+  if (!tree && topicName !== undefined) throw new Error('找不到 .bdd 目錄，無法選取 --topic：' + topicName);
   if (tree) {
     if (!tree.isDirectory()) throw new Error('.bdd 不是一般目錄：' + bdd);
     checkPhysical(bdd);
+    const directories = fs.readdirSync(bdd, { withFileTypes: true }).filter(dir =>
+      (dir.isDirectory() || dir.isSymbolicLink()) && dir.name.toLowerCase() !== 'modules' &&
+      (topicName === undefined || dir.name === topicName));
+    if (topicName !== undefined && !directories.length) throw new Error('找不到 --topic 指定的 .bdd 主題目錄：' + topicName);
     const { root } = resolveArchiveRoot({ archiveRoot: values['archive-root'], outputDir: path.join(bdd, '_'), worktrees });
     const index = path.join(root, 'index.jsonl');
     await outsideWorktrees(root, worktrees);
@@ -333,13 +343,11 @@ export async function pruneCommand(args) {
     const topics = [], pending = [];
     summary.archiveRoot = root;
     summary.prunableBytes = 0;
-    for (const dir of fs.readdirSync(bdd, { withFileTypes: true })) {
-      if (!dir.isDirectory() && !dir.isSymbolicLink()) continue;
-      if (dir.name.toLowerCase() === 'modules') continue;
+    for (const dir of directories) {
       const topic = path.join(bdd, dir.name);
       const item = { topic: dir.name, path: topic, bytes: 0, action: 'keep', reason: '', coveredBy: [] };
       try {
-        checkPhysical(topic);
+        checkPhysical(topic, dir);
         const roots = evidenceRoots(topic);
         if (!roots.length) continue;
         topics.push({ item, roots });

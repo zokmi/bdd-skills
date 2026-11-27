@@ -38,6 +38,16 @@ jobs:
         run: npm run check:config-validator
       - name: Check bundled ZIP runtime
         run: npm run check:zip-runtime
+      - name: Set up Python for WebP tests
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.13'
+      - name: Install and verify the pinned WebP encoder
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --only-binary=:all: --require-hashes -r .github/requirements-webp.txt
+          node -e "const {execFileSync} = require('node:child_process'); if (!JSON.parse(execFileSync('python', ['skills/bdd-local-test/scripts/lib/bdd_webp.py', 'check'])).ok) throw Error('Pillow WebP encoder is unavailable')"
       - name: Verify internal Node.js CLI and loopback routing
         run: npm test
       - name: Set up the minimum supported routing runtime
@@ -59,25 +69,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Python for WebP tests
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: '3.13'
-
       - name: Check plugin versions
         run: node tools/check-release.mjs
 
       - name: Check tag and main ancestry
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: node tools/check-release.mjs --tag "$GITHUB_REF_NAME"
-
-      - name: Install and verify the pinned WebP encoder
-        run: |
-          python -m pip install --only-binary=:all: --require-hashes -r .github/requirements-webp.txt
-          node -e "const {execFileSync} = require('node:child_process'); if (!JSON.parse(execFileSync('python', ['skills/bdd-local-test/scripts/lib/bdd_webp.py', 'check'])).ok) throw Error('Pillow WebP encoder is unavailable')"
-
-      - name: Verify archive and image operations with the pinned encoder
-        run: node --test skills/bdd-local-test/tests/archive-images.test.mjs skills/bdd-local-test/tests/archive-esm.test.mjs skills/bdd-local-test/tests/recompress.test.mjs
 
       - name: Verify live worktree routing in six named Playwright CLI sessions
         run: |

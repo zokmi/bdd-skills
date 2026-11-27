@@ -83,6 +83,32 @@ test('archive batches conversions, reuses validated images by content and format
   }
 });
 
+test('missing Python preserves the original image in auto mode and rejects required conversion', async t => {
+  const dir = await temp(t);
+  const source = path.join(dir, 'capture.png');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAI0lEQVR4nGOs1nVmIAUwkaSaYVQDcYCJSHVwMKqBGEByKAEAAk8BC72JhXYAAAAASUVORK5CYII=', 'base64');
+  await writeFile(source, png);
+  const entries = [await fileEntry('evidence/capture.png', source)];
+  const previous = process.env.BDD_WEBP_ENCODER;
+  process.env.BDD_WEBP_ENCODER = 'auto';
+  const probe = t.mock.method(childProcess, 'spawnSync', () => ({ status: null, error: { code: 'ENOENT' } }));
+  syncBuiltinESMExports();
+  try {
+    const ledger = parseMaskLedger('{}'), warnings = [];
+    const { webp } = await optimizeImages(entries, ledger, 'auto', dir, warnings);
+    assert.equal(webp.encoder, null);
+    assert.match(warnings.join('\n'), /webpUnavailable/);
+    assert.deepEqual(entries.map(entry => entry.name), ['evidence/capture.png']);
+    assert.deepEqual(await readFile(entries[0].path), png);
+    await assert.rejects(optimizeImages(entries, ledger, 'required', dir, []), /Pillow/);
+  } finally {
+    probe.mock.restore();
+    syncBuiltinESMExports();
+    if (previous === undefined) delete process.env.BDD_WEBP_ENCODER;
+    else process.env.BDD_WEBP_ENCODER = previous;
+  }
+});
+
 test('Pillow keeps transparent RGB exact and rejects unsupported depths, oversized and multi-frame inputs', async t => {
   const python = [['python'], ['python3'], ['py', '-3']].find(([cmd, ...args]) => {
     const probe = childProcess.spawnSync(cmd, [...args, helper, 'check'], { encoding: 'utf8', windowsHide: true });

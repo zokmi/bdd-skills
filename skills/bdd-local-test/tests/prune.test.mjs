@@ -135,6 +135,54 @@ async function batchFixture(t, count) {
   return { ...f, ordered };
 }
 
+test('an exact prune topic previews the same decision and applies only to the selected evidence', async t => {
+  const f = await batchFixture(t, 3);
+  const anotherFile = path.join(f.repo, '.bdd', 'batch-1', 'evidence', 'a.txt');
+  const changedFile = path.join(f.repo, '.bdd', 'batch-2', 'evidence', 'a.txt');
+  fs.writeFileSync(changedFile, 'updated after archiving');
+  const full = await f.command();
+  assert.equal(full.items.find(item => item.topic === 'batch-1').action, 'prune');
+  const reads = t.mock.method(fs, 'createReadStream');
+  let scoped;
+  t.mock.method(console, 'log', text => { scoped = JSON.parse(text); });
+  for (const [name, action] of [[topic, 'prune'], ['batch-2', 'keep']]) {
+    const item = full.items.find(row => row.topic === name);
+    assert.equal(item.action, action);
+    await pruneCommand([...f.args, '--topic', name]);
+    assert.deepEqual(scoped.items, [item]);
+    assert.equal(scoped.prunableBytes, action === 'prune' ? item.bytes : 0);
+  }
+  const opened = reads.mock.calls.map(call => call.arguments[0]);
+  assert.ok(!opened.includes(anotherFile) && !opened.includes(path.join(f.root, 'batch-1.zip')),
+    'a scoped preview must not hash an unrelated topic or its archive');
+  const applied = await f.command('--topic', topic, '--apply');
+  assert.deepEqual(applied.items.map(item => [item.topic, item.action]), [[topic, 'pruned']]);
+  assert.equal(applied.prunableBytes, payload.length);
+  assert.deepEqual(fs.readdirSync(f.output), ['REPORT.md']);
+  assert.deepEqual(fs.readFileSync(anotherFile), payload);
+  assert.equal(fs.readFileSync(changedFile, 'utf8'), 'updated after archiving');
+  const clean = await f.command('--topic', topic);
+  assert.deepEqual(clean.items, []);
+  assert.equal(clean.prunableBytes, 0);
+});
+
+test('invalid prune topics fail without cleaning an eligible topic', async t => {
+  const f = await fixture(t);
+  await f.publish();
+  const bdd = path.dirname(f.output);
+  fs.mkdirSync(path.join(bdd, 'modules'));
+  fs.writeFileSync(path.join(bdd, 'config.json'), '{}');
+  const rejects = (...flags) => assert.rejects(f.command(...flags, '--apply'), error =>
+    error.code > 0 && error.stdout === '' && Boolean(JSON.parse(error.stderr).error), JSON.stringify(flags));
+  for (const name of ['', '.', '..', 'missing', 'modules', 'config.json', '123-*', '../.bdd/' + topic, f.output]) {
+    await rejects('--topic', name);
+  }
+  await rejects('--topic', 'missing', '--topic', topic);
+  assert.deepEqual(fs.readFileSync(path.join(f.evidence, 'a.txt')), payload);
+  fs.renameSync(bdd, path.join(f.repo, 'saved-bdd'));
+  await rejects('--topic', topic);
+});
+
 test('apply replays one authoritative index per small batch', async t => {
   const f = await batchFixture(t, 8);
   const parse = JSON.parse;
@@ -282,6 +330,28 @@ test('a linked evidence directory preserves the linked target', async t => {
   fs.symlinkSync(detached, f.evidence, process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal((await f.command('--apply')).items[0].action, 'keep');
   assert.deepEqual(fs.readFileSync(path.join(detached, 'a.txt')), payload);
+});
+
+test('selecting a linked prune topic keeps its evidence outside the worktree', async t => {
+  const f = await fixture(t);
+  await f.publish();
+  const detached = path.join(f.base, 'outside-topic');
+  fs.renameSync(f.output, detached);
+  fs.symlinkSync(detached, f.output, process.platform === 'win32' ? 'junction' : 'dir');
+  const full = await f.command();
+  assert.equal(full.items[0].action, 'keep');
+  assert.deepEqual((await f.command('--topic', topic, '--apply')).items, full.items);
+  assert.deepEqual(fs.readFileSync(path.join(detached, 'evidence', 'a.txt')), payload);
+
+  // Even when the real path compares equal, the directory entry still identifies a link.
+  const realpath = fs.realpathSync.native;
+  t.mock.method(fs.realpathSync, 'native', file => file === f.output ? file : realpath(file));
+  const reads = t.mock.method(fs, 'readdirSync');
+  let scoped;
+  t.mock.method(console, 'log', text => { scoped = JSON.parse(text); });
+  await pruneCommand([...f.args, '--topic', topic]);
+  assert.equal(scoped.items[0].action, 'keep');
+  assert.ok(!reads.mock.calls.some(call => call.arguments[0] === f.output));
 });
 
 test('apply rejects archive roots that enter or leave the worktree through a directory link', async t => {
