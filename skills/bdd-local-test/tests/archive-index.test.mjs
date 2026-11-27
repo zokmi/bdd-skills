@@ -81,6 +81,53 @@ test('resolves literal home paths for an archive root and a repository', async t
   assert.equal((await run('--list', '--repo', '~/repo')).archiveRoot, root);
 });
 
+test('brief listings round-trip root-relative and external archive paths to individual full records', async t => {
+  const { root, dir, index, run } = await fixture(t);
+  const relative = path.join('42', '舊 證據.zip');
+  const inside = path.join(root, relative);
+  const outside = path.join(dir, 'store-older', path.basename(inside));
+  await mkdir(path.dirname(inside), { recursive: true });
+  await writeFile(inside, 'current');
+  const created = { event: 'created', issue: '42', topic: 'Orders', at: '1', sha256: 'first', bytes: 3 };
+  const events = [
+    { ...created, archive: inside, legacy: true },
+    { ...created, archive: outside },
+    { event: 'status', archive: inside, status: 'uploaded-verified', attachments: ['att-1'], at: '2' },
+    { event: 'recompressed', archive: inside, previousSha256: 'first', sha256: 'second', bytes: 2 },
+  ];
+  await writeFile(index, events.map(event => JSON.stringify(event)).join('\n'));
+  const list = ['--list', '--archive', inside];
+  const full = await run(...list);
+  assert.deepEqual(full.archives.map(row => row.archive), [inside, outside]);
+  const brief = await run(...list, '--brief', '--issue', '42', '--topic', 'orders');
+  assert.deepEqual(brief, { archiveRoot: root, count: 2, archives: [
+    { archive: relative, issue: '42', topic: 'Orders', status: 'uploaded-verified', exists: true,
+      attachments: ['att-1'], legacy: true, recompressed: true },
+    { archive: outside, issue: '42', topic: 'Orders', status: 'local-only', exists: false, attachments: [] },
+  ] });
+  for (const [i, row] of brief.archives.entries()) {
+    assert.deepEqual(await run('--list', '--archive-root', root, '--entry', row.archive),
+      { archiveRoot: root, count: 1, archives: [full.archives[i]] });
+  }
+  const empty = { archiveRoot: root, count: 0, archives: [] };
+  assert.deepEqual(await run(...list, '--entry', relative, '--brief', '--issue', '24'), empty);
+  assert.deepEqual(await run(...list, '--entry', 'missing.zip'), empty);
+});
+
+test('archive list options reject writes and surface index errors without partial output', async t => {
+  const { index, root, importArgs, run } = await fixture(t);
+  await assert.rejects(run(...importArgs, '--brief'), /--list/);
+  await assert.rejects(run(...importArgs, '--entry', 'older.zip'), /--list/);
+  await assert.rejects(readdir(root), { code: 'ENOENT' });
+  await mkdir(root);
+  const row = JSON.stringify({ event: 'created', archive: path.join(root, 'older.zip') });
+  await writeFile(index, row + '\n{');
+  for (const args of [['--brief'], ['--entry', 'older.zip']]) {
+    await assert.rejects(run('--list', '--archive-root', root, ...args), error =>
+      error.code === 1 && error.stdout === '' && Boolean(JSON.parse(error.stderr).error));
+  }
+});
+
 test('the shared writer lock protects existing JSONL including an unterminated last line', async t => {
   const { root, index } = await fixture(t);
   await mkdir(root);

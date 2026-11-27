@@ -168,8 +168,16 @@ node "<skill 目錄>/scripts/bdd.mjs" recompress --archive <zip>
 
 ```bash
 node "<skill 目錄>/scripts/bdd.mjs" archive-index --mark --archive <zip> --status uploaded-verified --attachment <附件 ID 或網址>
-node "<skill 目錄>/scripts/bdd.mjs" archive-index --list --repo . --issue <單號>
 ```
+
+查多筆封存時可用 `--brief` 取得路徑、單號、主題、狀態、檔案存否、附件及適用的 `legacy`／`recompressed` 標記。要看某筆的 SHA-256、commit 或時間，把該筆的 `archive` 原值交給 `--entry`。封存庫內的路徑相對於 `archiveRoot`，庫外為絕對路徑。
+
+```bash
+node "<skill 目錄>/scripts/bdd.mjs" archive-index --list --repo . --issue <單號> --brief
+node "<skill 目錄>/scripts/bdd.mjs" archive-index --list --repo . --entry "<archive 路徑>"
+```
+
+`--list` 預設列出完整紀錄。`--issue`、`--topic` 和 `--entry` 可合併篩選，無符合紀錄時回傳空清單。`--archive` 用來定位索引。
 
 ## 清理工作區證據
 

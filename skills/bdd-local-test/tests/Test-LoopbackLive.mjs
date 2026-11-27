@@ -29,16 +29,24 @@ try {
   const services = [];
   for (const name of ['project-a', 'project-b']) {
     const main = fixture.init(name);
-    for (const suffix of ['main', 'one', 'two']) {
+    const checkouts = ['main', 'one', 'two'].map(suffix => {
       const id = name + '-' + suffix;
       const checkout = suffix === 'main' ? main : fixture.worktree(main, id);
+      return { id, checkout };
+    });
+    // Drain all three preparations before cleaning the fixture if one fails.
+    const results = await Promise.allSettled(checkouts.map(async ({ id, checkout }) => {
       const prepared = await fixture.bdd(checkout, 'prepare-worktree-cli', '--ports', String(uiPort), '--ports',
         String(apiPort), '--keep-original-ports', '--output-dir', path.join(outputDir, id),
-        ...cli, ...(suffix === 'main' ? ['--isolate'] : []));
+        ...cli, ...(checkout === main ? ['--isolate'] : []));
       const config = JSON.parse(fs.readFileSync(prepared.configPath, 'utf8'));
       config.browser.launchOptions.executablePath = chrome;
       fs.writeFileSync(prepared.configPath, JSON.stringify(config, null, 2));
-      services.push({ id, ip: prepared.preflight.ip, isolationId: prepared.isolationId, prepared });
+      return { id, ip: prepared.preflight.ip, isolationId: prepared.isolationId, prepared };
+    }));
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+      services.push(result.value);
     }
   }
   assert.equal(new Set(services.map(s => s.ip)).size, 6);

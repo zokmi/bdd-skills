@@ -24,14 +24,24 @@ async function exists(file) {
   catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
 }
 
+function briefArchive(root, { archive, issue, topic, status, exists, attachments, legacy, recompressed }) {
+  return {
+    archive: within(root, archive) ? path.relative(root, archive) || '.' : path.resolve(archive),
+    issue, topic, status, exists, attachments,
+    ...(legacy && { legacy }), ...(recompressed && { recompressed }),
+  };
+}
+
 async function listArchives(index, opts) {
+  const root = path.dirname(index);
+  const archive = opts.entry && path.resolve(root, opts.entry);
   const matches = (value, filter) => !filter || String(value ?? '').toLowerCase() === filter.toLowerCase();
-  const archives = (await readArchiveStates(index)).filter(s => matches(s.issue, opts.issue) && matches(s.topic, opts.topic));
+  const archives = (await readArchiveStates(index, { archive })).filter(s => matches(s.issue, opts.issue) && matches(s.topic, opts.topic));
   for (let start = 0; start < archives.length; start += 32) {
     const batch = archives.slice(start, start + 32);
     await Promise.all(batch.map(async state => { state.exists = await exists(state.archive); }));
   }
-  return { count: archives.length, archives };
+  return { count: archives.length, archives: opts.brief ? archives.map(state => briefArchive(root, state)) : archives };
 }
 
 const archiveStat = file => lstat(file, { bigint: true });
@@ -204,10 +214,12 @@ async function importArchive(root, index, opts, repoInfo) {
 export async function archiveIndexCommand(args) {
   const flag = { type: 'boolean' }, string = { type: 'string' };
   const { values: opts } = parseArgs({ args, options: {
-    list: flag, mark: flag, import: flag, move: flag, commit: string, archive: string, status: string,
+    list: flag, brief: flag, entry: string, mark: flag, import: flag, move: flag, commit: string, archive: string, status: string,
     attachment: { ...string, multiple: true }, note: string, 'archive-root': string, repo: string, issue: string, topic: string,
   } });
   if ([opts.list, opts.mark, opts.import].filter(Boolean).length !== 1) throw new Error('請擇一指定 --list、--mark 或 --import');
+  if (!opts.list && (opts.brief || opts.entry !== undefined)) throw new Error('--brief 與 --entry 僅適用於 --list');
+  if (opts.entry === '') throw new Error('--entry 需要指定封存路徑');
   for (const key of ['repo', 'archive', 'archive-root']) {
     if (opts[key]) opts[key] = path.resolve(opts[key].replace(/^~(?=[\\/]|$)/, () => os.homedir()));
   }
