@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { summarize as collectSummary } from '../scripts/lib/parallel-summary.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
-const guide = new URL('../references/parallel-bdd-contract.md', import.meta.url);
+const guide = new URL('../references/parallel-contract-examples.md', import.meta.url);
 
 test('summary adopts a recorded round and rejects the same result when its evidence disappears', t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-flow-'));

@@ -10,7 +10,7 @@ import { summarize } from '../scripts/lib/parallel-summary.mjs';
 import { checkModifiedPaths, checkSeparateDirectories, evidenceChecker } from '../scripts/lib/summary-evidence.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
-const docs = new URL('../references/parallel-bdd-contract.md', import.meta.url);
+const docs = new URL('../references/parallel-contract-examples.md', import.meta.url);
 
 test('parallel summary checks masking hashes and verification rounds, deduplicates checkouts and preserves blockers', t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-'));

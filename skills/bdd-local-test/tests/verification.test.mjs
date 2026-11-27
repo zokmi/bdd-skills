@@ -190,10 +190,6 @@ test('records concurrent rounds without losing BOM-prefixed legacy data or top-l
     assert.equal(round.result.failed, 1);
     assert.ok(round.worktreeSnapshot);
   }
-  const bad = spawnSync(process.execPath, args('--check', '--brief'), { cwd: repo, encoding: 'utf8' });
-  assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /--brief.*--record/);
-  assert.equal(bad.stdout, '');
   delete doc.rounds.at(-1).scenarios;
   fs.writeFileSync(file, JSON.stringify(doc));
   assert.equal(run(0, '--check').verdict, 'current');
@@ -206,6 +202,31 @@ test('records concurrent rounds without losing BOM-prefixed legacy data or top-l
   assert.equal(snapshotRefs(), refsBefore);
   assert.equal(fs.readFileSync(file, 'utf8'), malformed);
   assert.deepEqual(fs.readdirSync(output), ['verification.json']);
+});
+
+test('brief checks retain the recorded outcome and return full diagnostics when verification must rerun', t => {
+  const { repo, git, base, run } = fixture(t);
+  const check = (code, ...flags) => run(code, '--check', ...flags);
+  assert.deepEqual(check(2, '--brief'), check(2));
+  const source = path.join(repo, 'amount');
+  fs.writeFileSync(source, 'first');
+  git('add', 'amount');
+  git('commit', '-qm', 'first change');
+  fs.writeFileSync(source, 'second');
+  git('commit', '-qam', 'second change');
+  run(0, '--record', '--base', base, '--passed', '2', '--failed', '1');
+  for (const verdict of ['current', 'still-valid']) {
+    if (verdict === 'still-valid') git('commit', '--allow-empty', '-qm', 'later commit');
+    const full = check(0);
+    assert.equal(full.verdict, verdict);
+    assert.deepEqual(full.commits.map(commit => commit.status), ['same', 'same']);
+    assert.equal(full.recorded.result.failed, 1);
+    assert.deepEqual(check(0, '--brief'), { verdict, recorded: full.recorded, current: full.current, sameCommitCount: 2 });
+  }
+  fs.appendFileSync(source, 'edited');
+  const dirty = check(1);
+  assert.deepEqual(dirty.dirtyPaths, ['amount']);
+  assert.deepEqual(check(1, '--brief'), dirty);
 });
 
 test('records stable Git patch IDs, detects cherry-picks, rewrites, missing commits and dirty original tests', t => {
@@ -675,7 +696,7 @@ test('verification records named engineering checks without feature files and ke
 
 test('engineering assignment binds selected source paths to this checkout even with an empty commit range', t => {
   const { output, repo, git, run, args, base } = fixture(t);
-  const guide = fs.readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const guide = fs.readFileSync(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
   const assignment = JSON.parse(guide.match(/^```json\r?\n([\s\S]*?)\r?\n```/m)[1]);
   const check = (id, file) => ({ id, path: file, action: 'Inspect source', expected: 'Matches config', evidence: 'Log' });
   git('mv', 'readme', 'config.yml');

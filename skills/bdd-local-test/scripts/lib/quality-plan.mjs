@@ -6,38 +6,106 @@ import { captureApprovedRevision } from './approved-revision.mjs';
 import { validateEngineeringChecks } from './engineering-checks.mjs';
 import { readGitBlobs } from './git-blobs.mjs';
 import { changedPaths, commit, repoRoot } from './git-changes.mjs';
-import { isIgnoredPath } from './gitignore.mjs';
 import { lint } from './module-lint.mjs';
 import { moduleIndex, findImpact, parseFeature, reviewableScenarios } from './module-index.mjs';
 import { git, treeEntriesAt } from './verification-git.mjs';
 import { previousWorktreeChanges } from './worktree-snapshot.mjs';
-import { writeNewFile } from './write-new-file.mjs';
+import { resolveNewOutput, writeNewFile } from './write-new-file.mjs';
 
 const string = { type: 'string' };
 const boolean = { type: 'boolean' };
-const repoOption = { type: 'string', default: '.' };
+const sha256Of = content => createHash('sha256').update(content).digest('hex');
+
+function savePlan({ file, staged }, plan) {
+  const content = JSON.stringify(plan, null, 2) + '\n';
+  writeNewFile(file, content, 0o600, staged);
+  return sha256Of(content);
+}
+
+function compactPlan(plan) {
+  // Tagged rows derive both lists from their tags. A dangling tag row has only IDs.
+  const compactRow = row => {
+    if (!row.tags) return row;
+    const { ids, methods, ...rest } = row;
+    return rest;
+  };
+  const selected = plan.selected.map(({ reason, scenarios, unindexedScenarios, ...feature }) => ({
+    ...feature, scenarios: scenarios.map(compactRow),
+    ...(unindexedScenarios && { unindexedScenarios: unindexedScenarios.map(compactRow) }),
+    ...(reason !== plan.reason && { reason }),
+  }));
+  return { ...plan, selected };
+}
+
+function preview(plan, output) {
+  const sha256 = savePlan(output, plan);
+  const { head, level, bddStatus, reason, staticPassed, selected } = plan;
+  return {
+    previewPath: output.file, sha256, head, level, bddStatus, reason, staticPassed,
+    counts: {
+      paths: plan.paths.length, features: selected.length,
+      indexedScenarios: selected.reduce((sum, feature) => sum + feature.scenarios.length, 0),
+      engineeringChecks: plan.engineeringChecks?.length ?? 0, lint: plan.lint.length,
+      blockers: plan.blockers?.length ?? 0, unmatched: plan.unmatched.length,
+    },
+    features: selected.map(f => f.feature),
+    requiresFullFeature: selected.filter(f => f.requiresFullFeature).map(f => f.feature),
+  };
+}
+
+function readPreview(v) {
+  const allowed = ['read-preview', 'sha256', 'feature'];
+  if (!v['read-preview']?.trim() || !/^[a-f\d]{64}$/i.test(v.sha256 ?? '') ||
+      (v.feature !== undefined && !v.feature.trim()) || Object.keys(v).some(key => !allowed.includes(key))) {
+    throw new Error('請單獨使用 --read-preview <檔案> --sha256 <回執雜湊>，可搭配 --feature <路徑>');
+  }
+  const bytes = fs.readFileSync(v['read-preview']);
+  if (sha256Of(bytes) !== v.sha256.toLowerCase()) throw new Error('預覽檔 SHA-256 與回執不同');
+  const plan = JSON.parse(bytes);
+  if (!Array.isArray(plan?.selected) || !Array.isArray(plan.lint) || !Array.isArray(plan.unmatched) ||
+      !['BLOCKED', 'SKIPPED', 'PENDING'].includes(plan.bddStatus)) throw new Error('無效的選測預覽檔');
+  if (v.feature !== undefined) {
+    const selected = plan.selected.find(f => f.feature === v.feature);
+    if (!selected) throw new Error('計畫未選入指定 Feature：' + v.feature);
+    return selected;
+  }
+  const { bddStatus, staticPassed, lint, unmatched, blockers = [] } = plan;
+  return { bddStatus, staticPassed, lint, unmatched, blockers };
+}
 
 export function qualityPlan(args) {
   const { values: v } = parseArgs({ args, options: {
-    repo: repoOption, base: string, 'previous-verification': string, 'review-risk': string, 'issue-scope': string,
-    output: string, 'run-id': string, 'engineering-checks': string,
+    repo: string, base: string, 'previous-verification': string, 'review-risk': string, 'issue-scope': string,
+    output: string, 'run-id': string, 'engineering-checks': string, compact: boolean, 'preview-output': string,
+    'read-preview': string, sha256: string, feature: string,
     'review-reason': string, 'static-passed': boolean, 'impact-complete': boolean, issue: string, full: boolean,
     'impact-scenario': { type: 'string', multiple: true }, 'batch-path': { type: 'string', multiple: true },
   } });
-  if (v.output === undefined && v['run-id'] === undefined) {
-    console.log(JSON.stringify(buildQualityPlan(v)));
+  if (v['read-preview'] !== undefined || v.sha256 !== undefined || v.feature !== undefined) {
+    console.log(JSON.stringify(readPreview(v)));
+    return 0;
+  }
+  v.repo ??= '.';
+  const batchOutput = v.output !== undefined || v['run-id'] !== undefined;
+  const previewFile = v['preview-output'];
+  if ((v.compact && previewFile !== undefined) || (batchOutput && (v.compact || previewFile !== undefined))) {
+    throw new Error('--compact、--preview-output 與批次 --output/--run-id 須分開使用');
+  }
+  if (!batchOutput) {
+    const plan = buildQualityPlan(v);
+    let result = plan;
+    if (v.compact) result = compactPlan(plan);
+    if (previewFile !== undefined) {
+      result = preview(plan, resolveNewOutput([repoRoot(v.repo)], previewFile, '--preview-output'));
+    }
+    console.log(JSON.stringify(result));
     return 0;
   }
   if (!v.output?.trim() || !v['run-id']?.trim() || !v.issue || (v['issue-scope'] ?? 'batch') !== 'batch') {
     throw new Error('批次選測存檔須搭配 --issue、--run-id 與 --output');
   }
   const repo = fs.realpathSync.native(repoRoot(v.repo));
-  const output = path.join(fs.realpathSync.native(path.dirname(path.resolve(v.output))), path.basename(v.output));
-  const relative = path.relative(repo, output);
-  if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep) &&
-      !isIgnoredPath(repo, relative)) {
-    throw new Error('--output 請使用被 Git 忽略的輸出目錄或工作區外的新檔案');
-  }
+  const output = resolveNewOutput([repo], v.output, '--output');
   const revision = captureApprovedRevision(repo);
   const plan = buildQualityPlan(v);
   if (plan.bddStatus !== 'PENDING') {
@@ -54,9 +122,8 @@ export function qualityPlan(args) {
   if (revision.head !== plan.head || revision.head !== after.head || revision.dirtySha256 !== after.dirtySha256) {
     throw new Error('建立選測檔期間候選版本已變更，請重新選測');
   }
-  const content = JSON.stringify({ ...plan, repo, runId: v['run-id'], revision }, null, 2) + '\n';
-  writeNewFile(output, content, 0o600);
-  console.log(JSON.stringify({ path: output, sha256: createHash('sha256').update(content).digest('hex') }));
+  const sha256 = savePlan(output, { ...plan, repo, runId: v['run-id'], revision });
+  console.log(JSON.stringify({ path: output.file, sha256 }));
   return 0;
 }
 

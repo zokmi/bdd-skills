@@ -6,7 +6,7 @@ import test from 'node:test';
 import Ajv from 'ajv/dist/2020.js';
 import { readContract } from '../scripts/lib/parallel-contracts.mjs';
 
-const guide = readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+const guide = readFileSync(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
 const examples = [...guide.matchAll(/^```json\r?\n([\s\S]*?)\r?\n```/gm)].map(match => JSON.parse(match[1]));
 
 function fixture(t) {

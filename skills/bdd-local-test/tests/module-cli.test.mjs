@@ -482,6 +482,89 @@ test('mapped plans retain English aliases and flag partially indexed feature fil
   assert.deepEqual(lint(moduleIndex(repo)).map(problem => problem.rule), ['missing-method-tag']);
 });
 
+test('compact quality plans round-trip and previews keep the full plan and blocked diagnostics', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-plan-preview-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  const dir = '.bdd/modules/api/orders';
+  const feature = dir + '/orders.feature';
+  fs.mkdirSync(path.join(repo, dir), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'plans'));
+  fs.writeFileSync(path.join(repo, '.gitignore'), '/plans/\n');
+  fs.writeFileSync(path.join(repo, dir, 'MODULE.md'), '---\nprefix: OR\npaths:\n  - orders.js\n---\n');
+  fs.writeFileSync(path.join(repo, feature), [
+    '@OR-01 @#42 @UI @API', 'Scenario: customer sees their order',
+    '@OR-02 @#42', 'Démonstration: missing a verification method', '@OR-03',
+  ].join('\n'));
+  git('init', '-q');
+  git('add', '.');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
+  fs.writeFileSync(path.join(repo, 'unmapped.js'), 'new');
+  const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
+  const run = (...flags) => spawnSync(process.execPath, [cli, 'quality-plan', '--base', 'HEAD', '--full',
+    '--static-passed', '--review-reason', 'full review', ...flags], { cwd: repo, encoding: 'utf8' });
+  const plan = (...flags) => {
+    const result = run(...flags);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const full = plan(), compact = plan('--compact');
+  const reduced = compact.selected[0];
+  assert.equal(Object.hasOwn(reduced, 'reason'), false);
+  for (const row of [...reduced.scenarios, ...reduced.unindexedScenarios]) {
+    if (!row.tags) continue; // The dangling tag still carries its original IDs.
+    assert.equal(Object.hasOwn(row, 'ids') || Object.hasOwn(row, 'methods'), false);
+    row.ids = row.tags.filter(tag => /^@[A-Z]{2,3}-\d{2,}$/.test(tag)).map(tag => tag.slice(1));
+    row.methods = row.tags.filter(tag => ['@UI', '@API', '@DB'].includes(tag)).map(tag => tag.slice(1));
+  }
+  reduced.reason = compact.reason;
+  assert.deepEqual(compact, full);
+  const output = path.join(repo, 'plans', 'preview.json');
+  const receipt = plan('--preview-output', output);
+  const bytes = fs.readFileSync(output);
+  assert.deepEqual(JSON.parse(bytes), full);
+  assert.equal(receipt.sha256, createHash('sha256').update(bytes).digest('hex'));
+  assert.equal(receipt.previewPath, fs.realpathSync.native(output));
+  assert.equal(receipt.bddStatus, 'BLOCKED');
+  assert.equal(receipt.counts.lint, full.lint.length);
+  assert.ok(receipt.counts.lint > 0);
+  assert.equal(receipt.counts.blockers, 0);
+  assert.equal(receipt.counts.unmatched, 1);
+  assert.deepEqual(receipt.features, [feature]);
+  assert.deepEqual(receipt.requiresFullFeature, [feature]);
+  assert.equal(receipt.counts.indexedScenarios, 1);
+  const trace = path.join(repo, 'plans', 'read-preview.trace');
+  const read = (...flags) => spawnSync(process.execPath, [cli, 'quality-plan', '--read-preview', output, ...flags], {
+    cwd: os.tmpdir(), encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  const inspect = (...flags) => {
+    const result = read('--sha256', receipt.sha256, ...flags);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  assert.deepEqual(inspect('--feature', feature), full.selected[0]);
+  assert.deepEqual(inspect(), { bddStatus: 'BLOCKED', staticPassed: true, lint: full.lint, unmatched: full.unmatched, blockers: [] });
+  for (const [flags, message] of [
+    [[], /--sha256/],
+    [['--sha256', '0'.repeat(64)], /SHA-256/],
+    [['--sha256', receipt.sha256, '--repo', '.'], /單獨使用/],
+    [['--sha256', receipt.sha256, '--feature', 'other.feature'], /未選入/],
+  ]) {
+    const rejected = read(...flags);
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, message);
+    assert.equal(rejected.stdout, '');
+  }
+  assert.equal(fs.existsSync(trace), false);
+  assert.match(run('--preview-output', output).stderr, /EEXIST/);
+  assert.deepEqual(fs.readFileSync(output), bytes);
+  assert.match(run('--preview-output', 'visible.json').stderr, /Git 忽略/);
+  assert.equal(fs.existsSync(path.join(repo, 'visible.json')), false);
+  for (const flags of [['--compact', '--preview-output', output], ['--compact', '--run-id', 'r'], ['--preview-output', output, '--output', output]]) {
+    assert.notEqual(run(...flags).status, 0);
+  }
+});
+
 test('reviewed file-to-scenario mappings narrow only fully covered modules', t => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-mapped-plan-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
@@ -514,6 +597,7 @@ test('reviewed file-to-scenario mappings narrow only fully covered modules', t =
   const all = ['OR-01', 'OR-02', 'OR-03', 'OR-04', 'OR-05'];
   const mapped = plan(...mapping);
   assert.equal(mapped.level, 'TARGETED');
+  assert.deepEqual(plan(...mapping, '--compact').selected.map(f => f.reason), mapped.selected.map(f => f.reason));
   assert.deepEqual(ids(mapped, 'api/orders'), ['OR-01', 'OR-02', 'OR-03']);
   assert.deepEqual(ids(mapped, 'api/invoices'), ['IN-01', 'IN-02', 'IN-03', 'IN-04', 'IN-05']);
   const orderScope = mapped.scenarioImpact.find(m => m.module === 'api/orders');

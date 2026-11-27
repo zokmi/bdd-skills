@@ -10,7 +10,7 @@ import { repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, readFeature } from './module-index.mjs';
 import { pathKey } from './summary-evidence.mjs';
 import { git } from './verification-git.mjs';
-import { writeNewFile } from './write-new-file.mjs';
+import { resolveNewOutput, writeNewFile } from './write-new-file.mjs';
 
 export const approvedScenarioKey = s => JSON.stringify([pathKey(s.feature), s.id.toLowerCase()]);
 const label = s => s.feature + '|' + s.id;
@@ -216,6 +216,14 @@ function generateAssignments(plan, files, complete) {
   return records;
 }
 
+function checkPlanBeforePublication(plan) {
+  for (const source of [plan.reference, ...(plan.selections ?? [])]) {
+    if (createHash('sha256').update(fs.readFileSync(source.path)).digest('hex') !== source.sha256) {
+      throw new Error('Approved plan or batch selection changed before publication: ' + source.path);
+    }
+  }
+}
+
 function publishAssignments(plan, manifest, outputDir) {
   const templates = parseJson(fs.readFileSync(manifest), manifest);
   if (!Array.isArray(templates) || !templates.length || templates.some(file => typeof file !== 'string' || !file.trim())) {
@@ -251,11 +259,7 @@ function publishAssignments(plan, manifest, outputDir) {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, JSON.stringify(records[index], null, 2) + '\n', { flag: 'wx' });
     }
-    for (const source of [plan.reference, ...(plan.selections ?? [])]) {
-      if (createHash('sha256').update(fs.readFileSync(source.path)).digest('hex') !== source.sha256) {
-        throw new Error('Approved plan or batch selection changed before publication: ' + source.path);
-      }
-    }
+    checkPlanBeforePublication(plan);
     // Git may omit working-tree edits to assume-unchanged files. Read approved IDs after staging.
     const issues = liveRevisionIssues(plan.groups, records);
     if (issues.length) throw new Error(issues.join('\n'));
@@ -272,7 +276,8 @@ function markdownCell(value) {
   return value.replace(/[&<>|\\`*_\[\]~!]/g, c => '&#' + c.codePointAt(0) + ';').replace(/\r\n?|\n/g, '<br>');
 }
 
-function report(plan) {
+function report(plan, output) {
+  let scenarioCount = 0, assertionCount = 0, engineeringCheckCount = 0;
   const rows = [
     '核准清單 SHA-256 `' + plan.reference.sha256 + '`', '',
     '選測範圍：' + (plan.scope === 'batch' ? '回饋批次' : '非回饋批次'), '',
@@ -286,18 +291,30 @@ function report(plan) {
     '|---|---|---|---|---|---|---|',
   ];
   for (const group of plan.groups) {
+    scenarioCount += group.scenarios.length;
     for (const s of group.scenarios) {
+      assertionCount += s.assertions.length;
       for (const a of s.assertions) {
         const cells = [group.groupId, a.requirement, s.id + ' ' + s.feature, a.action, a.expected, a.method, a.evidence];
         rows.push('| ' + cells.map(markdownCell).join(' | ') + ' |');
       }
     }
     for (const check of group.engineeringChecks ?? []) {
+      engineeringCheckCount++;
       const cells = [group.groupId, check.id, '不適用（工程驗證） ' + check.path, check.action, check.expected, '工程檢查', check.evidence];
       rows.push('| ' + cells.map(markdownCell).join(' | ') + ' |');
     }
   }
-  return rows.join('\n');
+  const markdown = rows.join('\n');
+  if (!output) {
+    console.log(markdown);
+    return;
+  }
+  const { file: reportPath, staged } = resolveNewOutput(plan.groups.map(group => group.repo), output, '--output');
+  checkPlanBeforePublication(plan);
+  writeNewFile(reportPath, markdown + '\n', 0o600, staged);
+  console.log(JSON.stringify({ runId: plan.runId, scope: plan.scope, approvedPlan: plan.reference, reportPath,
+    groupCount: plan.groups.length, scenarioCount, assertionCount, engineeringCheckCount }));
 }
 
 export function parallelPlan(args) {
@@ -314,7 +331,9 @@ export function parallelPlan(args) {
     if (!values.plan || [values.template, values.templates, values.report, values.assignment].filter(Boolean).length !== 1) {
       throw new Error('Expected --plan and one of --template, --templates, --report, or --assignment.');
     }
-    if (values.output !== undefined && (!values.output || !values.template)) throw new Error('--output requires --template and a new file path');
+    if (values.output !== undefined && (!values.output || !(values.template || values.report))) {
+      throw new Error('--output requires --template or --report and a new file path');
+    }
     if ((values['output-dir'] !== undefined || values.templates) && (!values.templates || !values['output-dir'])) {
       throw new Error('--templates requires --output-dir and a new directory path');
     }
@@ -335,7 +354,7 @@ export function parallelPlan(args) {
     } else if (values.report) {
       const issues = liveRevisionIssues(plan.groups);
       if (issues.length) throw new Error(issues.join('\n'));
-      console.log(report(plan));
+      report(plan, values.output);
     } else {
       const records = values.assignment.map(file => readContract(file, 'assignment'));
       const issues = compareApprovedPlan(plan, records).concat(liveRevisionIssues(plan.groups, records));

@@ -41,16 +41,18 @@ git branch -r | head -20
 接續 BDD 驗收或查核舊報告時，若已有 `verification.json` 或剛做過 cherry-pick／merge／跨 repo 同步，先在目標版本比對。僅要求合併 develop 時，直接依[合併檢核](closeout.md)處理。
 
 ```bash
-node "<skill 目錄>/scripts/bdd.mjs" verification --check --dir "<輸出資料夾>"
+node "<skill 目錄>/scripts/bdd.mjs" verification --check --brief --dir "<輸出資料夾>"
 ```
 
 腳本在**目前所在的 repo** 執行 git 比對，`--dir` 可以指向別的 repo 裡的報告資料夾
-（例如 `.bdd/` 沒跟著同步過來時，直接指向來源 repo 的那一份）。它會回報：
+（例如 `.bdd/` 沒跟著同步過來時，直接指向來源 repo 的那一份）。它會核對以下項目。
 
 - 優先用 origin URL 辨識 repo，沒有 origin 時使用第一個 remote。兩邊都沒有 remote 時，核對工作區名稱與 Git 歷史。受測當時或目前的相關檔案有未提交異動，都需要重測。
 - 每個受測 commit 在目前 repo 的對應：`same`（同 SHA）、`patch`（cherry-pick，內容相同）、
   `subject`（只找到同標題、內容有差異，通常是解衝突或手改）、`missing`（沒同步過來）。
 - 受測檔案在目前 HEAD 的內容是否與受測時相同。
+
+`--brief` 在 `current`／`still-valid` 回傳兩端版本、原輪結果與同 SHA 的 `sameCommitCount`。需要逐筆對照時省略 `--brief`。`rerun` 保留全部原因、commit 對照與異動路徑。
 
 依 `verdict` 處理，**不必再問使用者要不要重測**：
 

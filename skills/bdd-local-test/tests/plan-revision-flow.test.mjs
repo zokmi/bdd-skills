@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
-const guide = fs.readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+const guide = fs.readFileSync(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
 const examples = Array.from(guide.matchAll(/^`{3}json\r?\n([\s\S]+?)\r?\n`{3}/gm), match => JSON.parse(match[1]));
 const save = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
 

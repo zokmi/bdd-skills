@@ -12,7 +12,7 @@
 
 依 [Issue 優先驗證與回寫](execution-workflow.md#issue-優先驗證與回寫) 先派核心異動及其必要前置，當批獨立項目可並行。完成第一批後才派後續測案，並行與提前備料限於當前批次。適用階段回寫時，取得本單線上回覆內容的獨立審核 `PASS` 後才派工給其他相關測案。回寫不適用時依該節記錄原因後接續。
 
-主代理依[結構化輸入輸出契約](parallel-bdd-contract.md#從核准清單產生派工)，從同一份核准清單產生各組 `assignment.json`，派工前核對整輪覆蓋，收尾時用同一份清單彙總。子代理寫各組的 `result.json`。資源停止確認另用 `resource-release.json`，以 runId／groupId／attempt 及停止要求的 requestId 核對。
+主代理依[結構化輸入輸出契約](parallel-bdd-contract.md#從核准清單產生派工)，從同一份核准清單產生各組 `assignment.json`，派工前核對整輪覆蓋，收尾時用同一份清單彙總。將本組 `assignment.json` 及[實測組指引](parallel-worker.md)的絕對路徑交給子代理。子代理依逐項斷言實測並寫回本組 `result.json`。資源停止確認另用 `resource-release.json`，以 runId／groupId／attempt 及停止要求的 requestId 核對。
 
 先依功能模組、情境依賴與資源衝突分組，不只按情境數量平均分配。主代理建立派工表，至少記錄：
 

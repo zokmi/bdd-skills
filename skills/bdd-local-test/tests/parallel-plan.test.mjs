@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { compareApprovedPlan, loadApprovedPlan, parallelPlan } from '../scripts/lib/parallel-plan.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
-const guide = fs.readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+const guide = fs.readFileSync(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
 const example = JSON.parse(guide.match(/^```json\r?\n([\s\S]*?)\r?\n```/m)[1]);
 const writeJson = (file, value) => fs.writeFileSync(file, '\uFEFF' + JSON.stringify(value));
 
@@ -47,6 +47,14 @@ test('engineering-only feedback can be reviewed and assigned with its changed pa
   const report = run('--report');
   assert.equal(report.status, 0, report.stderr);
   for (const value of Object.values(checks[0])) assert.ok(report.stdout.includes(value), value);
+  const reviewFile = path.join(dir, 'engineering.md');
+  const written = run('--report', '--output', reviewFile);
+  assert.equal(written.status, 0, written.stderr);
+  assert.deepEqual(JSON.parse(written.stdout), {
+    runId: plan.runId, scope: 'batch', approvedPlan: loadApprovedPlan(file).reference,
+    reportPath: fs.realpathSync.native(reviewFile), groupCount: 1, scenarioCount: 0, assertionCount: 0, engineeringCheckCount: 1,
+  });
+  assert.equal(fs.readFileSync(reviewFile, 'utf8'), report.stdout);
   template.target.head = selected.head;
   const templateFile = path.join(dir, 'template.json');
   writeJson(templateFile, template);
@@ -306,7 +314,10 @@ test('an inaccessible workDir spelling cannot reuse a preceding valid subdirecto
 });
 
 test('normal CLI emits approved assignments and report rows and prevents partial dispatch', t => {
-  const { dir, file, plan, template, run } = fixture(t);
+  const { dir, repo, file, plan, template, run } = fixture(t);
+  const assertions = plan.groups[0].scenarios[0].assertions;
+  assertions.push({ ...assertions[0], expected: '清單已更新' });
+  writeJson(file, plan);
   const templateFile = path.join(dir, 'template.json');
   const files = [];
   for (const group of plan.groups) {
@@ -334,9 +345,22 @@ test('normal CLI emits approved assignments and report rows and prevents partial
   assert.equal(report.status, 0, report.stderr);
   assert.ok(report.stdout.startsWith('核准清單 SHA-256 `' + reference.sha256 + '`'));
   const assertionRows = report.stdout.trimEnd().split(/\r?\n/).filter(line => line.startsWith('|') && /OR-0[12]/.test(line));
-  assert.equal(assertionRows.length, 2);
+  assert.equal(assertionRows.length, 3);
   assert.match(assertionRows[0], /A&#124;B<br>&#60;C&#62;/);
   for (const column of ['列表', '按下儲存', 'UI', '狀態截圖', 'OR-01']) assert.ok(assertionRows[0].includes(column));
+  const reportPath = path.join(dir, 'review.md');
+  const written = run('--report', '--output', reportPath);
+  assert.equal(written.status, 0, written.stderr);
+  assert.deepEqual(JSON.parse(written.stdout), {
+    runId: plan.runId, scope: 'non-batch', approvedPlan: reference, reportPath: fs.realpathSync.native(reportPath),
+    groupCount: 2, scenarioCount: 2, assertionCount: 3, engineeringCheckCount: 0,
+  });
+  assert.equal(fs.readFileSync(reportPath, 'utf8'), report.stdout);
+  fs.writeFileSync(reportPath, 'existing');
+  const collision = run('--report', '--output', reportPath);
+  assert.equal(collision.status, 2);
+  assert.equal(collision.stdout, '');
+  assert.equal(fs.readFileSync(reportPath, 'utf8'), 'existing');
 
   // The current template selects B. Redirecting it over A must preserve the earlier dispatch.
   assert.equal(run('--template', templateFile, '--output', files[0]).status, 2);
@@ -347,6 +371,86 @@ test('normal CLI emits approved assignments and report rows and prevents partial
   writeJson(templateFile, { ...template, scenarios: [] });
   assert.equal(run('--template', templateFile).status, 2);
   assert.equal(run('--report', '--output', files[0]).status, 2);
+  fs.writeFileSync(path.join(repo, 'different.txt'), 'candidate drift');
+  const stalePath = path.join(dir, 'outdated.md');
+  const stale = run('--report', '--output', stalePath);
+  assert.equal(stale.status, 2);
+  assert.match(stale.stderr, /Candidate revision changed/);
+  assert.equal(stale.stdout, '');
+  assert.equal(fs.existsSync(stalePath), false);
+});
+
+test('report file publication rechecks the plan bytes after rendering', t => {
+  const { dir, file } = fixture(t);
+  const output = path.join(dir, 'review.md');
+  const read = fs.readFileSync;
+  let reads = 0, message;
+  t.mock.method(fs, 'readFileSync', function (name, ...args) {
+    if (name === file && ++reads === 2) fs.appendFileSync(file, '\n');
+    return read.call(this, name, ...args);
+  });
+  const receipt = t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'error', error => { message = error; });
+  assert.equal(parallelPlan(['--plan', file, '--report', '--output', output]), 2);
+  assert.match(message, /changed before publication/);
+  assert.equal(receipt.mock.callCount(), 0);
+  assert.equal(fs.existsSync(output), false);
+});
+
+test('report paths through a directory link must be ignored in every reviewed checkout', t => {
+  const f = fixture(t), other = fixture(t);
+  f.plan.groups[1].repo = other.repo;
+  f.plan.groups[1].revision.head = other.head;
+  writeJson(f.file, f.plan);
+  const alias = path.join(f.dir, 'other-checkout');
+  fs.symlinkSync(other.repo, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  for (const root of [other.repo, alias]) {
+    const visible = path.join(root, 'review.md');
+    const denied = f.run('--report', '--output', visible);
+    assert.equal(denied.status, 2);
+    assert.match(denied.stderr, /被 Git 忽略/);
+    assert.equal(denied.stdout, '');
+    assert.equal(fs.existsSync(visible), false);
+  }
+  fs.appendFileSync(path.join(other.repo, '.git/info/exclude'), '\n/review-assets/\n');
+  fs.mkdirSync(path.join(other.repo, 'review-assets'));
+  const report = path.join(alias, 'review-assets', 'table.md');
+  const saved = f.run('--report', '--output', report);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.equal(JSON.parse(saved.stdout).reportPath, fs.realpathSync.native(report));
+  const repeated = f.run('--report');
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.equal(fs.readFileSync(report, 'utf8'), repeated.stdout);
+});
+
+test('a concurrent Git status cannot see report staging files in a linked worktree', t => {
+  const f = fixture(t);
+  const linked = path.join(f.dir, 'linked');
+  f.git('worktree', 'add', '--quiet', '--detach', linked, f.head);
+  f.plan.groups[1].repo = linked;
+  writeJson(f.file, f.plan);
+  fs.appendFileSync(path.join(f.repo, '.git/info/exclude'), '\n/only-this.md\n*.txt\n');
+  const gitStatus = repo => execFileSync('git', ['-C', repo, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' });
+  const status = () => [gitStatus(f.repo), gitStatus(linked)];
+  const baseline = status();
+  assert.deepEqual(baseline, ['', '']);
+  const link = fs.linkSync;
+  const stagedNames = [];
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(fs, 'linkSync', (staged, file) => {
+    stagedNames.push(staged);
+    assert.equal(fs.existsSync(staged), true);
+    assert.deepEqual(status(), baseline);
+    link(staged, file);
+    assert.deepEqual(status(), baseline);
+  });
+  for (const name of ['only-this.md', 'any.txt']) {
+    const report = path.join(linked, name);
+    assert.equal(parallelPlan(['--plan', f.file, '--report', '--output', report]), 0);
+    assert.ok(fs.statSync(report).size > 0);
+  }
+  assert.equal(stagedNames.length, 2);
+  assert.ok(stagedNames.every(file => !fs.existsSync(file)));
 });
 
 test('bound assignments reject drift in scope, owner, assertions and the reviewed plan bytes', t => {

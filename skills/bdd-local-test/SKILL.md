@@ -11,7 +11,7 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 ## 撰寫或修改情境
 
-- 以需求定義角色可觀察的成功與異常結果，包含外部 API、事件與排程。新增或實質修改的情境標 `@P0`／`@P1`／`@P2`。實作不符需求時標 `@已知缺陷`，保留可重現的失敗。工程調整依風險另列技術驗證。[情境寫法](references/feature-guide.md) · [情境等級](references/scenario-priority.md)
+- 以需求定義角色可觀察的成功與異常結果，包含外部 API、事件與排程。新增或實質修改的情境標 `@P0`／`@P1`／`@P2`。實作不符需求時標 `@已知缺陷`，保留可重現的失敗。工程調整依風險另列技術驗證。[情境寫法](references/feature-guide.md) · [情境等級](references/feature-guide.md#情境等級)
 - 情境歸入 `.bdd/modules/<portal>/<主路由>/`。新增、修改、刪除、改名或整併 Feature，或修改影響歸屬／規則的 `MODULE.md`，自動執行 `node bdd.mjs modules --lint` 並派獨立唯讀子代理審核。必修項修正後複審，無法獨立審核時記阻塞。只要情境時，在審核與未執行紀錄完成後停止。[模組規格](references/modules.md) · [文件合規審核](../bdd-scenario-audit/SKILL.md)
 
 ## 選取本輪範圍
@@ -30,5 +30,5 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 ## 報告、接續與交付
 
 - 用檔案編輯工具撰寫 Feature 與 `REPORT.md`。每輪實測用 `verification --record --brief` 取得結果計數與輪次位置，完整的 `verification.json`、報告與必要證據存於 `.bdd/<單號>-<主題>/`。Git 只收模組情境、`MODULE.md` 與共用設定。既有追蹤輸出依授權遷移。[報告與驗證紀錄](references/reporting.md) · [版控分工](references/version-control.md)
-- 引用舊結果或在 cherry-pick／merge／跨 repo 同步後接續驗收，以 `node bdd.mjs verification --check` 核對 repo、commit 及工作區狀態，依判定複測受影響項目。[範圍與版本比對](references/workflow-and-scenarios.md)
+- 引用舊結果或在 cherry-pick／merge／跨 repo 同步後接續驗收，以 `node bdd.mjs verification --check --brief` 核對 repo、commit 及工作區狀態，依判定複測受影響項目。[範圍與版本比對](references/workflow-and-scenarios.md)
 - 本批或指定整單全數通過且證據齊備時，自動派獨立子代理審核結果報告。已授權回寫 issue 時，再完成一致性審核。兩項都 PASS 後由專責子代理逐條回寫並回讀，附本批來源、版本、結果與證據。每次回寫或更正後，由未參與寫入者唯讀審核線上內容，PASS 後才依收尾條件處理服務與分支。只整理既有報告時，保留原輪結果並註明本次未新增實測。[階段與最終交付](references/closeout.md) · [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md)

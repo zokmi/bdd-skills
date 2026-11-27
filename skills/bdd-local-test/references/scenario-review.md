@@ -44,7 +44,7 @@
 
 ## 子代理指示範本
 
-把 `<>` 換成實際值。回覆只要 JSON；一筆問題只占一列，減少重複欄名與敘述。合併文件合規檢查時，同時交付 `bdd-scenario-audit/SKILL.md` 與下方擴充輸出契約，不限於基礎 `issues` 欄位。
+把 `<>` 換成實際值。回覆只要 JSON；一筆問題只占一列，減少重複欄名與敘述。合併文件合規檢查時，同時交付[唯讀審核清單](../../bdd-scenario-audit/references/reviewer.md)與下方擴充輸出契約，不限於基礎 `issues` 欄位。
 
 ```text
 Act as a read-only BDD scenario reviewer. Identify errors and omissions. Leave all files untouched.

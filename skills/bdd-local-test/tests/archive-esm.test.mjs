@@ -155,7 +155,7 @@ test('dispatch text evidence binds custom report anchors and all referenced file
   const scenario = history.rounds[0].scenarios[0];
   scenario.ids = ['SS-13'];
   await writeFile(file, JSON.stringify(history));
-  const docs = await readFile(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const docs = await readFile(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
   const result = JSON.parse(docs.split('```json')[2].split('```')[0]);
   result.artifacts.masking = null;
   result.scenarios[0].feature = scenario.path;
@@ -214,7 +214,7 @@ test('dispatch text evidence binds custom report anchors and all referenced file
 });
 
 test('text evidence respects explicit screenshot retention and conditional or external evidence', async () => {
-  const docs = await readFile(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const docs = await readFile(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
   const [plan, result] = docs.split('```json').slice(1, 3).map(block => JSON.parse(block.split('```')[0]));
   result.artifacts.masking = null;
   const scenario = result.scenarios[0];
@@ -324,7 +324,7 @@ test('archiving the same group for different issues keeps each issue independent
 test('restored parallel results retain usable masked evidence after WebP conversion', async t => {
   const f = await fixture(t);
   const run = async (...args) => JSON.parse((await exec(process.execPath, [cli, ...args], { cwd: f.repo })).stdout);
-  const guide = await readFile(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const guide = await readFile(new URL('../references/parallel-contract-examples.md', import.meta.url), 'utf8');
   const [assignment, result] = Array.from(guide.matchAll(/^\x60{3}json\r?\n([\s\S]*?)\r?\n\x60{3}/gm), m => JSON.parse(m[1]));
   const feature = '.bdd/modules/reports/01.feature';
   for (const s of [assignment.scenarios[0], result.scenarios[0]]) s.feature = feature;

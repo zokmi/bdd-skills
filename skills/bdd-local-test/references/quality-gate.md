@@ -8,6 +8,8 @@
 node "<skill 目錄>/scripts/bdd.mjs" quality-plan --repo <工作區> --base <基準> --review-risk MEDIUM --review-reason "<依據>" --static-passed --impact-complete
 ```
 
+逐情境審查大型計畫時可加 `--compact`。只需判斷範圍或交接單一 Feature 時，加 `--preview-output <新檔>` 取得摘要，再按需讀細節。[預覽與按檔查詢](quality-plan-preview.md)
+
 - 只有靜態檢查通過才傳入 `--static-passed`。PR 候選、Release 或明確要求全套／全模組驗證時傳入 `--full`。
 - LOW 須確認執行行為不變。第一版只有純文件白名單可走 FAST。MEDIUM 為可界定的局部行為異動。實際改變認證授權、Schema、交易、資料完整性、核心依賴、安全或付款結算時，依系統性風險選 HIGH 並記錄依據。例如調整收據顯示的小數位可只驗證格式與直接使用者；若變更實際扣款金額或結算規則，應提升為 HIGH。本批與哪些情境相依尚未核對時，先以 BLOCKED 補齊映射。
 - 核對模組依賴、共用程式、route、endpoint、資料表讀寫及已知失敗紀錄。確認已涵蓋所有受影響的業務模組，以及本批工程檢查所對應的路徑，再傳入 `--impact-complete`。如有外溢、映射缺漏或不確定，省略該參數。明確要求範圍以外的必要回歸須列在報告。

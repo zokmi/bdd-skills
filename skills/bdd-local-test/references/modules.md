@@ -69,20 +69,8 @@ node "<skill 目錄>/scripts/bdd.mjs" modules --path "src/orders/list.ts" --path
 
 ## 並行分支撞號
 
-兩條分支都從 develop 開出、都新增了 `SS-13`：
-
-1. 〈7-1〉把功能分支合併進最新的 `origin/develop` 時處理。
-2. 合併衝突**全部**落在 `.bdd/modules/` 底下時，自行解：`.feature` 兩邊的情境都保留，本分支新增的情境改用 `--next-id` 取得的新號；`MODULE.md` 的 `issues`、`removed` 取聯集。只要同時有任何 `.bdd/modules/` 以外的檔案衝突，整個合併就照現行規則停下來回報，連 `.bdd/modules/` 的衝突也先不動。
-3. 沒有文字衝突、但 `--lint` 報 `duplicate-id` 時，同樣把本分支新增的改號。
-4. 改號後以 `modules --lint` 核對衝突處理結果。已有 REPORT 時在〈情境修訂〉記錄新舊編號（例如「`SS-13`→`SS-15`（與 #5401 撞號）」）。既有 BDD 證據保留實測當時的編號。
+兩分支新增相同編號時，依[並行分支撞號](module-maintenance.md#並行分支撞號)處理。
 
 ## 遷移舊資料（使用者要求時）
 
-舊版每張單的 `.feature` 放在 issue 資料夾裡。整併到模組的步驟：
-
-1. 列出對照表給使用者確認：每個舊情境 → 模組、新編號、合併／保留／刪除與理由。內容重複或矛盾要語意判斷，不靠腳本。
-2. 確認後寫進 `.bdd/modules/`，整批依〈3-1〉送子代理審核，並通過 `--lint`。
-3. 刪除 issue 資料夾裡的 `.feature`（git 歷史與封存都還在），舊 REPORT.md 與 verification.json 不動。
-4. 新增 `.bdd/modules/MIGRATION-<年>-<月>.md`，記錄舊編號 → 新編號。
-
-進行中的單（功能分支還沒併回）不要遷移。
+使用者要求整理舊 issue 情境時，依[遷移舊資料](module-maintenance.md#遷移舊資料使用者要求時)執行。

@@ -300,7 +300,6 @@ export async function verificationCommand(args) {
     'engineering-check': list, 'engineering-assignment': str, 'search-depth': str,
   } });
   if (!v.dir || Boolean(v.record) === Boolean(v.check)) throw new Error('請指定 --dir，並擇一指定 --record 或 --check');
-  if (v.brief && !v.record) throw new Error('--brief 適用於 --record');
   if (v.issue !== undefined && (!v.record || !/^\d+$/.test(v.issue))) throw new Error('--issue 須與 --record 一起指定數字單號');
   if (v['capture-revision'] && !v.record) throw new Error('--capture-revision 適用於 --record');
   const checks = v['engineering-check'];
@@ -322,6 +321,8 @@ export async function verificationCommand(args) {
   }
   const depth = intOption(v['search-depth'] ?? '3000', 'search-depth');
   const result = await check(doc.rounds.at(-1), depth);
-  console.log(JSON.stringify(result));
-  return result.verdict === 'rerun' ? 1 : 0;
+  const { verdict, recorded, current, commits } = result;
+  const brief = v.brief && (verdict === 'current' || verdict === 'still-valid');
+  console.log(JSON.stringify(brief ? { verdict, recorded, current, sameCommitCount: commits.length } : result));
+  return verdict === 'rerun' ? 1 : 0;
 }
