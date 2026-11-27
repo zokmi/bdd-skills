@@ -60,11 +60,11 @@ UI 派工附文列出每組的 `browser.isolationId`、實際 `-s=<名稱>`、�
 
 收到含 `approvedPlan` 的派工時，子代理在執行時記下 `assignment.approvedPlan.sha256`，並將同一值填入結果的 `approvedPlanSha256`。彙總時會連同 runId、groupId 及 attempt 核對。下方範例使用原有 v1 結果欄位。
 
-使用 v3 核准清單時，子代理在實測工作區完成該輪測試後執行 `verification --record --capture-revision`，其餘參數見[報告與驗證紀錄](reporting.md)。工具從實際 checkout 擷取該輪的 `revision`。彙總會逐組比對受審與實測的 HEAD 及未提交內容雜湊。若實測版不同或缺少當時的快照，該輪無法採納。
+使用 v3 核准清單時，子代理在實測工作區執行 `verification --record --brief --capture-revision`，將回傳的 `roundIndex` 填入 `result.json` 的 `verification.roundIndex`。彙總會逐組比對受審與實測的 HEAD 及未提交內容雜湊。若實測版不同或缺少當時的快照，該輪無法採納。[報告與驗證紀錄](reporting.md)
 
 批次選測含工程檢查時，依組別將選測檔中的各筆 `engineeringChecks` 原樣放入核准清單，每個 ID 交給一組。純工程組填 `scenarios: []`。工程檢查列出的操作若不使用資料庫、瀏覽器或部署服務，相關目標與版本填 `null`，`writeAuthorized` 填 `false`，`confirmationBasis` 說明本組執行範圍。需要上述資源的檢查仍記錄實際環境及適用授權。工程組同樣須核對受審 HEAD 與實測版本。
 
-每輪記錄時，在 `verification --record --capture-revision` 加上 `--engineering-assignment <本組的 assignment.json>`，並為本組每個派工 ID 各傳一次 `--engineering-check <id>`，包含阻塞與未執行的項目。工具依派工檔保存各 ID 的受測路徑。`--passed`、`--failed`、`--blocked`、`--not-run` 填業務情境與工程檢查的合計。
+工程組記錄時加上 `--engineering-assignment <本組的 assignment.json>`，並為本組每個派工 ID 各傳一次 `--engineering-check <id>`，包含阻塞與未執行的項目。工具依派工檔保存各 ID 的受測路徑。`--passed`、`--failed`、`--blocked`、`--not-run` 填業務情境與工程檢查的合計。
 
 在 `result.json` 的 `engineeringChecks` 為每個派工 ID 寫一筆結果。例如 `{"id":"build-matrix","status":"passed","expected":"矩陣各包含一個 Windows 和 Linux 工作","actual":"產生 windows-build 和 linux-build 各一次","evidence":["REPORT.md#build-matrix"],"reason":null}`。`expected` 使用核准值。通過時附上能核對觀察結果的實際檔案或報告段落，阻塞及未執行時寫明原因。彙總結果的 `engineeringChecks` 可逐項核對工程狀態。
 

@@ -167,12 +167,33 @@ test('records concurrent rounds without losing BOM-prefixed legacy data or top-l
   const file = path.join(output, 'verification.json');
   assert.equal(run(2, '--check').verdict, 'no-record');
   fs.writeFileSync(file, '\uFEFF' + JSON.stringify({ source: 'legacy', rounds: [{ note: 'preserve' }] }));
-  await Promise.all(['one', 'two', 'three'].map(note =>
-    runAsync(process.execPath, args('--record', '--base', base, '--note', note), { cwd: repo })));
+  const notes = ['one', 'two', 'three'];
+  const outputs = await Promise.all(notes.map((note, i) => runAsync(process.execPath,
+    [cli, 'verification', '--dir', path.relative(repo, output), '--record', '--base', base, '--note', note,
+      '--passed', String(i), '--failed', '1', ...(i < 2 ? ['--brief'] : []), ...(i === 0 ? ['--capture-revision'] : [])],
+    { cwd: repo }).then(command => JSON.parse(command.stdout))));
   const doc = JSON.parse(fs.readFileSync(file));
   assert.equal(doc.source, 'legacy');
   assert.equal(doc.rounds[0].note, 'preserve');
   assert.deepEqual(doc.rounds.slice(1).map(r => r.note).sort(), ['one', 'three', 'two']);
+  for (const [i, note] of notes.entries()) {
+    const roundIndex = doc.rounds.findIndex(r => r.note === note);
+    const round = doc.rounds[roundIndex];
+    if (i === 2) assert.deepEqual(outputs[i], round);
+    else {
+      const { verificationPath, ...receipt } = outputs[i];
+      assert.ok(path.isAbsolute(verificationPath));
+      assert.equal(fs.realpathSync(verificationPath), fs.realpathSync(file));
+      assert.deepEqual(receipt, { roundIndex, head: base, result: round.result, dirtyPathCount: 0,
+        ...(i === 0 ? { dirtySha256: null } : {}) });
+    }
+    assert.equal(round.result.failed, 1);
+    assert.ok(round.worktreeSnapshot);
+  }
+  const bad = spawnSync(process.execPath, args('--check', '--brief'), { cwd: repo, encoding: 'utf8' });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--brief.*--record/);
+  assert.equal(bad.stdout, '');
   delete doc.rounds.at(-1).scenarios;
   fs.writeFileSync(file, JSON.stringify(doc));
   assert.equal(run(0, '--check').verdict, 'current');
@@ -181,7 +202,7 @@ test('records concurrent rounds without losing BOM-prefixed legacy data or top-l
   fs.writeFileSync(path.join(repo, 'new.js'), 'a different candidate');
   const snapshotRefs = () => git('for-each-ref', '--format=%(refname)', 'refs/bdd/worktree-snapshots');
   const refsBefore = snapshotRefs();
-  run(2, '--record', '--base', base);
+  assert.equal(run(2, '--record', '--brief', '--base', base), '');
   assert.equal(snapshotRefs(), refsBefore);
   assert.equal(fs.readFileSync(file, 'utf8'), malformed);
   assert.deepEqual(fs.readdirSync(output), ['verification.json']);

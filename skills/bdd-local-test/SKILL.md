@@ -5,49 +5,30 @@ description: 用於撰寫或審核 BDD／Gherkin／feature 驗收情境、維護
 
 # BDD 情境與本機驗證
 
-本 skill 維護模組對使用者或外部角色承諾的可觀察業務行為，並協調本機驗證。將業務需求寫成可判定的成功與異常情境，工程調整依風險另列技術驗證；兩者都保存可追溯的結果與證據。產品缺陷要修正、重啟受影響服務並複測；無法解除的阻塞如實回報。情境存於 `.bdd/modules/<portal>/<主路由>/`；每輪的 `REPORT.md`、`verification.json` 與必要交付證據存於 `.bdd/<單號>-<主題>/`。使用者指定其他範圍或只要情境／報告時，依其要求縮小流程。
+先確認使用者要撰寫情境、本批實測、引用既有結果，或整合交付。讀受測專案的 `AGENTS.md`／`CLAUDE.md`、README 與該 worktree 的 `.bdd/config.json`，以實際設定決定基準、環境與帳號。下列指引按當前工作選讀，交接提供本輪 ID、可讀的檔案路徑與證據位置。接手者無法讀取原件時，附上該項需要的內容。
 
-實測優先使用內建 localhost 轉送、API 與選配 SQL Server 工具。從受測 worktree 的 `.bdd/config.json` 取得設定，僅在工具缺少情境能力時新增本輪腳本。參閱[內建實測工具](references/test-kit.md)。
+**只合併回 develop** 時，直接依[合併檢核](references/closeout.md#develop-合併檢核)在整合候選版本取得全單元測試通過或編譯成功，任一項即可。合併本身不觸發 BDD。既有 feature BDD 結果保留原輪次與受測 SHA。
 
-**合併回 develop** 時直接走[合併檢核](references/closeout.md#develop-合併檢核)。在實際整合候選版本取得全單元測試通過或編譯成功，任一項成功即可。合併本身不觸發 BDD，不要求 feature 有全過紀錄。已完成的 feature BDD 保留原輪結果與受測 SHA。
+## 撰寫或修改情境
 
-## 同單多次回饋
+- 以需求定義角色可觀察的成功與異常結果，包含外部 API、事件與排程。新增或實質修改的情境標 `@P0`／`@P1`／`@P2`。實作不符需求時標 `@已知缺陷`，保留可重現的失敗。工程調整依風險另列技術驗證。[情境寫法](references/feature-guide.md) · [情境等級](references/scenario-priority.md)
+- 情境歸入 `.bdd/modules/<portal>/<主路由>/`。新增、修改、刪除、改名或整併 Feature，或修改影響歸屬／規則的 `MODULE.md`，自動執行 `node bdd.mjs modules --lint` 並派獨立唯讀子代理審核。必修項修正後複審，無法獨立審核時記阻塞。只要情境時，在審核與未執行紀錄完成後停止。[模組規格](references/modules.md) · [文件合規審核](../bdd-scenario-audit/SKILL.md)
 
-收到同一 issue 的新回饋時，預設只驗本批。以本次指定的註記、對話或改動為起點，同單接續回饋用 `--previous-verification` 讀取上批實測時保存的工作樹快照。依該基準的差異選入直接修正、必要前置及受影響回歸。先前已驗且本次未受影響的項目保留在原輪次；只有受影響、問題重現或使用者點名的歷史項目才重新選入。送審與派工用本輪 `runId` 和選測檔逐一核對 Feature 與情境 ID。報告與已授權的 issue 回覆都標明批次來源、受測版本及本批結果。[選測與擴大範圍](references/scenario-priority.md#同單多批回饋)
+## 選取本輪範圍
 
-## 共同規則
+- 先固定基準、候選版本，靜態檢查並審查 diff。確認不影響行為的純文件異動可走 FAST，局部行為改動走 TARGETED，高風險、PR／Release 或明確全套要求依閘門走 FULL。工程批次可只含 `quality-plan --engineering-checks`，核准、派工與結果沿用相同檢查 ID。[品質閘門](references/quality-gate.md)
+- 同一 issue 的新回饋預設只驗本批。用 `--previous-verification` 讀上批實測快照，依本批需求與差異選入直接修正、必要前置及受影響回歸。先前已驗項目只在受影響、重現或點名時重驗。缺基準或映射時依 `blockers` 補正，再以本輪 `runId`、選測檔、Feature 及情境 ID 核對送審與派工。[本批選測與擴大範圍](references/scenario-priority.md#同單多批回饋)
 
-本批包含 CI、部署或工具等工程驗證時，以 `quality-plan --engineering-checks <檔案>` 登記每個檢查的異動路徑、操作、預期結果與證據。核准、派工及結果核對沿用同一組檢查 ID。純工程批次可以只有工程檢查。詳見[工程檢查](references/quality-gate.md#工程檢查)。
+## 執行與複測
 
-- **情境範圍**：BDD 文件描述模組對使用者或外部角色承諾的可觀察業務行為，以角色、前置條件、操作或觸發事件、成功與異常結果為主。外部系統 API、事件與排程的業務流程同樣適用，不限畫面操作。純重構、部署設定、SQL migration、工具與文件調整等工程項目，依風險列入驗證清單與報告，不逐項轉成 `.feature`。`@UI`／`@API`／`@DB` 是驗證手段，情境範圍依業務承諾判定；詳細界線見 [情境寫法](references/feature-guide.md)。
+1. 實測前閱讀[分階段工作流程](references/execution-workflow.md)。依[送審前準備](references/scenario-review.md#送審前選取範圍與編製清單)列出各斷言的手段與證據。小型 TARGETED 由一名唯讀規劃者一次準備，其餘實測依序派兩次準備。未參與規劃或執行的子代理獨立審核 PASS 後才派工。文件合規可合併審核，分別記錄。
+2. **先取得資料庫目標的明確確認。** 展示實際主機／執行個體、庫名、環境、設定來源及讀寫範圍。確認後才可做 UI／API／DB 實測、啟動可能連庫寫入的服務、執行存取資料庫的工程檢查或派工。包含本機與唯讀情境。同任務目標與授權範圍相同可沿用確認，改變時須重新確認。缺少確認或帳密時列阻塞。[環境確認與複測](references/local-execution.md)
+3. 主代理從派工起持續監督與彙整，每輪實測即使只有一組也交給實測子代理。無法派工時停止實測並記阻塞。先跑核心異動與必要前置，再跑其餘核准項目。當服務與測資都需準備且有兩個名額時分派並行。[分組、準備與交接](references/parallel-bdd.md)
+4. 逐項記錄真實操作與觀察值。優先用[內建工具](references/test-kit.md)。需要登入時依[登入自動化](references/authentication.md)。UI 使用每組具名的 Microsoft Playwright CLI session，先通過 localhost 路由探測。同一情境可用 `run-code` 批次執行相容的導航與 locator 檢查，保留每項斷言與失敗位置。多 worktree 的臨時埠、固定原埠與 `portMappings` 依[隔離指引](references/worktree-loopback.md)處理。
+5. 一般文字或狀態可用 locator／文字快照。整輪可零截圖。只保留清單核准的目視或交付證據，同畫面共用，遮罩登記後連入報告。缺陷修正後重啟受影響服務再測。失敗、阻塞、未執行皆為零且證據齊備，才可記全通過。[實測與證據](references/local-execution.md)
 
-- **多專案／worktree 的臨時埠**：確認各服務原始 URL、設定來源與啟動命令。原埠可用時沿用；原埠在本輪隔離 IP 被占用時，由 `node bdd.mjs prepare-worktree-cli` 自動分配臨時有效埠，不自行猜埠。啟動、轉送、測試及清理使用同一份 `portMappings`。使用者要求固定原埠時使用 `--keep-original-ports`，無法安全使用原埠則列阻塞，不以換埠掩蓋跨 repo 的 IP／registry 衝突。依 [worktree 隔離](references/worktree-loopback.md) 使用本輪啟動參數或程序環境覆寫。以本輪具名 Playwright CLI session 通過 localhost 路由探測後，才開啟應用頁面，並核對 UI、API、proxy／SSR 的實際目標與版本。維持專案設定檔、系統 hosts 與全域代理原狀。
+## 報告、接續與交付
 
-- 先讀目標專案的 `AGENTS.md`／`CLAUDE.md`／README、環境設定及 `.bdd/config.json`。本 skill 不預設埠號、帳號、基準分支或資料庫。下文的 `<skill 目錄>` 是此檔所在資料夾。
-- 依 [版控分工](references/version-control.md)，Git 只保存模組情境、`MODULE.md` 與共用設定；報告、驗證與遮罩紀錄保存在本機，依審核通過的清單保存截圖，不新增到 Git、不另建純報告提交。既有追蹤輸出先核對非圖片紀錄及 Redmine 附件，再依明確授權遷移。
-- 「那麼」以需求為準，不照抄錯誤實作；發現不符時標 `@已知缺陷`，實測讓它失敗。只有走真實路徑驗到的結果才能記「通過」；模擬回應、假 token 或旁證不能代替端對端驗證。
-- BDD 的 `@UI` 情境以 Microsoft Playwright CLI 操作與取證。每組從受測工作區以唯一 session 名稱執行 `playwright-cli -s=<名稱>` 的各項命令。共用 session 的 UI 操作序列執行。CLI、瀏覽器或路由隔離無法就緒時，排查後將受影響的 UI 情境列「阻塞」。`@API`／`@DB` 情境使用各自的真實驗證工具。
-- 需要引用或接續 BDD 驗收時，用 `node bdd.mjs verification --check` 核對報告所屬的 repo、commit 與工作區狀態。`rerun` 影響該次 BDD 驗收，不會新增 develop 合併條件。
-- **資料庫環境確認是實測前的必要關卡**：依 [執行前的安全確認](references/local-execution.md) 展示實際資料庫主機／執行個體、庫名、環境、設定來源及讀寫範圍，收到使用者針對該目標的明確確認後，才可開始 UI／API／DB 實測、啟動可能連庫寫入的服務、執行會存取資料庫的工程檢查或派子代理執行上述工作。本機與唯讀情境同樣須確認；只告知、已提問、沉默或「測到全過」不算確認。同任務目標與授權範圍未變的複測沿用既有明確確認；目標或範圍改變時重新確認。缺帳密不得繞過驗證，相關情境列「阻塞」。
-- **情境文件異動自動檢查**：新增、修改、刪除、改名或整併 `.feature`，以及修改影響情境歸屬／規則的 `MODULE.md` 後，自動依 [bdd-scenario-audit](../bdd-scenario-audit/SKILL.md) 派未參與撰寫的唯讀子代理檢查，不另問是否執行。先跑 `node bdd.mjs modules --lint`；與下述獨立審核可合併派工並分別記錄結論。必修修正後複審，無子代理時記阻塞，不以自行檢查代替獨立通過。
-- 依[送審前準備](references/scenario-review.md#送審前選取範圍與編製清單)選取本輪情境並列出每個斷言的手段與證據。符合小型 TARGETED 條件時派一名唯讀規劃者一次完成，其餘實測輪次依序派兩次準備。情境與清單交未參與規劃或執行的子代理獨立審核，適用審核通過後才派工實測。
-- 每輪實際 BDD 測試都必須由實測子代理執行，主代理負責範圍審核、分組、派工、監督與彙整；至少一組也派一名子代理，兩組以上依資源可用情況分批派工。不可用主代理親自執行實測作為一般 fallback。開始實測與派工前，先依 [實測範圍審核](references/execution-workflow.md#實測範圍審核) 取得未參與執行的獨立唯讀子代理 PASS。情境只撰寫或整理既有報告而不實測時不派實測子代理。若平台確實沒有子代理派工能力，停止實測並記錄阻塞，不可改由主代理測試或假稱已派工。
-- **並行準備服務與測資**：實測範圍審核 PASS 且環境確認完成後，當前批次同時需要準備服務與建立測資且有兩個名額時，同批派兩名子代理分別負責。測資代理先做不依賴服務的工作，依賴本輪服務的項目收到就緒資訊後再操作。各情境在所需服務與測資就緒後開始實測。只有一名子代理時依相依順序完成，詳見[分工與交接](references/parallel-bdd.md#並行準備服務與測資)。
-- 每個情境都走真實路徑，逐項記錄操作與觀察值。一般 UI 文字、數值與狀態可用 locator 或文字快照驗證，整輪可以零張截圖。[驗證清單](references/scenario-review.md#送審前選取範圍與編製清單)列出需要目視判讀或交付的畫面；同一畫面能證明多項時只擷取一次。全通過表示失敗、阻塞、未執行皆為 0。
-- 核准保留的截圖遮罩登記後存入本輪 `evidence/` 並在報告連結。僅供診斷的暫存圖記下觀察後即刪除。issue 必要附件回讀、審核及本機副本清理依[整合與交付](references/closeout.md)執行。
-- 每輪實測先驗證核心異動及其必要前置。依需求、實際 diff 和斷言辨認核心異動；有指定 issue 時，先跑本批核心異動，再跑本輪核准的其餘驗收項目。無單號也依實際變更優先驗證核心異動。
-- 主代理從派工起[持續追蹤驗證進度](references/parallel-bdd.md#回報與收尾)。本批驗收或已指定的整單驗收項目全數 PASS 且證據齊備時，自動派獨立子代理審核結果報告。指定 issue 且已授權回寫時，依 [Issue 優先驗證與回寫](references/execution-workflow.md#issue-優先驗證與回寫) 或[最終交付條件](references/closeout.md#共用-issue-交付最終完整驗證後自動執行)接續一致性審核。兩項審核均 PASS 後，直接派專責子代理更新 issue 並回讀核對。
-- 階段與最終回寫都要按本批或整單的核准範圍[逐條回覆驗收標準](references/closeout.md#逐條回覆驗收標準)，列出本版實測結果，呈現方式依 issue-writing skill 的驗證完成模板。每次回寫後，由未參與撰寫或寫入的唯讀子代理依 [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md) 從原單核對線上回覆、實際調整與驗證證據。取得 PASS 後才依[收尾指引](references/closeout.md)判定是否停止本輪服務，並於分支方式未定時詢問。回覆需要更正時，修正後重新回讀、送審。
-- 用檔案編輯工具寫 `.feature` 與 `REPORT.md`；內容常含引號與反引號，避免用會被 shell 解析的 heredoc。
-
-## 開發階段的 BDD 驗證入口
-
-以一組相關修改為單位固定基準與候選版本，執行靜態檢查並 Review Diff，再按 [品質閘門](references/quality-gate.md) 選擇 FAST、TARGETED 或 FULL。只有確認不影響行為的純文件改動可走 FAST。局部行為改動選 TARGETED。確認高風險或依 PR、Release、明確全套要求時採 FULL。普通回饋缺少批次基準、影響映射或相依分析時，維持本批範圍並依 `blockers` 補正；執行前須解除 `BLOCKED`。詳見[批次範圍](references/scenario-priority.md#同單多批回饋)。
-
-依[情境等級與必測範圍](references/scenario-priority.md)為新增與實質修改的情境標 `@P0`／`@P1`／`@P2`。TARGETED 以品質計畫列出的候選為起點，核對變更檔案所影響的情境、本批真正影響的 `@core` 路徑及相依情境、本批直接對應的情境、受影響 P0、變更類型必測項、必要回歸及技術驗證。最終候選版本也按同一規則核對。報告列出實測情境與略過理由。
-
-同一 UI 情境中，可用同一個 Playwright CLI session 的 `run-code` 批次執行相容的導航與 locator 檢查，逐項保留斷言與失敗位置。跨情境維持狀態隔離。
-
-通過環境確認後，需要登入的情境依 [登入自動化](references/authentication.md) 準備前置狀態：優先沿用已驗證的同環境、同帳號狀態，失效時執行專案提供的測試登入流程。
-
-需要實測、撰寫情境或收尾時，依 [分階段工作流程](references/execution-workflow.md) 讀取對應指引。開始實測前先核對驗證時機與資料庫授權，再選擇派工模式。FAST 符合略過條件時，直接記錄理由及靜態檢查結果。
+- 用檔案編輯工具撰寫 Feature 與 `REPORT.md`。每輪實測用 `verification --record --brief` 取得結果計數與輪次位置，完整的 `verification.json`、報告與必要證據存於 `.bdd/<單號>-<主題>/`。Git 只收模組情境、`MODULE.md` 與共用設定。既有追蹤輸出依授權遷移。[報告與驗證紀錄](references/reporting.md) · [版控分工](references/version-control.md)
+- 引用舊結果或在 cherry-pick／merge／跨 repo 同步後接續驗收，以 `node bdd.mjs verification --check` 核對 repo、commit 及工作區狀態，依判定複測受影響項目。[範圍與版本比對](references/workflow-and-scenarios.md)
+- 本批或指定整單全數通過且證據齊備時，自動派獨立子代理審核結果報告。已授權回寫 issue 時，再完成一致性審核。兩項都 PASS 後由專責子代理逐條回寫並回讀，附本批來源、版本、結果與證據。每次回寫或更正後，由未參與寫入者唯讀審核線上內容，PASS 後才依收尾條件處理服務與分支。只整理既有報告時，保留原輪結果並註明本次未新增實測。[階段與最終交付](references/closeout.md) · [Issue 回覆內容審核](../bdd-issue-reply-audit/SKILL.md)

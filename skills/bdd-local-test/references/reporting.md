@@ -11,7 +11,7 @@
 
 同一張 issue 接到新回饋時，在〈驗證階段與範圍〉指明本批回饋、上批實測快照或調整前的基準 commit、候選版本及受影響行為。通過、失敗、阻塞與未執行各欄合計本批選入的業務情境與工程檢查，四項計數均須為非負安全整數。前批未受影響的結果保留在原輪次；引用時附原版本。若前批仍有未解問題，保留其狀態，只有本批涉及的項目才進入本輪清單。
 
-在受測 checkout 完成每輪測試時立即執行 `verification --record`，再切換版本或清理工作區。工具在本機 Git 保存該輪的工作樹快照，輪次以 `worktreeSnapshot` 記錄引用。下一批將這份 verification.json 傳給 `quality-plan --previous-verification`。從其他 checkout 重用時須能讀取對應的本機 Git 物件及引用。
+在受測 checkout 完成每輪測試時立即執行 `verification --record --brief`，再切換版本或清理工作區。完整輪次保存在 `verificationPath` 指向的 verification.json，`roundIndex` 是此次寫入的索引（從 0 起）。下一批將該檔傳給 `quality-plan --previous-verification`。從其他 checkout 重用 `worktreeSnapshot` 時須能讀取對應的本機 Git 物件及引用。
 
 同單回饋可在記錄時明列 `--issue <單號>`。快照保存當時受測的 Git 可見工作檔與情境，使用 Git 的內容轉換規則，排除本輪驗證紀錄及 BDD 執行產物。本機引用位於 `refs/bdd/worktree-snapshots/`。用上一輪快照選測時，選測檔的 `base` 是受測的 Git tree，`baseHead` 是當時的 commit；記錄下一輪的提交範圍時，將 `baseHead` 傳給 `verification --record --base`。
 
@@ -25,8 +25,10 @@
 **每一輪都要記錄驗證紀錄**（沒跑完、有失敗也要記，結果統計照實填）。使用 v3 核准清單的派工，在該輪實測結束時從受測工作區執行以下指令，再切換版本或清理測資。這會在該輪保存實際 checkout 的 HEAD 與未提交內容雜湊。
 
 ```bash
-node "<skill 目錄>/scripts/bdd.mjs" verification --record --capture-revision --dir "<輸出資料夾>" --base "<本輪基準 commit>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本批調整的 .feature>::<實測編號>" --regression-scenarios "<回歸的 .feature>::<實測編號>,<實測編號>" --note "<回饋批次與本輪實測範圍>"
+node "<skill 目錄>/scripts/bdd.mjs" verification --record --brief --capture-revision --dir "<輸出資料夾>" --base "<本輪基準 commit>" --passed N --failed N --blocked N --not-run N --changed-scenarios "<本批調整的 .feature>::<實測編號>" --regression-scenarios "<回歸的 .feature>::<實測編號>,<實測編號>" --note "<回饋批次與本輪實測範圍>"
 ```
+
+`--brief` 回傳受測 `head`、四項 `result` 計數、受測路徑中有異動的 `dirtyPathCount` 及輪次位置。加上 `--capture-revision` 時，`dirtySha256` 反映整個 checkout 的 Git 可見異動，乾淨時為 `null`。需要檔案、情境與 commit 明細時讀取該輪即可。省略 `--brief` 會輸出完整輪次。
 
 `--changed-scenarios`／`--regression-scenarios` 每項是「`<repo 相對路徑>`」（取檔內全部情境）或「`<路徑>::<編號>,<編號>`」；多項以 `;` 分隔，整串加引號。
 同一檔案混有前批情境時，明列本輪實際測過的編號。選測與開發回饋可使用尚未提交的情境檔，報告標明這次實際讀取的版本及差異。需要可從 Git 還原的正式證據時，先將情境檔納入候選 commit，再依該版本的核准清單驗證本輪選入的編號。封存會從該受測 commit 取回情境。

@@ -48,6 +48,7 @@ async function appendRound(file, round, root) {
     if (round.worktreeSnapshot) pinWorktreeSnapshot(root, round.worktreeSnapshot);
     fs.renameSync(lock, file);
     published = true;
+    return doc.rounds.length - 1;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     if (!published) fs.unlinkSync(lock);
@@ -204,8 +205,12 @@ async function record(file, opts) {
       }
     }
   }
-  await appendRound(file, round, root);
-  return round;
+  const roundIndex = await appendRound(file, round, root);
+  if (!opts.brief) return round;
+  return {
+    verificationPath: path.resolve(file), roundIndex, head, result, dirtyPathCount: round.dirtyPaths.length,
+    dirtySha256: revision?.dirtySha256,
+  };
 }
 
 const normalizedUrl = url => url.trim().toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '');
@@ -290,11 +295,12 @@ export async function verificationCommand(args) {
   const list = { type: 'string', multiple: true };
   const flag = { type: 'boolean' };
   const { values: v } = parseArgs({ args, options: {
-    dir: str, record: flag, check: flag, 'capture-revision': flag, issue: str, base: str, commits: list, head: str, passed: str, failed: str,
+    dir: str, record: flag, check: flag, brief: flag, 'capture-revision': flag, issue: str, base: str, commits: list, head: str, passed: str, failed: str,
     blocked: str, 'not-run': str, note: str, 'changed-scenarios': list, 'regression-scenarios': list,
     'engineering-check': list, 'engineering-assignment': str, 'search-depth': str,
   } });
   if (!v.dir || Boolean(v.record) === Boolean(v.check)) throw new Error('請指定 --dir，並擇一指定 --record 或 --check');
+  if (v.brief && !v.record) throw new Error('--brief 適用於 --record');
   if (v.issue !== undefined && (!v.record || !/^\d+$/.test(v.issue))) throw new Error('--issue 須與 --record 一起指定數字單號');
   if (v['capture-revision'] && !v.record) throw new Error('--capture-revision 適用於 --record');
   const checks = v['engineering-check'];
