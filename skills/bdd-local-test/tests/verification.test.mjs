@@ -9,6 +9,45 @@ import { cli, fixture } from './verification-fixture.mjs';
 
 const runAsync = promisify(execFile);
 
+test('verification reads checkout metadata once per command and preserves detached and ambiguous HEADs', t => {
+  const { repo, output, git, base, args, run } = fixture(t);
+  const nested = path.join(repo, 'child');
+  fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 'HEAD'), 'file with the same name as the revision');
+  git('switch', '-qc', 'topic/metadata');
+  const trace = path.join(output, 'checkout.jsonl');
+  const fromChild = (...options) => JSON.parse(execFileSync(process.execPath, args(...options), {
+    cwd: nested, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  }));
+  const round = fromChild('--record', '--base', 'HEAD');
+  assert.equal(round.branch, 'topic/metadata');
+  assert.equal(round.head, base);
+  const { current } = fromChild('--check', '--brief');
+  assert.deepEqual(current, { repo: round.repo, branch: round.branch, head: base });
+  const commands = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(event => event.event === 'start').map(event => event.argv);
+  const metadata = commands.filter(argv => argv.includes('--show-toplevel') || argv.includes('HEAD^{commit}') || argv.includes('--show-current'));
+  assert.equal(metadata.length, 2, JSON.stringify(metadata));
+
+  git('commit', '--allow-empty', '-qm', 'later');
+  const later = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/tags/HEAD', base);
+  git('config', 'core.warnAmbiguousRefs', 'true');
+  assert.deepEqual(run(0, '--check').current, { ...current, head: later });
+  const historical = run(0, '--record', '--head', base, '--base', 'HEAD');
+  assert.equal(historical.head, base);
+  assert.equal(historical.base, later);
+  assert.equal(historical.branch, round.branch);
+  git('update-ref', '-d', 'refs/tags/HEAD');
+  git('switch', '--detach', '-q', base);
+  assert.deepEqual(run(0, '--check').current, { ...current, branch: '' });
+  git('update-ref', 'refs/tags/nonbranch', base);
+  git('symbolic-ref', 'HEAD', 'refs/tags/nonbranch');
+  const invalid = spawnSync(process.execPath, args('--check'), { cwd: nested, encoding: 'utf8' });
+  assert.equal(invalid.status, 2);
+  assert.match(invalid.stderr, /refs\/heads/);
+});
+
 test('recorded worktrees retain rollback, untracked and scenario deltas across same-HEAD feedback', t => {
   const { repo, output, git, base } = fixture(t);
   git('config', 'core.autocrlf', 'false');
@@ -338,7 +377,7 @@ test('same resolved commits skip empty Git ranges and keep working, staged and e
   const previewQueries = commands(planTrace);
   const recordQueries = commands(trace);
   assert.ok(![...recordQueries, ...previewQueries].some(argv => argv.includes(base + '..' + base) || argv.includes(base + '...' + base)));
-  assert.equal(recordQueries.filter(argv => argv.includes('HEAD^{commit}')).length, 2);
+  assert.equal(recordQueries.filter(argv => argv.includes('HEAD^{commit}')).length, 1);
   assert.equal(previewQueries.filter(argv => argv.includes('HEAD^{commit}')).length, 1);
   assert.equal(previewQueries.filter(argv => argv.includes('--show-toplevel')).length, 1);
   const explicit = run(0, '--record', '--base', 'HEAD', '--commits', 'HEAD');

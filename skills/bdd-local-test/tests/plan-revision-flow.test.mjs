@@ -59,6 +59,15 @@ test('an engineering-only batch binds its check, actual result, evidence and ver
   assert.equal(accepted.counts.passed, 1);
   assert.deepEqual(accepted.scenarios, []);
   assert.deepEqual(accepted.engineeringChecks, [{ groupId: f.group.groupId, repo: f.repo, ...check, status: 'passed' }]);
+  const verificationFile = path.join(output, 'verification.json');
+  save(verificationFile, { rounds: [{ ...record, result: { ...record.result, passed: 0, failed: 1 } }] });
+  save(resultFile, { ...result, engineeringChecks: [{ ...observed, status: 'failed' }] });
+  const brief = JSON.parse(invoke(0, 'parallel-summary', '--brief', '--assignment', f.assignedFile,
+    '--output-dir', path.join(f.temp, 'failed-brief')));
+  assert.deepEqual(brief.nonPassing, [{ groupId: f.group.groupId, result: resultFile,
+    items: [{ kind: 'engineering', path: check.path, id: check.id, status: 'failed' }] }]);
+  assert.equal(brief.omitted, undefined);
+  save(verificationFile, { rounds: [record] });
   const endpoint = 'http://localhost:4200';
   save(f.assignedFile, { ...assignment, environment: { ...assignment.environment, uiUrl: endpoint } });
   save(resultFile, { ...result, execution: { ...result.execution, uiUrl: endpoint } });

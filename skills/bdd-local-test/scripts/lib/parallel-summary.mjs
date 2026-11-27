@@ -418,6 +418,34 @@ function writeSummary(dir, summary) {
   return json;
 }
 
+function briefSummary(summary, dir) {
+  const { runId, eligibleForReview, counts, issues } = summary;
+  const brief = {
+    runId, eligibleForReview, counts, issueCount: issues.length, firstIssue: issues[0], summaryPath: path.join(dir, 'summary.json'),
+  };
+  const total = counts.failed + counts.blocked + counts['not-run'];
+  if (issues.length || !total) return brief;
+
+  const limit = Math.min(total, 3);
+  brief.nonPassing = [];
+  if (total > limit) brief.omitted = total - limit;
+  let shown = 0;
+  for (const rows of [summary.scenarios, summary.engineeringChecks ?? []]) {
+    for (const { groupId, kind, feature, path: sourcePath, id, status } of rows) {
+      if (status === 'passed') continue;
+      let group = brief.nonPassing.find(item => item.groupId === groupId);
+      if (!group) {
+        const { result } = summary.groups.find(item => item.groupId === groupId);
+        group = { groupId, result, items: [] };
+        brief.nonPassing.push(group);
+      }
+      group.items.push(feature ? { kind, feature, id, status } : { kind: 'engineering', path: sourcePath, id, status });
+      if (++shown === limit) return brief;
+    }
+  }
+  return brief;
+}
+
 export function parallelSummary(args) {
   try {
     const { values } = parseArgs({ args, options: {
@@ -431,11 +459,8 @@ export function parallelSummary(args) {
     if (fs.lstatSync(dir, { throwIfNoEntry: false })) throw new Error('OutputDir must be a new directory; existing summaries are never overwritten.');
     const summary = summarize(values.assignment, dir, values.plan);
     const json = writeSummary(dir, summary);
-    const { runId, eligibleForReview, counts, issues } = summary;
-    console.log(values.brief ? JSON.stringify({
-      runId, eligibleForReview, counts, issueCount: issues.length, firstIssue: issues[0], summaryPath: path.join(dir, 'summary.json'),
-    }) : json);
-    return issues.length ? 1 : 0;
+    console.log(values.brief ? JSON.stringify(briefSummary(summary, dir)) : json);
+    return summary.issues.length ? 1 : 0;
   } catch (err) {
     console.error(err.message);
     return 2;

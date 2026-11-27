@@ -8,7 +8,7 @@ import { readGitBlobs } from './git-blobs.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, parseFeature, readFeature } from './module-index.mjs';
 import { readContract } from './parallel-contracts.mjs';
-import { git, repoIdentity, treeEntriesAt, dirtyPaths, selectedCommitPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
+import { checkoutMetadata, git, repoIdentity, treeEntriesAt, dirtyPaths, selectedCommitPaths, testedChanges, commitInfo, mapCommits, isAncestor } from './verification-git.mjs';
 import { captureWorktreeSnapshot, pinWorktreeSnapshot } from './worktree-snapshot.mjs';
 
 function readDocument(file) {
@@ -166,14 +166,14 @@ async function record(file, opts) {
     if (count < 0) throw new Error('--' + name + ' 必須為非負整數');
     return [name === 'not-run' ? 'notRun' : name, count];
   }));
-  const root = repoRoot('.');
-  const currentHead = commit(root, 'HEAD');
-  const head = opts.head && opts.head !== 'HEAD' ? commit(root, opts.head) : currentHead;
+  const { root, head: currentHead, branch } = checkoutMetadata('.');
+  const resolveCommit = ref => ref === 'HEAD' ? currentHead : commit(root, ref);
+  const head = resolveCommit(opts.head || 'HEAD');
   const sources = opts['engineering-assignment']
     ? assignedSources(opts['engineering-assignment'], opts['engineering-check'], root, currentHead, head) : [];
   const revision = opts['capture-revision'] ? captureApprovedRevision(root) : null;
   if (revision && revision.head !== head) throw new Error('記錄受測快照時，指定的 HEAD 須與實際 checkout 相同');
-  const base = opts.base ? commit(root, opts.base) : null;
+  const base = opts.base ? resolveCommit(opts.base) : null;
   const refs = (opts.commits || []).flatMap(s => s.split(/[,\s]+/)).filter(Boolean);
   const changes = testedChanges(root, refs, base, head, { resolved: true });
   const paths = [...new Set([...changes.paths, ...sources.map(s => s.path)])];
@@ -187,7 +187,7 @@ async function record(file, opts) {
   const { blobs, modes } = tree;
   const scenarios = scenarioRecords(root, selections, tree, historicalHead);
   const round = {
-    recordedAt: recordedAt(new Date()), repo: repoIdentity(root), branch: git(root, ['branch', '--show-current']).trim(),
+    recordedAt: recordedAt(new Date()), repo: repoIdentity(root), branch,
     head, base, baseRef: opts.base || '', dirtyPaths: dirtyPaths(root, allPaths), commits: await commitInfo(root, changes.shas),
     fileScope: refs.length ? 'commits-first-parent' : 'base',
     fileModes: modes,
@@ -245,9 +245,8 @@ async function check(last, depth) {
   if (!last?.repo || typeof last.repo.url !== 'string' || !Array.isArray(last.commits) ||
       !last.files || typeof last.files !== 'object' || Array.isArray(last.files) ||
       !/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(last.head)) throw new Error('verification.json 缺少有效的版本紀錄');
-  const root = repoRoot('.');
+  const { root, head, branch } = checkoutMetadata('.');
   const repo = repoIdentity(root);
-  const head = commit(root, 'HEAD');
   const reasons = [];
   if (!hasEngineeringCoverage(last)) reasons.push('工程檢查缺少對應的受測來源與檔案版本，請依派工重新驗證');
   const sameUrl = normalizedUrl(repo.url) === normalizedUrl(last.repo.url);
@@ -285,7 +284,7 @@ async function check(last, depth) {
   return {
     verdict: reasons.length ? 'rerun' : head === last.head ? 'current' : 'still-valid', reasons,
     recorded: { repo: last.repo, branch: last.branch, head: last.head, recordedAt: last.recordedAt, result: last.result },
-    current: { repo, branch: git(root, ['branch', '--show-current']).trim(), head },
+    current: { repo, branch, head },
     commits: mapping, changedFiles, changedScenarios, dirtyPaths: dirty,
   };
 }

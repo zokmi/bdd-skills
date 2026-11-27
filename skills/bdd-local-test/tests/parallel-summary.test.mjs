@@ -45,7 +45,7 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   fs.writeFileSync(path.join(group, 'REPORT.md'), 'report');
   const ledger = path.join(group, 'masking.json');
   json(ledger, { files: { [image]: { method: 'css', sha256: createHash('sha256').update('fixture').digest('hex').toUpperCase() } } });
-  function run(name, code, extra = [], trace) {
+  function run(name, code, extra = [], { trace, briefFields } = {}) {
     const output = path.join(temp, name);
     const result = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', output, '--assignment', assignment, ...extra], {
       encoding: 'utf8', env: trace ? { ...process.env, GIT_TRACE2_EVENT: trace } : process.env,
@@ -56,7 +56,7 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
       const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
       const expected = extra.includes('--brief') ? {
         runId: summary.runId, eligibleForReview: summary.eligibleForReview, counts: summary.counts,
-        issueCount: summary.issues.length, summaryPath, ...(summary.issues.length && { firstIssue: summary.issues[0] }),
+        issueCount: summary.issues.length, summaryPath, ...(summary.issues.length && { firstIssue: summary.issues[0] }), ...briefFields,
       } : summary;
       assert.deepEqual(JSON.parse(result.stdout), expected);
       return summary;
@@ -74,10 +74,32 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   const roundFile = path.join(group, 'verification.json');
   json(resultPath, { ...r, scenarios: [{ ...r.scenarios[0], status: 'failed' }] });
   json(roundFile, { rounds: [{ ...round, result: { ...round.result, passed: 0, failed: 1 } }] });
-  const failed = run('failed-brief', 0, ['--brief']);
+  const failedGroup = { groupId: a.groupId, result: resultPath,
+    items: [{ feature: scenario.feature, id: scenario.id, kind: scenario.kind, status: 'failed' }] };
+  const failed = run('failed-brief', 0, ['--brief'], { briefFields: { nonPassing: [failedGroup] } });
   assert.equal(failed.eligibleForReview, false);
   assert.equal(failed.counts.failed, 1);
   assert.deepEqual(failed.issues, []);
+  const secondOutput = path.join(temp, 'second');
+  const attempt = path.join(secondOutput, 'coordination', 'attempt-2');
+  fs.mkdirSync(attempt, { recursive: true });
+  const secondFile = path.join(attempt, 'assignment.json');
+  const secondResultPath = path.join(attempt, 'result.json');
+  const rows = [scenario.id, 'SS-14', 'SS-15'].map(id => ({ feature: 'other.feature', id, kind: 'regression' }));
+  const statuses = ['blocked', 'not-run', 'failed'];
+  const secondGroup = { groupId: 'second', attempt: 2 };
+  json(secondFile, { ...a, ...secondGroup, outputDir: secondOutput, scenarios: rows });
+  json(secondResultPath, { ...r, ...secondGroup, artifacts: { report: 'REPORT.md', masking: null },
+    scenarios: rows.map((row, i) => ({ ...r.scenarios[0], ...row, status: statuses[i], reason: 'Needs follow-up', evidence: [] })) });
+  json(path.join(secondOutput, 'verification.json'), { rounds: [{ ...round,
+    scenarios: [{ path: rows[0].feature, ids: rows.map(row => row.id), role: 'regression' }],
+    result: { passed: 0, failed: 1, blocked: 1, notRun: 1 } }] });
+  fs.writeFileSync(path.join(secondOutput, 'REPORT.md'), 'Observed failures');
+  run('capped-brief', 0, ['--brief', '--assignment', secondFile], { briefFields: {
+    nonPassing: [failedGroup, { groupId: 'second', result: secondResultPath,
+      items: [{ ...rows[0], status: 'blocked' }, { ...rows[1], status: 'not-run' }] }],
+    omitted: 1,
+  } });
   json(roundFile, { rounds: [round] });
   for (const [name, overrides] of [
     ['interrupted', { taskStatus: 'interrupted' }],
@@ -139,7 +161,7 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
     json(path.join(group, secondResult.verification.path), { rounds: [secondRound] });
     json(path.join(secondCoord, 'assignment.json'), otherAssignment);
     json(path.join(secondCoord, 'result.json'), secondResult);
-    return run(name, code, ['--assignment', path.join(secondCoord, 'assignment.json')], trace);
+    return run(name, code, ['--assignment', path.join(secondCoord, 'assignment.json')], { trace });
   }
   const repeated = summarizePair('linked-duplicate', 1);
   assert.deepEqual(repeated.issues, ['Repeated cross-group scenario requires manual review: ' + scenario.feature + '|' + scenario.id]);
@@ -364,7 +386,10 @@ test('approved assignments account for the entire plan even when the caller omit
     assert.match(incomplete.issues.join('\n'), /\bB\b/);
     assert.deepEqual(incomplete.scenarios.map(s => [s.groupId, s.id, s.status]), [['A', 'AA-01', 'passed'], ['B', 'BB-01', 'not-run']]);
   }
-  assert.equal(summary('none', 1, [], '--plan', planFile).counts['not-run'], 2);
+  const missing = summary('none', 1, [], '--plan', planFile, '--brief');
+  assert.equal(missing.counts['not-run'], 2);
+  assert.match(missing.firstIssue, /Missing approved group/);
+  assert.equal(missing.nonPassing, undefined);
 
   const original = JSON.parse(fs.readFileSync(files[0], 'utf8'));
   const extraDir = path.join(temp, 'A', 'coordination', 'extra');

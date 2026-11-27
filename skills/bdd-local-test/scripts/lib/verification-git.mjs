@@ -2,7 +2,7 @@ import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
-import { commit, fullCommitId } from './git-changes.mjs';
+import { commit, fullCommitId, repoRoot } from './git-changes.mjs';
 
 function command(root, args) {
   return ['-C', root, '--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotepath=false', ...args];
@@ -15,6 +15,23 @@ export function git(root, args, allowed = [0], input) {
   if (result.error) throw result.error;
   if (!allowed.includes(result.status)) throw new Error(result.stderr.trim() || 'git ' + args[0] + ' failed');
   return result.status === 0 ? result.stdout : null;
+}
+
+export function checkoutMetadata(repo) {
+  const args = ['rev-parse', '--revs-only', '--show-toplevel', 'HEAD^{commit}', '--symbolic-full-name', 'HEAD', '--'];
+  const probe = spawnSync('git', command(repo, args), { encoding: 'utf8', windowsHide: true });
+  if (probe.status === 0) {
+    const fields = probe.stdout.trimEnd().split(/\r?\n/);
+    const [root, head, ref] = fields;
+    if (fields.length === 3 && path.isAbsolute(root) && fullCommitId.test(head) &&
+        (ref === 'HEAD' || ref.startsWith('refs/heads/'))) {
+      return { root: path.resolve(root), head, branch: ref === 'HEAD' ? '' : ref.slice('refs/heads/'.length).trim() };
+    }
+  }
+  // An ambiguous HEAD omits the symbolic ref. Unusual roots and repository errors
+  // also need the individual commands' path handling and diagnostics.
+  const root = repoRoot(repo);
+  return { root, head: commit(root, 'HEAD'), branch: git(root, ['branch', '--show-current']).trim() };
 }
 
 export function repoIdentity(root) {

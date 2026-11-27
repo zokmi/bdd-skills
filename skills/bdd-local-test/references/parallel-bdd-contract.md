@@ -62,7 +62,7 @@ node "<skill 目錄>/scripts/bdd.mjs" parallel-summary --brief --plan "<本輪>/
 
 主代理明確列出本輪每組要採用的 attempt。工具讀取核准清單、各組派工檔、同目錄的 result.json 及其引用的驗證和證據。`--output-dir` 必須是尚不存在且與各組輸出互不包含的目錄，避免覆寫。兩種輸出模式均寫入完整的 `summary.json` 與 `SUMMARY.md`。
 
-主代理交接使用 `--brief`，標準輸出是一行 JSON，含 `runId`、`eligibleForReview`、四種狀態的 `counts`、`issueCount` 與指向完整 `summary.json` 的絕對路徑 `summaryPath`。有採納問題時另附 `firstIssue`，依 `summaryPath` 可查全部問題與逐項結果。省略 `--brief` 時標準輸出為完整 JSON。
+主代理交接使用 `--brief`，單行 JSON 含 `runId`、`eligibleForReview`、四種狀態的 `counts`、`issueCount` 與完整 `summary.json` 的絕對路徑 `summaryPath`。有採納問題時先看 `firstIssue`。採納檢查通過且有失敗、阻塞或未執行項目時，`nonPassing` 按組列出該次派工的 `result` 路徑及 `items`，全摘要最多三項。以 `groupId`、`kind`、來源（情境 `feature` 或工程檢查 `path`）及 `id` 定位，`status` 為該項狀態。超出三項時，`omitted` 記錄其餘筆數。省略 `--brief` 時輸出完整 JSON。
 
 有採納問題時結束碼為 1。結構與採納檢查通過時為 0，即使有效報告列有失敗或阻塞，仍要核對 `eligibleForReview` 與 `counts`。命令或寫檔錯誤時為 2，原因寫到標準錯誤。
 
