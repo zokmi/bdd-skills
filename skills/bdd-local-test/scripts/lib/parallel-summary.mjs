@@ -12,7 +12,7 @@ import {
   approvedRepoKey, approvedScenarioKey as scenarioKey, compareApprovedPlan,
   loadApprovedPlan, matchesApprovedTarget, matchesPlanReference, sameApprovedScenario,
 } from './parallel-plan.mjs';
-import { artifact, checkModifiedPaths, checkSeparateDirectories, evidenceChecker, pathKey, readJson } from './summary-evidence.mjs';
+import { artifact, checkModifiedPaths, checkSeparateDirectories, groupEvidenceChecker, pathKey, readJson } from './summary-evidence.mjs';
 
 const statusFields = { passed: 'passed', failed: 'failed', blocked: 'blocked', 'not-run': 'notRun' };
 const counts = () => ({ passed: 0, failed: 0, blocked: 0, 'not-run': 0 });
@@ -185,7 +185,7 @@ function recordedScenarioKeys(round) {
 }
 
 function checkResults(a, { root, result: r, repo, round, recorded }, historicalFeatures) {
-  const checkEvidence = evidenceChecker(root);
+  const { check: checkEvidence, recheck } = groupEvidenceChecker(root, r.scenarios.concat(r.engineeringChecks ?? []));
   const results = new Map();
   const total = counts();
   for (const s of r.scenarios) {
@@ -209,6 +209,7 @@ function checkResults(a, { root, result: r, repo, round, recorded }, historicalF
     if (states.get(id.toLowerCase()) !== 1) throw new Error('Missing or duplicate resource state: ' + id);
   }
   if (r.rerunScenarios.length) throw new Error('Pending rerun scenarios');
+  recheck();
   return { scenarios: results, engineering };
 }
 

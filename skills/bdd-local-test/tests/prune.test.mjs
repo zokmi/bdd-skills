@@ -152,6 +152,29 @@ test('apply replays one authoritative index per small batch', async t => {
   assert.equal(summary.prunableBytes, payload.length * 8);
 });
 
+test('prune batches the literal Git preflight and reports tracked evidence per topic', async t => {
+  const f = await batchFixture(t, 5);
+  const tracked = ['.bdd/' + topic + '/evidence/a.txt', '.bdd/batch-2/evidence.zip'];
+  fs.writeFileSync(path.join(f.repo, tracked[1]), 'tracked ZIP');
+  execFileSync('git', ['-C', f.repo, '--literal-pathspecs', 'add', '-f', '--', ...tracked]);
+  const trace = path.join(f.base, 'trace.jsonl');
+  const { stdout } = await run(process.execPath, [cli, 'prune', ...f.args], {
+    windowsHide: true, env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  const { items } = JSON.parse(stdout);
+  assert.deepEqual(items.map(i => i.path), f.ordered.map(i => path.dirname(i.evidence)));
+  for (const file of tracked) {
+    const item = items.find(i => i.topic === file.split('/')[1]);
+    assert.equal(item.action, 'keep');
+    assert.ok(item.reason.endsWith(file));
+  }
+  assert.equal(items.filter(i => i.action === 'prune').length, 3);
+  const starts = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(e => e.event === 'start' && e.argv.includes('ls-files'));
+  assert.equal(starts.length, 1);
+  assert.ok(starts[0].argv.includes('--literal-pathspecs'));
+});
+
 test('changes during a batch retain revoked, edited or replaced evidence and allow other topics to finish', async t => {
   const f = await batchFixture(t, 5);
   const [first, revoked, edited, replaced, last] = f.ordered;
@@ -172,6 +195,28 @@ test('changes during a batch retain revoked, edited or replaced evidence and all
   assert.deepEqual(fs.readFileSync(path.join(replaced.evidence, 'a.txt')), payload);
   assert.equal(fs.existsSync(last.evidence), false);
   assert.equal(summary.prunableBytes, payload.length * 2);
+});
+
+test('apply retains files added to the Git index after the shared prune preflight', async t => {
+  const f = await batchFixture(t, 3);
+  const [moving, next, last] = f.ordered;
+  const rename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (source, target) => {
+    if (source === moving.evidence) {
+      const files = [moving, next].map(i => path.relative(f.repo, path.join(i.evidence, 'a.txt')));
+      execFileSync('git', ['-C', f.repo, '--literal-pathspecs', 'add', '-f', '--', ...files]);
+    }
+    rename(source, target);
+  });
+  let summary;
+  t.mock.method(console, 'log', value => { summary = JSON.parse(value); });
+  await pruneCommand([...f.args, '--apply']);
+  assert.deepEqual(summary.items.map(i => i.action), ['keep', 'keep', 'pruned']);
+  for (const [i, entry] of [moving, next].entries()) {
+    assert.match(summary.items[i].reason, /git 追蹤/);
+    assert.deepEqual(fs.readFileSync(path.join(entry.evidence, 'a.txt')), payload);
+  }
+  assert.equal(fs.existsSync(last.evidence), false);
 });
 
 test('a partially completed deletion stops the batch and leaves later topics untouched', async t => {

@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { changedPaths, commit, repoRoot } from './git-changes.mjs';
 import { lint } from './module-lint.mjs';
-import { moduleIndex, findImpact, nextId } from './module-index.mjs';
+import { moduleIndex, repositoryImpact, nextId } from './module-index.mjs';
 
 const string = { type: 'string' };
 const boolean = { type: 'boolean' };
@@ -16,14 +16,14 @@ export function modulesCommand(args) {
   }
   const repo = repoRoot(v.repo);
   if (v['next-id'] && !v.module) throw new Error('--next-id 需要 --module');
-  const index = moduleIndex(repo, { moduleName: v['next-id'] ? v.module : undefined });
   if (v.lint) {
+    const index = moduleIndex(repo);
     const problems = lint(index);
     console.log(JSON.stringify({ repo, modules: index.modules.length, problems }));
     return problems.length ? 1 : 0;
   }
   if (v['next-id']) {
-    const [m] = index.modules;
+    const [m] = moduleIndex(repo, { moduleName: v.module }).modules;
     if (!m) throw new Error('找不到模組：' + v.module);
     if (m.error) throw new Error('模組的 MODULE.md 有錯誤：' + m.error);
     console.log(JSON.stringify({ module: m.name, prefix: m.prefix, next: nextId(m) }));
@@ -33,7 +33,7 @@ export function modulesCommand(args) {
       const baseline = commit(repo, v.base);
       paths = paths.concat(changedPaths(repo, baseline, 'HEAD'));
     }
-    console.log(JSON.stringify({ repo, ...findImpact(index.modules, paths) }));
+    console.log(JSON.stringify({ repo, ...repositoryImpact(repo, paths) }));
   }
   return 0;
 }

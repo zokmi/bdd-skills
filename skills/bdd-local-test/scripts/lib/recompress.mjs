@@ -7,7 +7,7 @@ import { appendIndexEvents, archiveKey, findArchiveIndexRoot, readArchiveStates,
 import { deduplicate, hashStream } from './archive-pack.mjs';
 import { writeVerifiedArchive } from './archive-store.mjs';
 import { isWebpCandidate, optimizeImages } from './archive-images.mjs';
-import { safePathComponent } from './archive-limits.mjs';
+import { safePathComponent, sequentialReadOptions } from './archive-limits.mjs';
 import { decodeArchiveText } from './archive-text.mjs';
 import { planArchiveInventory, stageEntry } from './extract.mjs';
 import { parseMaskLedger } from './mask-ledger.mjs';
@@ -39,8 +39,8 @@ async function indexedArchive(index, archive) {
   return state;
 }
 
-async function verifyDigest(file, expected) {
-  const actual = await hashStream(createReadStream(file));
+async function verifyDigest(file, expected, size) {
+  const actual = await hashStream(createReadStream(file, sequentialReadOptions(size)));
   if (actual !== expected) throw new Error(`封存檔 SHA-256 與索引記錄不同（記錄 ${expected}、目前 ${actual}），拒絕重新壓縮`);
 }
 
@@ -126,7 +126,7 @@ async function replaceArchive(index, archive, replacement, event) {
     // Keep the original reachable until both the atomic replacement and index append succeed.
     await backupOriginal(archive, backup);
     try {
-      await verifyDigest(backup, event.previousSha256);
+      await verifyDigest(backup, event.previousSha256, event.previousBytes);
       await rename(replacement, archive);
     } catch (err) {
       await unlink(backup);
@@ -153,8 +153,8 @@ async function recompress(archive, root) {
     // Extract the exact bytes checked against the index, even if another process replaces the ZIP.
     const snapshot = path.join(staging, 'input.zip');
     await copyFile(archive, snapshot, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
-    await verifyDigest(snapshot, previousSha256);
     const previousBytes = (await lstat(snapshot)).size;
+    await verifyDigest(snapshot, previousSha256, previousBytes);
     const { entries, topic, manifest } = await stageArchiveEntries(snapshot, staging, state.topic, { skipStagingWithoutImages: true });
     await unlink(snapshot);
     const { webp, rewrittenLinks, verifiedOriginalSha256 } =

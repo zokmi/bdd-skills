@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { summarize as collectSummary } from '../scripts/lib/parallel-summary.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const guide = new URL('../references/parallel-bdd-contract.md', import.meta.url);
@@ -70,4 +71,40 @@ test('summary adopts a recorded round and rejects the same result when its evide
   assert.match(missingSection.issues.join('\n'), /REPORT\.md#ss-13/);
   fs.writeFileSync(path.join(output, 'REPORT.md'), '### SS-13\nObserved order completion\n');
   assert.equal(summarize(0, 'valid-section').eligibleForReview, true);
+
+  const report = path.join(output, 'REPORT.md');
+  const fragments = Array.from({ length: 100 }, (_, i) => 'row-' + i);
+  const page = fragments.map(id => '## ' + id + '\nObserved order completion.').join('\n');
+  fs.writeFileSync(report, page);
+  fs.writeFileSync(path.join(output, 'other.md'), '## Details');
+  result.scenarios[0].evidence = ['./REPORT.md#row-0', 'other.md#details', ...fragments.map(id => 'REPORT.md#' + id)];
+  fs.writeFileSync(path.join(attempt, 'result.json'), JSON.stringify(result));
+  const collect = () => collectSummary([record], path.join(tmp, 'review'));
+  let reportStats = 0;
+  const lstat = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', function(file, ...args) {
+    if (file === report) reportStats++;
+    return lstat.call(this, file, ...args);
+  });
+  const large = collect();
+  assert.equal(large.eligibleForReview, true, large.issues.join('\n'));
+  assert.ok(reportStats <= 4, 'a shared report should need only a bounded number of path checks: ' + reportStats);
+  result.scenarios[0].evidence.push('REPORT.md#missing-final-anchor');
+  fs.writeFileSync(path.join(attempt, 'result.json'), JSON.stringify(result));
+  assert.match(collect().issues.join('\n'), /REPORT\.md#missing-final-anchor/);
+  result.scenarios[0].evidence.pop();
+  fs.writeFileSync(path.join(attempt, 'result.json'), JSON.stringify(result));
+  let changed = false;
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', function(file, ...args) {
+    const data = read.call(this, file, ...args);
+    if (file === report && !changed) {
+      changed = true;
+      fs.writeFileSync(report, page.replaceAll('completion', 'revocation'));
+    }
+    return data;
+  });
+  const stale = collect();
+  assert.equal(stale.counts['not-run'], 1);
+  assert.match(stale.issues.join('\n'), /changed.*REPORT\.md/i);
 });

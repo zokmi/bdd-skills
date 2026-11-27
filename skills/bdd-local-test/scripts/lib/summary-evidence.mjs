@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { markdownAnchors } from './report-anchors.mjs';
 import { evidenceFolder, evidencePathKey, isEvidenceImage, maskRecord, readMaskLedger, sha256File } from './mask-ledger.mjs';
 
@@ -61,30 +62,69 @@ function archivedImage(ledger, original) {
     typeof source.sha256 === 'string' && /^[a-f\d]{64}$/i.test(source.sha256) ? webp : null;
 }
 
+const minSharedFragments = 32;
+
+function sharedMarkdownPaths(rows) {
+  const shared = new Map();
+  if (rows.reduce((n, row) => n + row.evidence.length, 0) < minSharedFragments) return shared;
+  const counts = new Map();
+  for (const row of rows) {
+    for (const reference of row.evidence) {
+      const hash = reference.indexOf('#');
+      if (hash < 0) continue;
+      const name = reference.slice(0, hash);
+      if (!/\.(?:md|markdown)$/i.test(name)) continue;
+      const count = (counts.get(name) ?? 0) + 1;
+      counts.set(name, count);
+      if (count === minSharedFragments) shared.set(name, null);
+    }
+  }
+  return shared;
+}
+
 export function evidenceChecker(root) {
+  return groupEvidenceChecker(root, []).check;
+}
+
+export function groupEvidenceChecker(root, rows) {
   let ledger;
   const checked = new Set();
   const sections = new Map();
-  return (reference, passed) => {
-    let file, converted = false;
-    try { file = artifact(root, reference); }
-    catch (error) {
-      if (!(error instanceof MissingArtifact)) throw error;
-      const original = path.posix.normalize(reference.split('#', 1)[0].replaceAll('\\', '/'));
-      if (!/^evidence\/.*\.(?:png|jpe?g|bmp)$/is.test(original)) throw error;
-      ledger ??= readMaskLedger(root);
-      const mapped = archivedImage(ledger, original);
-      if (!mapped) throw error;
-      file = artifact(root, mapped, true);
-      converted = true;
-    }
+  const shared = sharedMarkdownPaths(rows);
+  // An ordinary spelling such as ./REPORT.md may parse a shared report first.
+  // This key only selects which bytes to hash; each spelling still goes through artifact.
+  const relativeKey = file => evidencePathKey(path.relative(root, file).split(path.sep).join('/'));
+  const sharedFiles = new Set(Array.from(shared.keys(), name => relativeKey(path.resolve(root, name.replaceAll('\\', '/')))));
+  function check(reference, passed) {
     const hash = reference.indexOf('#');
+    const name = shared.size && hash !== -1 ? reference.slice(0, hash) : null;
+    let file = shared.get(name), converted = false;
+    if (!file) {
+      try { file = artifact(root, reference); }
+      catch (error) {
+        if (!(error instanceof MissingArtifact)) throw error;
+        const original = path.posix.normalize(reference.split('#', 1)[0].replaceAll('\\', '/'));
+        if (!/^evidence\/.*\.(?:png|jpe?g|bmp)$/is.test(original)) throw error;
+        ledger ??= readMaskLedger(root);
+        const mapped = archivedImage(ledger, original);
+        if (!mapped) throw error;
+        file = artifact(root, mapped, true);
+        converted = true;
+      }
+      // The exact spelling has passed artifact's scope, link and file checks.
+      if (shared.has(name)) shared.set(name, file);
+    }
     if (hash !== -1 && /\.(?:md|markdown)$/i.test(file)) {
       let fragment;
       try { fragment = decodeURIComponent(reference.slice(hash + 1)); }
       catch { throw new Error('Invalid Markdown evidence fragment: ' + reference); }
-      if (!sections.has(file)) sections.set(file, markdownAnchors(fs.readFileSync(file, 'utf8')));
-      if (!fragment || !sections.get(file).has(fragment)) throw new Error('Missing Markdown evidence anchor: ' + reference);
+      if (!sections.has(file)) {
+        const bytes = fs.readFileSync(file);
+        sections.set(file, { anchors: markdownAnchors(bytes.toString('utf8')),
+          sha256: sharedFiles.size && sharedFiles.has(relativeKey(file))
+            ? createHash('sha256').update(bytes).digest('hex').toUpperCase() : null });
+      }
+      if (!fragment || !sections.get(file).anchors.has(fragment)) throw new Error('Missing Markdown evidence anchor: ' + reference);
     }
     if ((!passed && !converted) || !isEvidenceImage(file) || checked.has(file)) return;
     ledger ??= readMaskLedger(root);
@@ -93,7 +133,15 @@ export function evidenceChecker(root) {
     if (!/^evidence\//i.test(relative) || typeof record?.sha256 !== 'string' ||
         record.sha256.toUpperCase() !== sha256File(file)) throw new Error('Invalid image masking: ' + reference);
     checked.add(file);
-  };
+  }
+  function recheck() {
+    for (const [name, file] of shared) {
+      if (file && (artifact(root, name) !== file || sha256File(file) !== sections.get(file).sha256)) {
+        throw new Error('Evidence changed during summary: ' + name);
+      }
+    }
+  }
+  return { check, recheck };
 }
 
 // editablePaths uses PowerShell string wildcards: * and ? also match separators,

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { changedPaths } from '../scripts/lib/git-changes.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const runAsync = promisify(execFile);
@@ -364,6 +365,98 @@ test('empty-range records do not validate diverged histories, including reposito
   git('add', '.');
   git('commit', '-qm', 'diverged change');
   assert.equal(run(1, '--check').verdict, 'rerun');
+});
+
+test('quality-plan reads ordinary staged, working and untracked paths in one status without updating the index', t => {
+  const { repo, output, git, base } = fixture(t);
+  const write = (file, text) => fs.writeFileSync(path.join(repo, file), text);
+  write('.gitignore', '*.local\n');
+  for (const name of ['old name', 'staged-delete', 'working-delete', 'staged-and-restored']) write(name, 'initial\n');
+  git('add', '.');
+  git('commit', '-qm', 'prepare statuses');
+  const head = git('rev-parse', 'HEAD');
+  git('mv', 'old name', 'new [name]');
+  git('rm', '-q', 'staged-delete');
+  fs.unlinkSync(path.join(repo, 'working-delete'));
+  write('staged-and-restored', 'index\n');
+  git('add', 'staged-and-restored');
+  write('staged-and-restored', 'initial\n');
+  write('intent-to-add', 'new\n');
+  git('add', '-N', 'intent-to-add');
+  write('untouched.local', 'ignored\n');
+  write('  空 白.txt', 'untracked\n');
+  git('config', 'status.showUntrackedFiles', 'no');
+  git('config', 'status.renames', 'true');
+  const index = path.join(repo, '.git', 'index');
+  const before = fs.statSync(index, { bigint: true }).mtimeNs;
+  const trace = path.join(output, 'quality-status.ndjson');
+  const result = spawnSync(process.execPath, [cli, 'quality-plan', '--base', base, '--review-reason', 'inspect changes'], {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.statSync(index, { bigint: true }).mtimeNs, before);
+  const paths = ['.gitignore', 'old name', 'new [name]', 'staged-delete', 'working-delete', 'staged-and-restored',
+    'intent-to-add', '  空 白.txt'].sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(JSON.parse(result.stdout).paths, paths);
+  const starts = fs.readFileSync(trace, 'utf8').trim().split('\n').map(row => JSON.parse(row))
+    .filter(e => e.event === 'start').map(e => e.argv);
+  assert.equal(starts.filter(args => args.includes('--porcelain=v2')).length, 1);
+  assert.deepEqual(starts.filter(args => args.includes('diff') || args.includes('ls-files')).map(args => args.at(-2)),
+    [base + '...' + head]);
+});
+
+test('quality-plan retains the pinned HEAD, submodule ignore and deleted intent-to-add semantics', t => {
+  const { repo, git, base } = fixture(t);
+  const file = name => path.join(repo, name);
+  fs.writeFileSync(file('later'), 'committed later\n');
+  git('add', 'later');
+  git('commit', '-qm', 'new HEAD');
+  const head = git('rev-parse', 'HEAD');
+  assert.deepEqual(changedPaths(repo, base, base), ['later']);
+  fs.writeFileSync(file('intent'), 'uncommitted\n');
+  git('add', '-N', 'intent');
+  fs.unlinkSync(file('intent'));
+  assert.deepEqual(changedPaths(repo, head, head), []);
+  git('reset', '-q', '--', 'intent');
+  const blob = git('rev-parse', 'HEAD:readme');
+  execFileSync('git', ['-C', repo, 'update-index', '--index-info'], {
+    input: '0 ' + '0'.repeat(blob.length) + '\treadme\n100644 ' + blob + ' 1\treadme\n100644 ' + blob + ' 2\treadme\n',
+  });
+  assert.deepEqual(changedPaths(repo, head, head), ['readme']);
+  git('reset', '-q', '--', 'readme');
+
+  // The pinned diffs honor the project's submodule ignore configuration.
+  git('init', '-q', 'nested');
+  fs.writeFileSync(file('nested/readme'), 'clean child\n');
+  git('-C', 'nested', 'add', 'readme');
+  git('-C', 'nested', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '-qm', 'child');
+  fs.writeFileSync(file('.gitmodules'), '[submodule "nested"]\n\tpath = nested\n\turl = ../repo\n');
+  git('add', '.gitmodules', 'nested');
+  git('commit', '-qm', 'commit gitlink');
+  const nestedHead = git('rev-parse', 'HEAD');
+  fs.writeFileSync(file('nested/readme'), 'dirty child\n');
+  git('config', 'submodule.nested.ignore', 'all');
+  assert.deepEqual(changedPaths(repo, nestedHead, nestedHead), []);
+  git('config', 'submodule.nested.ignore', 'none');
+  assert.deepEqual(changedPaths(repo, nestedHead, nestedHead), ['nested']);
+});
+
+test('quality-plan retains the order of distinct paths with equal collation', t => {
+  const { repo, git } = fixture(t);
+  const first = 'caf\u00e9', second = 'cafe\u0301';
+  const write = (file, text) => fs.writeFileSync(path.join(repo, file), text);
+  for (const name of [first, second]) write(name, 'base\n');
+  const names = fs.readdirSync(repo);
+  if (!names.includes(first) || !names.includes(second)) return t.skip('File system folds equivalent Unicode names');
+  git('add', '.');
+  git('commit', '-qm', 'two distinct Unicode paths');
+  const head = git('rev-parse', 'HEAD');
+  write(second, 'staged\n');
+  git('add', '--', second);
+  write(second, 'base\n');
+  write(first, 'unstaged\n');
+  assert.deepEqual(changedPaths(repo, head, head), [first, second]);
 });
 
 test('mode-only changes invalidate both new and historical verification rounds', t => {

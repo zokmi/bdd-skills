@@ -204,11 +204,14 @@ function impactMatcher(modules, fileCount) {
   };
 }
 
-function findImpact(modules, paths) {
+function impactPaths(paths) {
+  const normalized = paths.map(p => p.replaceAll('\\', '/').replace(/^\.\//, ''));
+  return [...new Set(normalized.filter(file => file && !file.startsWith('.bdd/')))].sort(compare);
+}
+
+function matchImpact(modules, files) {
   const hits = new Map();
   const unmatched = [];
-  const normalized = paths.map(p => p.replaceAll('\\', '/').replace(/^\.\//, '')).filter(Boolean);
-  const files = [...new Set(normalized)].filter(file => !file.startsWith('.bdd/')).sort(compare);
   const matches = impactMatcher(modules.filter(m => !m.error), files.length);
   for (const file of files) {
     const matching = matches(file);
@@ -219,6 +222,16 @@ function findImpact(modules, paths) {
     }
   }
   return { modules: [...hits.keys()].sort(compare).map(name => ({ name, files: hits.get(name) })), unmatched };
+}
+
+function findImpact(modules, paths) {
+  return matchImpact(modules, impactPaths(paths));
+}
+
+export function repositoryImpact(repo, paths) {
+  const files = impactPaths(paths);
+  const modules = files.length ? moduleIndex(repo).modules : [];
+  return matchImpact(modules, files);
 }
 
 export { moduleIndex, findImpact, nextId, readFeature };

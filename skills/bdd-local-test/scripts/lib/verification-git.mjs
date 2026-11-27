@@ -86,7 +86,7 @@ function changedPaths(root, shas, rangeDiff = '') {
 }
 
 // Keep native Git command lines below the Windows argument length limit.
-function* batches(paths) {
+export function* pathspecBatches(paths) {
   let batch = [], size = 0;
   for (const p of new Set(paths)) {
     if (size + p.length > 12000 && batch.length) { yield batch; batch = []; size = 0; }
@@ -100,7 +100,7 @@ export function treeEntriesAt(root, head, paths, { includeSizes = false } = {}) 
   const blobs = Object.fromEntries(paths.map(p => [p, null]));
   const modes = { ...blobs };
   const sizes = includeSizes ? { ...blobs } : null;
-  for (const batch of batches(paths)) {
+  for (const batch of pathspecBatches(paths)) {
     const args = ['ls-tree', includeSizes ? '-lz' : '-z', head, '--', ...batch];
     for (const row of git(root, args).split('\0').filter(Boolean)) {
       const tab = row.indexOf('\t');
@@ -116,7 +116,7 @@ export function treeEntriesAt(root, head, paths, { includeSizes = false } = {}) 
 
 export function dirtyPaths(root, paths) {
   const dirty = new Set();
-  for (const batch of batches(paths)) {
+  for (const batch of pathspecBatches(paths)) {
     const records = git(root, ['status', '--porcelain=v1', '-z', '--', ...batch]).split('\0').filter(Boolean);
     for (let i = 0; i < records.length; i++) {
       const line = records[i];

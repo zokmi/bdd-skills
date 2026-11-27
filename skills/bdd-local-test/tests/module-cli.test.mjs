@@ -605,6 +605,32 @@ test('module impact and quality plans include both rename endpoints and staged-o
   assert.deepEqual(plan.selected.map(row => row.module), modules.modules.map(row => row.name));
 });
 
+test('module impact skips the index when the resolved paths contain only BDD artifacts', t => {
+  const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-empty-impact-')));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'baseline');
+  const dir = path.join(repo, '.bdd/modules/orders');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'MODULE.md'), '---\nprefix: OR\npaths:\n  - src/**\n---\n');
+  let visits = 0, result;
+  const list = fs.readdirSync;
+  t.mock.method(fs, 'readdirSync', (...args) => { visits++; return list(...args); });
+  t.mock.method(console, 'log', value => { result = JSON.parse(value); });
+  const run = (...args) => modulesCommand(['--repo', repo, ...args]);
+  for (const args of [['--path', '.\\.bdd\\run\\REPORT.md'], ['--base', 'HEAD']]) {
+    assert.equal(run(...args), 0);
+    assert.deepEqual(result, { repo, modules: [], unmatched: [] });
+    assert.equal(visits, 0);
+  }
+  assert.throws(() => run('--base', 'missing-commit', '--path', '.bdd/artifact'));
+  assert.equal(run('--path', '.bdd/run', '--path', './src/order.js', '--path', '.BDD/case'), 0);
+  assert.deepEqual(result, { repo, modules: [{ name: 'orders', files: ['src/order.js'] }], unmatched: ['.BDD/case'] });
+  assert.ok(visits > 0);
+});
+
 test('next-id reads only the requested module and preserves removed and reserved IDs', t => {
   const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-next-id-')));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));

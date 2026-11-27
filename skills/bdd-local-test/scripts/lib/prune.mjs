@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readArchiveStates, withIndexLock } from './archive-index.mjs';
+import { sequentialReadOptions } from './archive-limits.mjs';
 import { git, hashStream } from './archive-pack.mjs';
 import { outsideWorktrees, repository, resolveArchiveRoot } from './archive-store.mjs';
 import { planArchiveInventory } from './extract.mjs';
+import { pathspecBatches } from './verification-git.mjs';
 import { openZip } from './zip-io.mjs';
 
 const samePath = (a, b) => path.relative(a, b) === '';
@@ -16,8 +18,7 @@ function checkPhysical(file) {
   if (!samePath(fs.realpathSync.native(file), file)) throw new Error('含符號連結或 junction，不自動清理：' + file);
 }
 
-function evidenceRoots(topic) {
-  const entries = fs.readdirSync(topic);
+function evidenceRoots(topic, entries = fs.readdirSync(topic)) {
   const pending = entries.find(name => /^\.bdd-(?:prune|extract|mask-stage)-|^masking\.json\.lock$/i.test(name));
   if (pending) throw new Error('上次作業留有暫存證據或作業仍在執行，請先確認：' + path.join(topic, pending));
   const roots = entries.filter(name => /^evidence(?:\.zip)?$/i.test(name));
@@ -27,6 +28,9 @@ function evidenceRoots(topic) {
 
 function snapshot(topic, roots) {
   const files = new Map(), dirs = new Map();
+  const entries = fs.readdirSync(topic);
+  const currentRoots = evidenceRoots(topic, entries);
+  if (currentRoots.length !== roots.length || !roots.every(name => currentRoots.includes(name))) throw new Error('證據入口已變動');
   let bytes = 0;
   function walk(relative, evidence) {
     const full = path.join(topic, relative);
@@ -47,15 +51,47 @@ function snapshot(topic, roots) {
       throw new Error('證據入口類型異常或含符號連結或 junction：' + root);
     }
   }
-  for (const name of fs.readdirSync(topic)) walk(name, roots.includes(name));
+  for (const name of entries) walk(name, roots.includes(name));
   return { files, dirs, bytes };
 }
 
-function checkTracked(repo, topic, roots) {
-  const names = roots.map(n => path.relative(repo, path.join(topic, n)).split(path.sep).join('/'));
-  const result = git(repo, ['--literal-pathspecs', 'ls-files', '-z', '--', ...names]);
-  if (result.status !== 0) throw new Error('不能確認證據的 git 追蹤狀態');
-  if (result.stdout) throw new Error('證據檔已被 git 追蹤，不自動刪除：' + result.stdout.split('\0', 1)[0]);
+function evidencePaths(repo, topic, roots) {
+  return roots.map(n => path.relative(repo, path.join(topic, n)).split(path.sep).join('/'));
+}
+
+function trackedFiles(repo, names) {
+  return git(repo, ['--literal-pathspecs', 'ls-files', '-z', '--', ...names]);
+}
+
+function trackedPreflight(repo, topics) {
+  const firstTracked = new Map();
+  for (const batch of pathspecBatches(topics.flatMap(({ item, roots }) => evidencePaths(repo, item.path, roots)))) {
+    const result = trackedFiles(repo, batch);
+    if (result.status !== 0 || result.error) continue; // Retry per topic, including when combined output exceeds maxBuffer.
+    const found = new Map(batch.map(name => [name, '']));
+    for (const file of result.stdout.split('\0')) {
+      if (!file) continue;
+      // Each literal root is .bdd/<topic>/evidence or .bdd/<topic>/evidence.zip.
+      const root = file.split('/', 3).join('/');
+      if (!found.has(root)) { found.clear(); break; } // Let Git resolve unexpected path spellings per topic.
+      if (!found.get(root)) found.set(root, file);
+    }
+    for (const [root, file] of found) firstTracked.set(root, file);
+  }
+  return firstTracked;
+}
+
+function checkTracked(repo, topic, roots, preflight) {
+  const names = evidencePaths(repo, topic, roots);
+  let first;
+  if (preflight && names.every(name => preflight.has(name))) {
+    first = names.map(name => preflight.get(name)).filter(Boolean).sort()[0];
+  } else {
+    const result = trackedFiles(repo, names);
+    if (result.status !== 0 || result.error) throw new Error('不能確認證據的 git 追蹤狀態');
+    first = result.stdout.split('\0', 1)[0];
+  }
+  if (first) throw new Error('證據檔已被 git 追蹤，不自動刪除：' + first);
 }
 
 async function sourceHashes(topic, files) {
@@ -70,7 +106,7 @@ async function sourceHashes(topic, files) {
         const inventory = await planArchiveInventory(zip.entries, path.parse(full).root, { evidenceZip: true });
         for (const item of inventory.files.values()) hashes.push(await hashStream(await item.entry.open()));
       } finally { await zip.close(); }
-    } else hashes.push(await hashStream(fs.createReadStream(full)));
+    } else hashes.push(await hashStream(fs.createReadStream(full, sequentialReadOptions(version.size))));
     if (!sameVersion(version, stat(full))) throw new Error('證據已變動：' + full);
   }
   return hashes;
@@ -82,7 +118,7 @@ async function archiveCoverage(state, worktrees) {
   await outsideWorktrees(file, worktrees, []);
   checkPhysical(file);
   const version = stat(file);
-  if (!version?.isFile() || await hashStream(fs.createReadStream(file)) !== state.sha256.toUpperCase()) {
+  if (!version?.isFile() || await hashStream(fs.createReadStream(file, sequentialReadOptions(version.size))) !== state.sha256.toUpperCase()) {
     throw new Error('封存 SHA-256 不符');
   }
   const zip = await openZip(file);
@@ -199,12 +235,12 @@ function sameProof(previous, current) {
   return (previous.verifiedOriginalSha256 ?? []).every(hash => verified.has(hash));
 }
 
-async function assess(item, roots, context) {
+async function assess(item, roots, context, preflight) {
   const { repo, worktrees, states, accepted } = context;
   checkPhysical(item.path);
   const before = snapshot(item.path, roots);
   item.bytes = before.bytes;
-  checkTracked(repo, item.path, roots);
+  checkTracked(repo, item.path, roots, preflight);
   const matches = candidates(states, item.topic, worktrees[0], accepted);
   if (!matches.length) throw new Error('沒有符合 ' + accepted.join('／') + ' 清理條件的同 repo 同主題封存');
   const covered = [], known = new Set();
@@ -294,7 +330,7 @@ export async function pruneCommand(args) {
     const states = await readArchiveStates(index, { includeVerifiedOriginals: true });
     const accepted = values['allow-local-only'] ? ['uploaded-verified', 'uploaded', 'local-only'] : ['uploaded-verified'];
     const context = { repo, worktrees, states, index, accepted };
-    const pending = [];
+    const topics = [], pending = [];
     summary.archiveRoot = root;
     summary.prunableBytes = 0;
     for (const dir of fs.readdirSync(bdd, { withFileTypes: true })) {
@@ -306,12 +342,20 @@ export async function pruneCommand(args) {
         checkPhysical(topic);
         const roots = evidenceRoots(topic);
         if (!roots.length) continue;
-        const plan = await assess(item, roots, context);
-        if (applied) pending.push(plan);
+        topics.push({ item, roots });
       } catch (error) {
         keepItem(item, error);
       }
       summary.items.push(item);
+    }
+    const preflight = trackedPreflight(repo, topics);
+    for (const { item, roots } of topics) {
+      try {
+        const plan = await assess(item, roots, context, preflight);
+        if (applied) pending.push(plan);
+      } catch (error) {
+        keepItem(item, error);
+      }
       if (pending.length === maxBatchTopics) await applyBatch(pending, context);
     }
     await applyBatch(pending, context);

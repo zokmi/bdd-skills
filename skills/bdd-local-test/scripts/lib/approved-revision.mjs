@@ -1,23 +1,12 @@
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './verification-git.mjs';
+import { readStatus } from './git-changes.mjs';
+
+export { readStatus };
 
 const changedWhileReading = () => new Error('Checkout changed while capturing the approved revision; retry.');
-
-export function readStatus(repo) {
-  const raw = execFileSync('git', ['-C', repo, '--no-optional-locks', '-c', 'core.fsmonitor=false',
-    'status', '--porcelain=v2', '-z', '--branch', '--no-ahead-behind', '--no-renames',
-    '--ignore-submodules=none', '--untracked-files=all'], {
-    windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
-  });
-  // A lossy filename decode could bind a different path in the working tree.
-  const entries = new TextDecoder('utf-8', { fatal: true }).decode(raw).split('\0').filter(Boolean);
-  const head = entries.find(row => row.startsWith('# branch.oid '))?.slice('# branch.oid '.length);
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) throw new Error('Expected a committed HEAD for the approved revision.');
-  return { head, entries: entries.filter(row => !row.startsWith('# ')) };
-}
 
 function workingEntry(row) {
   if (row.startsWith('? ')) return { name: row.slice(2), submodule: false };

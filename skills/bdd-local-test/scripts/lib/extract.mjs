@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { parseArgs } from 'node:util';
 import { openZip } from './zip-io.mjs';
 import { hashStream } from './archive-pack.mjs';
-import { entryLimit, byteLimit, manifestLimit, safePathComponent } from './archive-limits.mjs';
+import { entryLimit, byteLimit, manifestLimit, safePathComponent, sequentialReadOptions } from './archive-limits.mjs';
 import { decodeArchiveText } from './archive-text.mjs';
 
 const pathKey = file => process.platform === 'win32' ? file.toLowerCase() : file;
@@ -135,7 +135,7 @@ export async function stageEntry(entry, file) {
 async function identicalExisting(item) {
   const stat = inspect(item.file, false);
   if (!stat) return null;
-  if (stat.size === item.size && await hashStream(fs.createReadStream(item.file)) === item.hash) return stat;
+  if (stat.size === item.size && await hashStream(fs.createReadStream(item.file, sequentialReadOptions(stat.size))) === item.hash) return stat;
   throw new Error('目的地已有同名但內容不同的檔案，不覆蓋：' + item.file);
 }
 
