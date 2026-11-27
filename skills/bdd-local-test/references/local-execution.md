@@ -60,7 +60,7 @@
 - 核准的驗證截圖使用 `evidence/<情境編號>_<簡短中文描述>.webp` 或 `.png`，檔名對應情境。其他供代理目視確認的截圖用暫存位置，記錄必要的實際畫面結果後立即刪除，不加入持久 evidence 清單。通過的 UI 情境可用 `REPORT.md#<情境編號>` 記錄操作及觀察到的實際結果作為文字證據。
 - **截圖當下就遮蓋個資**：從受測 worktree 對已驗證的 CLI session 執行 `node "<skill 目錄>/scripts/bdd.mjs" cli-screenshot --session <名稱> --filename ".bdd/<本輪>/evidence/<檔名>.png"`，套用 `.bdd/config.json` 的 `mask.selectors`。確認帳號名稱、頭像、Email、電話等均已遮蓋後，以 `node "<skill 目錄>/scripts/bdd.mjs" mask-evidence --dir <輸出資料夾> --mark --pattern <截圖檔名> --method css` 登記。個別頁面缺少適用 selector 時，依[截圖遮罩範例](archive.md#遮罩在截圖當下處理)使用同一 session 的 `run-code` 在截圖當下遮蓋實際欄位。確認整張畫面沒有個資時，用 `playwright-cli -s=<名稱> screenshot --filename="<本輪證據絕對路徑>.png"` 另存新檔，再以 `--method exempt --note <理由>` 登記。
   未遮罩的原圖不要留下，事後補救用 `--apply` 套座標規則。保留的驗證截圖須有有效遮罩登記；暫存截圖若畫面含個資也必須先遮罩再查看，讀取完成後立即刪除。封存時沒有有效遮罩登記的圖片會被拒絕。
-  做法見 [BDD 封存、遮罩與清理](archive.md)〈遮罩〉。
+  同批截圖逐張確認後，若遮罩方式相同、檔名前綴只涵蓋這批圖片，可用一次 `--mark --pattern 'OR-07_R2_*' --method css` 登記。使用 `exempt` 時同批圖片也須適用相同理由。核對命令回傳的 `marked` 清單與本批檔名一致。做法見 [BDD 封存、遮罩與清理](archive.md)〈遮罩〉。
 - 前置資料盡量透過 UI 或 API 建立，走真實路徑；只有真的做不到才直接寫資料庫，並在報告註明。
 - 序列執行時依 [提前準備測資](parallel-bdd.md#序列執行時提前準備測資) 集中建立互不影響的前置資料，並在各情境使用前核對狀態。
 - `@UI` 須逐一執行情境的操作與結果確認，登入前置條件可依上述規則重用。若 `goto` 無法連到 localhost，檢查服務、有效埠、HTTPS 與 CLI 瀏覽器所在主機，確認使用本輪 session 與 `configPath` 後重新探測。仍無法執行時，將受影響的 UI 情境記為「阻塞」，列出錯誤、排查結果與解除條件。

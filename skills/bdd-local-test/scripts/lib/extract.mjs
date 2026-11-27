@@ -5,6 +5,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { parseArgs } from 'node:util';
 import { openZip } from './zip-io.mjs';
+import { hashStream } from './archive-pack.mjs';
 import { entryLimit, byteLimit, manifestLimit, safePathComponent } from './archive-limits.mjs';
 import { decodeArchiveText } from './archive-text.mjs';
 
@@ -134,11 +135,7 @@ export async function stageEntry(entry, file) {
 async function identicalExisting(item) {
   const stat = inspect(item.file, false);
   if (!stat) return null;
-  if (stat.size === item.size) {
-    const hash = createHash('sha256');
-    for await (const bytes of fs.createReadStream(item.file)) hash.update(bytes);
-    if (hash.digest('hex').toUpperCase() === item.hash) return stat;
-  }
+  if (stat.size === item.size && await hashStream(fs.createReadStream(item.file)) === item.hash) return stat;
   throw new Error('目的地已有同名但內容不同的檔案，不覆蓋：' + item.file);
 }
 
@@ -188,19 +185,43 @@ export async function expandArchive({ archive, to, evidenceZip = false, maxEntri
     const { files, manifest, folder, verifiedFiles } = await planArchiveInventory(zip.entries, destination, {
       evidenceZip, maxEntries, maxOutputBytes,
     });
-    for (const item of files.values()) inspect(item.file, false);
-    ensureDirectory(destination, createdDirs);
-    staging = fs.mkdtempSync(path.join(destination, '.bdd-extract-'));
-    let index = 0, written = 0, restoredAliases = 0, skippedIdentical = 0;
+    const needed = new Set();
     for (const item of files.values()) {
-      item.staged = path.join(staging, String(index++));
-      if (item.entry) item.hash = await stageEntry(item.entry, item.staged);
-      else item.hash = item.original.hash;
+      if (!inspect(item.file, false)) needed.add(item.original ?? item);
+    }
+    ensureDirectory(destination, createdDirs);
+    let index = 0, written = 0, restoredAliases = 0, skippedIdentical = 0;
+    function stagedPath() {
+      if (!staging) {
+        inspect(destination, true);
+        staging = fs.mkdtempSync(path.join(destination, '.bdd-extract-'));
+      }
+      return path.join(staging, String(index++));
+    }
+    async function prepareMissing(item, privateSource) {
+      if (!item.staged) {
+        item.staged = stagedPath();
+        if (privateSource) {
+          // Each restored alias must be independently editable.
+          fs.copyFileSync(privateSource, item.staged, fs.constants.COPYFILE_FICLONE);
+        } else {
+          const hash = await stageEntry((item.original ?? item).entry, item.staged);
+          if (hash !== item.hash) throw new Error('還原後內容不符：' + item.file);
+        }
+      }
+      if (item.mtime) fs.utimesSync(item.staged, item.mtime, item.mtime);
+    }
+    for (const item of files.values()) {
+      if (item.original) item.hash = item.original.hash;
+      else if (needed.has(item)) {
+        item.staged = stagedPath();
+        item.hash = await stageEntry(item.entry, item.staged);
+      } else {
+        item.hash = await hashStream(await item.entry.open());
+      }
       if (item.expectedHash && item.hash !== item.expectedHash) throw new Error('還原後內容不符：' + item.file);
       item.existing = await identicalExisting(item);
-      // An alias must be independently editable after restoration.
-      if (!item.existing && item.original) fs.copyFileSync(item.original.staged, item.staged, fs.constants.COPYFILE_FICLONE);
-      if (!item.existing && item.mtime) fs.utimesSync(item.staged, item.mtime, item.mtime);
+      if (!item.existing) await prepareMissing(item, item.original?.staged);
     }
     for (const item of files.values()) {
       if (item.existing) {
@@ -208,8 +229,9 @@ export async function expandArchive({ archive, to, evidenceZip = false, maxEntri
           skippedIdentical++;
           continue;
         }
-        if (item.original) fs.copyFileSync(item.original.staged, item.staged, fs.constants.COPYFILE_FICLONE);
-        if (item.mtime) fs.utimesSync(item.staged, item.mtime, item.mtime);
+        // A staged source may already be linked to an editable published file. Reopen
+        // the ZIP when a previously verified destination disappears during publication.
+        await prepareMissing(item);
       }
       ensureDirectory(path.dirname(item.file), createdDirs);
       inspect(item.file, false);

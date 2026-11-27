@@ -7,6 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { addSnapshots } from '../scripts/lib/archive-pack.mjs';
 import { repository, resolveArchiveRoot } from '../scripts/lib/archive-store.mjs';
 import { expandArchive } from '../scripts/lib/extract.mjs';
 import { openZip, writeZip } from '../scripts/lib/zip-io.mjs';
@@ -133,8 +134,8 @@ test('archive and recompress validate matching image bytes by extension before w
 
 test('archiving the same group for different issues keeps each issue independently active', async t => {
   const f = await fixture(t);
-  const archive = async (issue, label, ...args) => {
-    const source = path.join(f.repo, '.bdd', issue + '-topic', 'groups', 'api');
+  const archive = async (issue, label, batch, ...args) => {
+    const source = path.join(f.repo, '.bdd', issue + '-topic', batch, 'groups', 'api');
     await mkdir(source, { recursive: true });
     for (const name of ['REPORT.md', 'verification.json', 'evidence']) {
       await cp(path.join(f.dir, name), path.join(source, name), { recursive: true });
@@ -142,14 +143,14 @@ test('archiving the same group for different issues keeps each issue independent
     return JSON.parse((await exec(process.execPath, [cli, 'archive', '--dir', source, '--archive-root', f.root,
       '--destination', path.join(f.root, label + '.zip'), ...args])).stdout);
   };
-  const first = await archive('101', 'first', '--issue', '101');
-  const other = await archive('202', 'other', '--issue', '202');
+  const first = await archive('101', 'first', '', '--issue', '101');
+  const other = await archive('202', 'other', '', '--issue', '202');
   assert.deepEqual(other.superseded, []);
   // Earlier group archives could have an empty issue, but kept the original source directory.
   const events = (await readFile(first.index, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   events[0].issue = '';
   await writeFile(first.index, events.map(event => JSON.stringify(event)).join('\n') + '\n');
-  const next = await archive('101', 'next');
+  const next = await archive('101', 'next', 'release-round');
   assert.deepEqual(next.superseded, [first.archive]);
   const published = (await readFile(first.index, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   assert.equal(published.find(event => event.archive === next.archive && event.event === 'created').issue, '101');
@@ -313,6 +314,57 @@ test('archive snapshots checked versioned features once and supports historical 
   assert.equal(await readFile(path.join(restored.folder, 'scenario.feature'), 'utf8'), 'Feature: historical');
   await rm(record);
   await assert.rejects(f.command(), /verification\.json/);
+});
+
+test('archive batches Git lookups and restores exact bytes and roles for paths sharing a blob', async t => {
+  const f = await fixture(t);
+  const large = Buffer.alloc(384 * 1024, 0xab);
+  large.write('\n\0\n', 65535);
+  const scenarios = [];
+  const contents = new Map();
+  for (const [i, name] of ['a', '含 空格', 'z-empty', 'z-empty-copy'].entries()) {
+    const feature = '.bdd/modules/reports/' + name + '.feature';
+    const bytes = i < 2 ? large : Buffer.alloc(0);
+    await writeFile(path.join(f.repo, feature), bytes);
+    git(f.repo, 'add', '--', feature);
+    scenarios.push({ path: feature, role: i % 2 ? 'regression' : 'changed' });
+    contents.set(feature, bytes);
+  }
+  git(f.repo, '-c', 'user.name=bdd-test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'shared blobs');
+  const head = git(f.repo, 'rev-parse', 'HEAD');
+  for (const scenario of scenarios) scenario.blob = git(f.repo, 'rev-parse', head + ':' + scenario.path);
+  const verification = path.join(f.dir, 'verification.json');
+  const save = () => writeFile(verification, JSON.stringify({ rounds: [{ head, scenarios }] }));
+  await save();
+  const trace = path.join(f.base, 'git-trace.jsonl');
+  const { stdout } = await exec(process.execPath, [cli, 'archive', '--dir', f.dir, '--archive-root', f.root], {
+    windowsHide: true, env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    .filter(event => event.event === 'start').map(event => event.argv);
+  assert.equal(calls.filter(args => args.includes('cat-file')).length, 2);
+  assert.equal(calls.filter(args => args.includes('rev-parse') && args.includes('--verify')).length, 0);
+  const { manifest, folder } = await expandArchive({ archive: JSON.parse(stdout).archive, to: path.join(f.base, 'restore-batch') });
+  for (const { path: feature, blob, role } of scenarios) {
+    const name = feature.replace('.bdd/modules/', 'features/');
+    assert.equal(manifest.files[name].role, role);
+    assert.equal(manifest.files[name].blob, blob);
+    assert.deepEqual(await readFile(path.join(folder, name)), contents.get(feature));
+  }
+  // A failed staging write must stop the producer even when more bytes are waiting on stdout.
+  const staging = path.join(f.base, 'failed-stage');
+  await mkdir(staging);
+  const occupied = path.join(staging, 'snapshot-' + scenarios[0].blob);
+  await writeFile(occupied, 'existing file');
+  await assert.rejects(addSnapshots([], f.repo, head, scenarios, staging), { code: 'EEXIST' });
+  assert.equal(await readFile(occupied, 'utf8'), 'existing file');
+  for (const revision of ['absent-revision', head + '\n' + head, head + '\r' + head, head + '\0' + head]) {
+    await assert.rejects(addSnapshots([], f.repo, revision, scenarios, staging), /受測 commit/);
+  }
+  scenarios[2].blob = scenarios[0].blob;
+  await save();
+  await assert.rejects(f.command('--destination', path.join(f.root, 'wrong.zip')), /z-empty\.feature/);
+  assert.equal((await readdir(f.root)).includes('wrong.zip'), false);
 });
 
 test('archive flattens evidence.zip without replacing loose files that have different content', async t => {

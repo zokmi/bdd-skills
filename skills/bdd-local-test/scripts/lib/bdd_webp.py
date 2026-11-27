@@ -81,7 +81,7 @@ def convert(src, dst):
         raise ValueError("unsupported image file extension for lossless WebP")
     with _rgba(src, image_format) as original:
         os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-        original.save(dst, "WEBP", lossless=True, quality=100, method=6, exact=True)
+        original.save(dst, "WEBP", lossless=True, quality=100, method=4, exact=True)
         with _rgba(dst, "WEBP") as restored:
             identical = _same_rgba(original, restored)
     return {

@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { captureApprovedRevision } from './approved-revision.mjs';
 import { hasEngineeringCoverage, validateEngineeringChecks } from './engineering-checks.mjs';
+import { readGitBlobs } from './git-blobs.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
 import { checkScenarioIds, declaredScenarioIds, parseFeature, readFeature } from './module-index.mjs';
 import { readContract } from './parallel-contracts.mjs';
@@ -61,21 +62,47 @@ function recordedAt(now) {
   return day + ' ' + [now.getHours(), now.getMinutes(), now.getSeconds()].map(pad).join(':') + ' ' + zone;
 }
 
-function scenarioRecords(root, entries, role, historicalHead) {
+function scenarioSelections(entries, role) {
   return (entries || []).flatMap(v => v.split(';')).map(s => s.trim()).filter(Boolean).map(entry => {
     const separator = entry.indexOf('::');
     const rel = (separator === -1 ? entry : entry.slice(0, separator)).replaceAll('\\', '/').replace(/^\.\//, '');
     if (!rel || path.isAbsolute(rel) || path.win32.isAbsolute(rel) || rel.split('/').includes('..')) {
       throw new Error('情境檔必須使用 repo 相對路徑：' + rel);
     }
-    const file = path.join(root, rel);
-    if (!historicalHead && !fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error('找不到情境檔：' + rel);
-    const feature = historicalHead ? parseFeature(git(root, ['cat-file', 'blob', historicalHead + ':' + rel]), rel) : readFeature(file, root);
-    const available = declaredScenarioIds(feature);
-    const ids = separator === -1 ? [...available]
-      : entry.slice(separator + 2).split(/[,\s]+/).filter(Boolean);
-    if (separator !== -1) checkScenarioIds(available, ids, rel);
-    return { path: rel, blob: null, ids, role };
+    const ids = separator === -1 ? null : entry.slice(separator + 2).split(/[,\s]+/).filter(Boolean);
+    return { path: rel, ids, role };
+  });
+}
+
+function historicalScenarioIds(root, selections, { blobs, sizes }) {
+  const entries = new Map();
+  for (const { path: file } of selections) {
+    const oid = blobs[file];
+    if (sizes[file] !== null) entries.set(oid, { oid, size: sizes[file], file });
+  }
+  const ids = new Map();
+  for (const { oid, bytes } of readGitBlobs(root, entries.values())) {
+    ids.set(oid, declaredScenarioIds(parseFeature(bytes, entries.get(oid).file)));
+  }
+  return ids;
+}
+
+function scenarioRecords(root, selections, tree, historicalHead) {
+  const historical = historicalHead ? historicalScenarioIds(root, selections, tree) : null;
+  return selections.map(({ path: rel, ids, role }) => {
+    const blob = tree.blobs[rel];
+    let available;
+    if (historical) {
+      // Non-blobs, missing files and legacy path spellings retain Git's revision:path semantics.
+      available = historical.get(blob) ?? declaredScenarioIds(parseFeature(
+        git(root, ['cat-file', 'blob', historicalHead + ':' + rel]), rel));
+    } else {
+      const file = path.join(root, rel);
+      if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error('找不到情境檔：' + rel);
+      available = declaredScenarioIds(readFeature(file, root));
+    }
+    if (ids !== null) checkScenarioIds(available, ids, rel);
+    return { path: rel, blob, ids: ids ?? [...available], role };
   });
 }
 
@@ -117,15 +144,15 @@ async function record(file, opts) {
   const refs = (opts.commits || []).flatMap(s => s.split(/[,\s]+/)).filter(Boolean);
   const changes = testedChanges(root, refs, base, head);
   const paths = [...new Set([...changes.paths, ...sources.map(s => s.path)])];
-  const hasScenarios = opts['changed-scenarios']?.length || opts['regression-scenarios']?.length;
-  const historicalHead = hasScenarios && head !== currentHead ? head : null;
-  const scenarios = [
-    ...scenarioRecords(root, opts['changed-scenarios'], 'changed', historicalHead),
-    ...scenarioRecords(root, opts['regression-scenarios'], 'regression', historicalHead),
+  const selections = [
+    ...scenarioSelections(opts['changed-scenarios'], 'changed'),
+    ...scenarioSelections(opts['regression-scenarios'], 'regression'),
   ];
-  const allPaths = [...paths, ...scenarios.map(s => s.path)];
-  const { blobs, modes } = treeEntriesAt(root, head, allPaths);
-  for (const s of scenarios) s.blob = blobs[s.path];
+  const historicalHead = selections.length && head !== currentHead ? head : null;
+  const allPaths = [...paths, ...selections.map(s => s.path)];
+  const tree = treeEntriesAt(root, head, allPaths, { includeSizes: Boolean(historicalHead) });
+  const { blobs, modes } = tree;
+  const scenarios = scenarioRecords(root, selections, tree, historicalHead);
   const round = {
     recordedAt: recordedAt(new Date()), repo: repoIdentity(root), branch: git(root, ['branch', '--show-current']).trim(),
     head, base, baseRef: opts.base || '', dirtyPaths: dirtyPaths(root, allPaths), commits: await commitInfo(root, changes.shas),

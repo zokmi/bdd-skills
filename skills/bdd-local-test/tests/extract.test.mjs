@@ -41,6 +41,100 @@ test('restores historical topic and independent alias files, skipping identical 
   assert.equal(fs.readFileSync(copy, 'utf8'), 'edited');
 });
 
+test('identical restores verify legacy payloads and manifest aliases without writing staged bytes', async t => {
+  for (const format of ['legacy', 'schema-2']) {
+    await t.test(format, async t => {
+      const opts = fixture(t);
+      const entries = Array.from({ length: 24 }, (_, i) => ({
+        name: 'topic/file-' + i, data: Buffer.alloc(4096, i), compress: false,
+      }));
+      const files = Object.fromEntries(entries.map(e => [path.posix.basename(e.name),
+        { sha256: createHash('sha256').update(e.data).digest('hex') }]));
+      let count = entries.length;
+      if (format === 'schema-2') {
+        files['alias'] = files['file-0'];
+        const manifest = { topic: 'topic', schema: 2, files, aliases: { alias: 'file-0' } };
+        entries.push({ name: 'topic/bdd-manifest.json', data: Buffer.from(JSON.stringify(manifest)) });
+        count++;
+      }
+      await writeZip(opts.archive, entries);
+      const first = await expandArchive(opts);
+      assert.equal(first.writtenPaths.length, count);
+      const write = fs.createWriteStream;
+      let stagedBytes = 0;
+      t.mock.method(fs, 'createWriteStream', (...args) => {
+        const out = write(...args);
+        out.on('close', () => { stagedBytes += out.bytesWritten; });
+        return out;
+      });
+      const copy = t.mock.method(fs, 'copyFileSync');
+      const again = await expandArchive(opts);
+      assert.equal(again.skippedIdentical, count);
+      assert.deepEqual(again.hashes, first.hashes);
+      assert.equal(stagedBytes, 0);
+      assert.equal(copy.mock.callCount(), 0);
+      // A matching destination must never hide a corrupt source payload.
+      const bytes = fs.readFileSync(opts.archive);
+      const start = bytes.indexOf(entries[5].data);
+      assert.notEqual(start, -1);
+      bytes[start] ^= 1;
+      fs.writeFileSync(opts.archive, bytes);
+      await assert.rejects(expandArchive(opts), /CRC32/);
+      assert.equal(stagedBytes, 0);
+      if (format === 'schema-2') {
+        const header = entries.at(-1), manifest = JSON.parse(header.data);
+        manifest.files.alias.sha256 = '0'.repeat(64);
+        header.data = Buffer.from(JSON.stringify(manifest));
+        fs.unlinkSync(opts.archive);
+        await writeZip(opts.archive, entries);
+        await assert.rejects(expandArchive(opts), /還原後內容不符/);
+        assert.equal(stagedBytes, 0);
+      }
+    });
+  }
+});
+
+test('an alias that disappears during publication is restored from the verified archive', async t => {
+  const opts = fixture(t);
+  await writeZip(opts.archive, archiveEntries());
+  const folder = path.join(opts.to, 'topic');
+  fs.mkdirSync(folder, { recursive: true });
+  const source = path.join(folder, 'source.txt'), alias = path.join(folder, 'copy.txt');
+  fs.writeFileSync(alias, data);
+  const link = fs.linkSync;
+  t.mock.method(fs, 'linkSync', (from, to) => {
+    link(from, to);
+    if (to === source) {
+      fs.writeFileSync(source, 'concurrent edit');
+      fs.unlinkSync(alias);
+    }
+  });
+  const result = await expandArchive(opts);
+  assert.equal(result.restoredAliases, 1);
+  assert.equal(fs.readFileSync(source, 'utf8'), 'concurrent edit');
+  assert.deepEqual(fs.readFileSync(alias), data);
+});
+
+test('a destination edited after verification keeps the edit and rolls back earlier publications', async t => {
+  const opts = fixture(t);
+  const fresh = path.join(opts.to, 'fresh'), existing = path.join(opts.to, 'existing');
+  await writeZip(opts.archive, [{ name: 'fresh', data }, { name: 'existing', data }]);
+  fs.mkdirSync(opts.to);
+  fs.writeFileSync(existing, data);
+  const edit = Buffer.alloc(data.length, 1);
+  const link = fs.linkSync;
+  t.mock.method(fs, 'linkSync', (from, to) => {
+    link(from, to);
+    if (to === fresh) {
+      fs.writeFileSync(existing, edit);
+      fs.utimesSync(existing, 1, 1);
+    }
+  });
+  await assert.rejects(expandArchive(opts), /不覆蓋/);
+  assert.deepEqual(fs.readdirSync(opts.to), ['existing']);
+  assert.deepEqual(fs.readFileSync(existing), edit);
+});
+
 test('limits count both payloads and aliases before publishing', async t => {
   const opts = fixture(t);
   await writeZip(opts.archive, archiveEntries());

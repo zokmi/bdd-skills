@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync, execFileSync, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { compareApprovedPlan, loadApprovedPlan } from '../scripts/lib/parallel-plan.mjs';
+import { compareApprovedPlan, loadApprovedPlan, parallelPlan } from '../scripts/lib/parallel-plan.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
 const guide = fs.readFileSync(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
@@ -127,6 +127,153 @@ function fixture(t) {
   }
   return { dir, repo, git, head, file, plan, template, run };
 }
+
+function prepareTemplates(f, destination) {
+  const files = f.plan.groups.map(({ groupId }) => {
+    const name = groupId + '.template.json';
+    writeJson(path.join(f.dir, name), { ...f.template, groupId, outputDir: path.join(destination, 'groups', groupId) });
+    return name;
+  });
+  const manifest = path.join(f.dir, 'templates.json');
+  writeJson(manifest, files);
+  return { manifest, files, args: ['--templates', manifest, '--output-dir', destination] };
+}
+
+test('multi-template batch publishes complete assignments with bounded revision and feature reads', t => {
+  const f = fixture(t);
+  const destination = path.join(f.dir, 'dispatch');
+  const { head, repo, plan } = f;
+  const selection = path.join(f.dir, 'selection.json');
+  writeJson(selection, {
+    issueScope: 'batch', runId: plan.runId, issue: '42', bddStatus: 'PENDING', level: 'TARGETED', staticPassed: true,
+    repo, base: head, head, revision: plan.groups[0].revision,
+    selected: plan.groups.map(({ scenarios: [s] }) => ({ feature: s.feature, scenarios: [{ ids: [s.id] }] })),
+  });
+  Object.assign(plan, { scope: 'batch', selections: [{ path: selection, sha256: createHash('sha256').update(fs.readFileSync(selection)).digest('hex') }] });
+  writeJson(f.file, plan);
+  const { manifest, files, args } = prepareTemplates(f, destination);
+  writeJson(manifest, [files[0], files[0]]);
+  assert.equal(f.run(...args).status, 2);
+  assert.ok(!fs.existsSync(destination));
+  writeJson(manifest, files);
+  const trace = path.join(f.dir, 'dispatch-trace');
+  const reads = fs.readFileSync;
+  let featureReads = 0;
+  t.mock.method(fs, 'readFileSync', function(file, ...rest) {
+    if (typeof file === 'string' && file.endsWith('.feature')) featureReads++;
+    return reads.call(this, file, ...rest);
+  });
+  const output = [];
+  t.mock.method(console, 'log', line => output.push(line));
+  const oldTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try { assert.equal(parallelPlan(['--plan', f.file, ...args]), 0); }
+  finally {
+    if (oldTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = oldTrace;
+  }
+  assert.equal(featureReads, 1);
+  const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start');
+  assert.equal(queries.filter(event => event.argv.includes('status')).length, 2);
+  const { assignments } = JSON.parse(output[0]);
+  const paths = plan.groups.map(g => path.join(destination, 'groups', g.groupId, 'coordination', 'attempt-1', 'assignment.json'));
+  assert.deepEqual(assignments, paths);
+  for (const [index, file] of assignments.entries()) {
+    const old = f.run('--template', path.join(f.dir, files[index]));
+    assert.equal(old.status, 0, old.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file)), JSON.parse(old.stdout));
+  }
+  assert.equal(f.run(...paths.flatMap(file => ['--assignment', file])).status, 0);
+  assert.equal(f.run(...args).status, 2);
+  assert.ok(paths.every(file => fs.existsSync(file)));
+});
+
+test('multi-template dispatch cleans up failed staging and preserves an existing directory', t => {
+  const f = fixture(t);
+  const destination = path.join(f.dir, 'dispatch');
+  const { args, files } = prepareTemplates(f, destination);
+  fs.mkdirSync(destination);
+  assert.equal(f.run(...args).status, 2);
+  assert.deepEqual(fs.readdirSync(destination), []);
+  fs.rmdirSync(destination);
+  const secondFile = path.join(f.dir, files[1]);
+  const second = JSON.parse(fs.readFileSync(secondFile, 'utf8').replace(/^\uFEFF/, ''));
+  writeJson(secondFile, { ...second, outputDir: f.dir });
+  assert.match(f.run(...args).stderr, /direct child/);
+  assert.ok(!fs.existsSync(destination));
+  writeJson(secondFile, { ...second, outputDir: path.join(destination, 'groups', 'A') });
+  assert.equal(f.run(...args).status, 2);
+  assert.ok(!fs.existsSync(destination));
+  writeJson(secondFile, second);
+  const feature = path.join(f.repo, f.plan.groups[0].scenarios[0].feature);
+  const write = fs.writeFileSync;
+  let staged = false;
+  t.mock.method(fs, 'writeFileSync', function(file, ...rest) {
+    const result = write.call(this, file, ...rest);
+    if (!staged && typeof file === 'string' && path.basename(file) === 'assignment.json') {
+      staged = true;
+      fs.appendFileSync(feature, '\n# edited before publication');
+    }
+    return result;
+  });
+  const errors = [];
+  t.mock.method(console, 'error', message => errors.push(message));
+  assert.equal(parallelPlan(['--plan', f.file, ...args]), 2);
+  assert.ok(staged);
+  assert.match(errors.join('\n'), /Candidate revision changed/);
+  assert.ok(!fs.existsSync(destination));
+});
+
+test('multi-template dispatch accepts equivalent Windows drive letters', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t);
+  const destination = path.join(f.dir, 'dispatch');
+  const { args, files } = prepareTemplates(f, destination);
+  const drive = destination[0];
+  const otherCase = drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase();
+  assert.match(destination, /^[a-z]:/i);
+  for (const name of files) {
+    const file = path.join(f.dir, name);
+    const template = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    writeJson(file, { ...template, outputDir: otherCase + template.outputDir.slice(1) });
+  }
+  const result = f.run(...args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(JSON.parse(result.stdout).assignments.every(file => fs.existsSync(file)));
+});
+
+test('multi-template dispatch checks scenario IDs after staging when Git ignores a working tree edit', t => {
+  const f = fixture(t);
+  const destination = path.join(f.dir, 'dispatch');
+  const { args } = prepareTemplates(f, destination);
+  const feature = f.plan.groups[0].scenarios[0].feature;
+  f.git('update-index', '--assume-unchanged', '--', feature);
+  const write = fs.writeFileSync;
+  t.mock.method(fs, 'writeFileSync', function(file, ...rest) {
+    const result = write.call(this, file, ...rest);
+    if (path.basename(file) === 'assignment.json') write(path.join(f.repo, feature), '@OR-02\nScenario: Second\n');
+    return result;
+  });
+  const errors = [];
+  t.mock.method(console, 'error', message => errors.push(message));
+  assert.equal(parallelPlan(['--plan', f.file, ...args]), 2);
+  assert.match(errors.join('\n'), /OR-01/);
+  assert.equal(f.git('status', '--porcelain'), '');
+  assert.ok(!fs.existsSync(destination));
+});
+
+test('concurrent multi-template publishers produce exactly one complete batch', async t => {
+  const f = fixture(t);
+  const destination = path.join(f.dir, 'dispatch');
+  const { args } = prepareTemplates(f, destination);
+  const run = () => new Promise(resolve => execFile(process.execPath, [cli, 'parallel-plan', '--plan', f.file, ...args],
+    { encoding: 'utf8' }, (error, stdout, stderr) => resolve({ status: error?.code ?? 0, stdout, stderr })));
+  const runs = await Promise.all([run(), run()]);
+  assert.deepEqual(runs.map(run => run.status).sort(), [0, 2], JSON.stringify(runs));
+  const { assignments } = JSON.parse(runs.find(run => !run.status).stdout);
+  assert.deepEqual(assignments.map(file => JSON.parse(fs.readFileSync(file)).groupId), ['A', 'B']);
+  assert.deepEqual(fs.readdirSync(destination), ['groups']);
+});
 
 test('normal CLI emits approved assignments and report rows and prevents partial dispatch', t => {
   const { dir, file, plan, template, run } = fixture(t);

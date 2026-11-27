@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
-import { spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { entryLimit, safePathComponent } from './archive-limits.mjs';
+import { stageSnapshots } from './archive-snapshots.mjs';
 
 export async function hashStream(stream) {
   const hash = createHash('sha256');
@@ -57,26 +56,22 @@ export function git(repo, args) {
 }
 
 export async function addSnapshots(entries, repo, commit, scenarios, staging) {
+  if (!scenarios.length) return;
   const existing = new Map(entries.map(entry => [entry.name.toLowerCase(), entry]));
-  for (const scenario of scenarios) {
+  const names = new Set(existing.keys());
+  const snapshots = scenarios.map(scenario => {
     const { blob, role } = scenario;
     if (!blob) throw new Error(`情境檔受測時尚未提交：${scenario.path}`);
     const scenarioPath = scenario.path.replaceAll('\\', '/');
     scenarioPath.split('/').forEach(safePathComponent);
-    const rev = git(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', commit + ':' + scenarioPath]);
-    if (rev.status !== 0 || rev.stdout.trim() !== blob || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(blob)) {
-      throw new Error(`情境檔在受測 commit ${commit} 的版本與紀錄不符：${scenarioPath}`);
-    }
     const name = 'features/' + scenarioPath.replace(/^\.bdd\/modules\//, '');
-    if (!existing.has(name.toLowerCase()) && existing.size >= entryLimit) throw new Error('封存超出還原項目數上限：' + entryLimit);
-    const filePath = path.join(staging, 'snapshot-' + blob);
-    const child = spawn('git', ['-C', repo, 'cat-file', 'blob', blob],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-    const [[status]] = await Promise.all([
-      once(child, 'close'), pipeline(child.stdout, createWriteStream(filePath)),
-    ]);
-    if (status !== 0) throw new Error(`無法取出 git blob ${blob}`);
-    const snapshot = await fileEntry(name, filePath, { scenarioPath: scenario.path, blob, role: role ?? null });
+    names.add(name.toLowerCase());
+    if (names.size > entryLimit) throw new Error('封存超出還原項目數上限：' + entryLimit);
+    return { name, scenarioPath, blob, extra: { scenarioPath: scenario.path, blob, role: role ?? null } };
+  });
+  const staged = await stageSnapshots(repo, commit, snapshots, staging);
+  for (const { name, blob, extra } of snapshots) {
+    const snapshot = { ...staged.get(blob), name, extra };
     const prior = existing.get(name.toLowerCase());
     if (prior) {
       if (prior.sha256 !== snapshot.sha256 || prior.name !== name) {

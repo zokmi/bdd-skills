@@ -9,11 +9,23 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { appendIndexEvents, previousArchives, readArchiveStates, withIndexLock } from '../scripts/lib/archive-index.mjs';
+import { appendIndexEvents, archiveIssue, previousArchives, readArchiveStates, withIndexLock } from '../scripts/lib/archive-index.mjs';
 import { archiveIndexCommand } from '../scripts/lib/archive-manager.mjs';
 
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
+
+test('group archives infer their issue from both documented dispatch layouts', () => {
+  const issueFor = (sourceDir, issue) => archiveIssue({ issue, sourceDir, topic: 'ui' }, { includeBatchDirectory: true });
+  assert.equal(issueFor('repo/.bdd/5410-topic/dispatch-R1/groups/ui'), '5410');
+  const batch = 'repo\\.bdd\\5410-topic\\release-round\\groups\\ui';
+  assert.equal(issueFor(batch), '5410');
+  assert.equal(issueFor(batch, 422), '422');
+  assert.equal(issueFor('repo/.bdd/5410-topic/groups/ui'), '5410');
+  assert.equal(issueFor('repo/.bdd/5410-topic/notes/ui'), '');
+  assert.equal(issueFor('repo/.bdd/5410-topic/dispatch-R1/extra/groups/ui'), '');
+  assert.equal(archiveIssue({ sourceDir: batch, topic: 'ui' }), '');
+});
 
 async function fixture(t) {
   const dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'bdd-index-test-')));

@@ -76,7 +76,7 @@ export async function archiveCommand(args) {
   }
   const commit = options.commit || last?.head;
   if (typeof commit !== 'string' || !commit) throw new Error('verification.json 沒有任何輪次的 head，請以 --commit 指定受測 SHA');
-  const issue = archiveIssue({ issue: options.issue, sourceDir: source, topic });
+  const issue = archiveIssue({ issue: options.issue, sourceDir: source, topic }, { includeBatchDirectory: true });
   const location = await archiveLocation({ options, settings, worktrees, topic, commit, issue, warnings });
   const staging = await mkdtemp(path.join(os.tmpdir(), 'bdd-archive-'));
   try {

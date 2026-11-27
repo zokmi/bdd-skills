@@ -4,8 +4,9 @@ import { EOL } from 'node:os';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { hasEngineeringCoverage } from './engineering-checks.mjs';
 import { commit, repoRoot } from './git-changes.mjs';
+import { readGitBlobs } from './git-blobs.mjs';
 import { checkScenarioIds, declaredScenarioIds, parseFeature } from './module-index.mjs';
-import { git, repoIdentity } from './verification-git.mjs';
+import { git, repoIdentity, treeEntriesAt } from './verification-git.mjs';
 import { readContract } from './parallel-contracts.mjs';
 import {
   approvedRepoKey, approvedScenarioKey as scenarioKey, compareApprovedPlan,
@@ -19,7 +20,40 @@ const key = (...parts) => JSON.stringify(parts.map(s => s.toLowerCase()));
 const roundKey = (feature, id, role) => JSON.stringify([pathKey(feature), id.toLowerCase(), role]);
 const label = s => s.feature + '|' + s.id;
 
-function verificationRound(root, a, r, repo, approvedRevision) {
+function summaryGitQueries() {
+  const observations = new Map();
+  function lookup(parts, read) {
+    const key = JSON.stringify(parts);
+    const previous = observations.get(key);
+    if (previous) {
+      previous.reused = true;
+      return previous.value;
+    }
+    const value = read();
+    observations.set(key, { value, read, reused: false });
+    return value;
+  }
+  return {
+    workDir: dir => lookup(['workDir', dir], () => repoRoot(dir)),
+    head: (repo, sha) => lookup(['commit', repo, sha], () => commit(repo, sha)),
+    identity: repo => lookup(['repo identity', repo], () => repoIdentity(repo)),
+    recheck() {
+      const issues = [];
+      // Bound the cost per shared query while catching a checkout moved, reconfigured
+      // or removed during evidence processing. A later summary starts from scratch.
+      for (const [key, { value, read, reused }] of observations) {
+        if (!reused) continue;
+        try {
+          if (isDeepStrictEqual(value, read())) continue;
+        } catch { /* A previously successful Git lookup can also become unavailable. */ }
+        issues.push('Git repo changed during summary. Recheck ' + key);
+      }
+      return issues;
+    },
+  };
+}
+
+function verificationRound(root, a, r, repo, approvedRevision, queries) {
   if (!r.verification) throw new Error('Missing verification reference');
   const verification = readJson(artifact(root, r.verification.path));
   if (!Array.isArray(verification?.rounds)) throw new Error('Invalid verification roundIndex');
@@ -48,12 +82,12 @@ function verificationRound(root, a, r, repo, approvedRevision) {
   }
   if (!repo) throw new Error('Cannot verify assignment repo identity');
   let workDir;
-  try { workDir = repoRoot(a.target.workDir); } catch { throw new Error('Assignment workDir differs from repo'); }
+  try { workDir = queries.workDir(a.target.workDir); } catch { throw new Error('Assignment workDir differs from repo'); }
   if (approvedRepoKey(repo) !== approvedRepoKey(workDir)) throw new Error('Assignment workDir differs from repo');
   let head;
-  try { head = commit(repo, round.head); } catch { throw new Error('Recorded HEAD is not an existing full commit SHA'); }
+  try { head = queries.head(repo, round.head); } catch { throw new Error('Recorded HEAD is not an existing full commit SHA'); }
   if (head !== round.head) throw new Error('Recorded HEAD is not an existing full commit SHA');
-  const identity = repoIdentity(repo);
+  const identity = queries.identity(repo);
   if (identity.name !== round.repo.name || identity.url !== round.repo.url) throw new Error('Verification repo differs from assignment');
   return round;
 }
@@ -82,6 +116,45 @@ function engineeringResults(assigned, submitted, round, checkEvidence, total) {
   return results;
 }
 
+function historicalFeatureReader(approvedGroups) {
+  const revisions = new Map();
+  function revision(repo, head) {
+    const key = JSON.stringify([repo, head]);
+    if (!revisions.has(key)) revisions.set(key, { paths: new Set(), ids: new Map() });
+    return revisions.get(key);
+  }
+  for (const group of approvedGroups.values()) {
+    if (!group.revision || !group.submissions) continue;
+    const { paths } = revision(group.repo, group.revision.head);
+    for (const row of group.rows.values()) paths.add(row.feature);
+  }
+  return (repo, head, feature) => {
+    const { paths, ids } = revision(repo, head);
+    if (paths.size > 1) {
+      // Use each group's recorded path at this commit. Unavailable blobs fall
+      // back to the individual lookup so failures only affect their own group.
+      try {
+        const { blobs, sizes } = treeEntriesAt(repo, head, [...paths], { includeSizes: true });
+        const entries = new Map();
+        for (const file of paths) {
+          if (sizes[file] !== null) entries.set(blobs[file], { oid: blobs[file], size: sizes[file], file });
+        }
+        const byBlob = new Map();
+        for (const { oid, bytes } of readGitBlobs(repo, entries.values())) {
+          byBlob.set(oid, declaredScenarioIds(parseFeature(bytes, entries.get(oid).file)));
+        }
+        for (const file of paths) if (byBlob.has(blobs[file])) ids.set(file, byBlob.get(blobs[file]));
+      } catch { /* Retry each requested path below if the shared Git read failed. */ }
+      paths.clear();
+    }
+    if (!ids.has(feature)) {
+      const source = git(repo, ['cat-file', 'blob', head + ':' + feature]);
+      ids.set(feature, declaredScenarioIds(parseFeature(source, feature)));
+    }
+    return ids.get(feature);
+  };
+}
+
 function checkResults(root, a, r, round, repo, historicalFeatures) {
   artifact(root, r.artifacts.report);
   if (r.artifacts.masking) artifact(root, r.artifacts.masking);
@@ -99,12 +172,7 @@ function checkResults(root, a, r, round, repo, historicalFeatures) {
     results.set(scenarioKey(s), s);
     if (!recorded.has(roundKey(s.feature, s.id, s.kind))) throw new Error('Scenario absent from verification round: ' + label(s));
     if (historicalFeatures) {
-      const key = JSON.stringify([repo, round.head, s.feature]);
-      if (!historicalFeatures.has(key)) {
-        const source = git(repo, ['cat-file', 'blob', round.head + ':' + s.feature]);
-        historicalFeatures.set(key, declaredScenarioIds(parseFeature(source, s.feature)));
-      }
-      checkScenarioIds(historicalFeatures.get(key), [s.id], s.feature);
+      checkScenarioIds(historicalFeatures(repo, round.head, s.feature), [s.id], s.feature);
     }
     for (const reference of s.evidence) checkEvidence(reference, s.status === 'passed');
     if (s.status === 'passed' && (!s.expected || !s.actual)) throw new Error('Passed scenario lacks expected/actual: ' + label(s));
@@ -123,7 +191,7 @@ function checkResults(root, a, r, round, repo, historicalFeatures) {
   return { scenarios: results, engineering };
 }
 
-function groupResults(root, a, group, issues, versions, { repo, repoId }, approvedRevision, historicalFeatures) {
+function groupResults(root, a, group, issues, versions, { repo, repoId }, approvedRevision, historicalFeatures, queries) {
   const resultPath = path.join(path.dirname(group.assignment), 'result.json');
   let result;
   try {
@@ -139,7 +207,7 @@ function groupResults(root, a, group, issues, versions, { repo, repoId }, approv
   }
   if (result.taskStatus !== 'completed' || result.blockers.length) issues.push(a.groupId + ': Task incomplete or unresolved blockers');
   try {
-    const round = verificationRound(root, a, result, repo, approvedRevision);
+    const round = verificationRound(root, a, result, repo, approvedRevision, queries);
     group.version = { repo: round.repo, head: round.head, serviceVersion: result.execution.serviceVersion };
     const candidate = JSON.stringify([repoId, round.head]);
     if (!versions.has(candidate)) versions.set(candidate, new Set());
@@ -154,7 +222,7 @@ function groupResults(root, a, group, issues, versions, { repo, repoId }, approv
   }
 }
 
-export function summarize(assignments, destination, planFile) {
+function collectSummary(assignments, destination, planFile, queries) {
   const records = assignments.map(file => readContract(file, 'assignment'));
   const selectedPlan = planFile ?? records.find(a => a.approvedPlan)?.approvedPlan.path;
   const plan = selectedPlan ? loadApprovedPlan(selectedPlan) : null;
@@ -186,7 +254,7 @@ export function summarize(assignments, destination, planFile) {
   const versions = new Map();
   const identities = new Set();
   const repos = new Map();
-  const historicalFeatures = new Map();
+  const historicalFeatures = historicalFeatureReader(approvedGroups);
   const total = counts();
   let runId = plan?.runId;
   for (const [index, file] of assignments.entries()) {
@@ -212,7 +280,7 @@ export function summarize(assignments, destination, planFile) {
     }
     const checkout = repos.get(target);
     const approved = approvedGroups.get(a.groupId);
-    const { scenarios: results, engineering } = groupResults(root, a, group, issues, versions, checkout, approved?.revision, historicalFeatures);
+    const { scenarios: results, engineering } = groupResults(root, a, group, issues, versions, checkout, approved?.revision, historicalFeatures, queries);
     const assigned = new Set();
     const bound = approved?.submissions === 1 && a.runId === runId && matchesPlanReference(plan, a) &&
       approved.repo === approvedRepoKey(a.target.repo) && matchesApprovedTarget(approved.revision, a.target);
@@ -265,6 +333,19 @@ export function summarize(assignments, destination, planFile) {
       (plan?.contractVersion === 1 ? ' The historical v1 plan did not record the reviewed candidate revision.' : '') +
       (plan?.contractVersion === 2 ? ' The historical v2 plan did not bind a batch selection.' : ''),
   };
+}
+
+export function summarize(assignments, destination, planFile) {
+  const queries = summaryGitQueries();
+  const summary = collectSummary(assignments, destination, planFile, queries);
+  const changes = queries.recheck();
+  if (!changes.length) return summary;
+  // A shared observation was stale. Rebuild row statuses and counts with fresh
+  // per-group reads, keeping the concurrent change visible even if it settles.
+  const fresh = collectSummary(assignments, destination, planFile, { workDir: repoRoot, head: commit, identity: repoIdentity });
+  fresh.issues.push(...changes);
+  fresh.eligibleForReview = false;
+  return fresh;
 }
 
 function writeSummary(dir, summary) {

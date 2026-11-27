@@ -9,6 +9,74 @@ import { createHash } from 'node:crypto';
 import { moduleIndex, nextId } from '../scripts/lib/module-index.mjs';
 import { lint } from '../scripts/lib/module-lint.mjs';
 import { buildQualityPlan } from '../scripts/lib/quality-plan.mjs';
+import { readGitBlobs } from '../scripts/lib/git-blobs.mjs';
+
+test('batched Git reads preserve empty, repeated and individually large blobs', t => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-git-blobs-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  const empty = Buffer.alloc(0);
+  const large = Buffer.alloc(9 * 1024 * 1024, 0xff);
+  large[large.length - 1] = 10;
+  const inputs = [empty, large, empty];
+  const entries = inputs.map(bytes => ({
+    oid: execFileSync('git', ['-C', repo, 'hash-object', '-w', '--stdin'], { input: bytes, encoding: 'utf8' }).trim(),
+    size: bytes.length,
+  }));
+  let index = 0;
+  for (const blob of readGitBlobs(repo, entries)) {
+    assert.equal(blob.oid, entries[index].oid);
+    assert.ok(blob.bytes.equals(inputs[index++]));
+  }
+  assert.equal(index, inputs.length);
+});
+
+test('feedback selection reads old Feature blobs in one process and preserves mapping decisions', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-feedback-blobs-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const repo = path.join(tmp, 'repo');
+  const dir = '.bdd/modules/orders';
+  fs.mkdirSync(path.join(repo, dir), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('config', 'core.autocrlf', 'false');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  const write = (name, text) => fs.writeFileSync(path.join(repo, dir, name), text);
+  const scenario = (id, result) => '@OR-' + id + ' @#42 @API\nScenario: 訂單 ' + id + '\nThen ' + result;
+  const content = (id, result) => 'Feature: 訂單\n# zero\0byte\n' + scenario(id, result);
+  write('MODULE.md', '---\nprefix: OR\npaths:\n  - src/**\n---\n');
+  write('a.feature', content('01', '已付款💰'));
+  write('b.feature', content('02', '付款') + '\n' + scenario('03', '出貨'));
+  write('c.feature', content('04', '取消'));
+  write('舊模式.feature', content('06', '查詢'));
+  git('add', '.');
+  const oldPath = dir + '/舊模式.feature';
+  const oid = git('rev-parse', ':' + oldPath);
+  git('update-index', '--cacheinfo', '120000', oid, oldPath);
+  git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
+  git('rm', '--cached', '--quiet', '--', oldPath);
+  write('a.feature', content('01', '已退款💸'));
+  write('b.feature', content('02', '付款'));
+  write('c.feature', content('04', '取消').replace('Feature: 訂單', 'Feature: 客戶訂單'));
+  write('new.feature', content('05', '新增'));
+
+  const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
+  const trace = path.join(tmp, 'trace.ndjson');
+  const result = spawnSync(process.execPath, [cli, 'quality-plan', '--base', 'HEAD', '--issue', '42',
+    '--review-reason', 'reviewed changed specifications', '--impact-complete', '--static-passed'], {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  assert.equal(plan.bddStatus, 'BLOCKED');
+  assert.deepEqual(plan.selected.flatMap(f => f.scenarios.flatMap(s => s.ids)).sort(), ['OR-01', 'OR-05']);
+  for (const file of ['b.feature', 'c.feature', '舊模式.feature']) assert.ok(plan.blockers[0].includes(dir + '/' + file));
+  const blobCalls = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('cat-file'));
+  assert.equal(blobCalls.length, 1);
+  assert.ok(blobCalls[0].argv.includes('--batch'));
+});
 
 test('successive feedback commits select their own cases and reviewed dependencies', t => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-feedback-plan-'));

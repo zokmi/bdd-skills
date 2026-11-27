@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { summarize } from '../scripts/lib/parallel-summary.mjs';
 import { checkModifiedPaths, checkSeparateDirectories, evidenceChecker } from '../scripts/lib/summary-evidence.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
@@ -151,6 +152,96 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   assert.equal(run('blocked', 1).counts.blocked, 1);
 });
 
+test('shared checkout queries stay bounded and a concurrent remote change prevents adoption', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-git-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=bdd@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'fixture');
+  const head = git('rev-parse', 'HEAD');
+  const url = 'https://example.invalid/fixture.git';
+  git('remote', 'add', 'origin', url);
+  const [assignment, result] = fs.readFileSync(docs, 'utf8').split('```json').slice(1).map(e => JSON.parse(e.split('```')[0]));
+  const write = (file, data) => fs.writeFileSync(file, JSON.stringify(data));
+  const files = ['A', 'B', 'C', 'D'].map((groupId, index) => {
+    const outputDir = path.join(temp, groupId);
+    fs.mkdirSync(outputDir);
+    const id = 'SS-' + (10 + index);
+    const scenario = { ...assignment.scenarios[0], id };
+    const file = path.join(outputDir, 'assignment.json');
+    write(file, { ...assignment, outputDir, groupId, target: { ...assignment.target, repo: temp, workDir: temp, head }, scenarios: [scenario] });
+    write(path.join(outputDir, 'result.json'), { ...result, groupId,
+      scenarios: [{ ...result.scenarios[0], id, evidence: ['REPORT.md#result'] }], artifacts: { report: 'REPORT.md', masking: null } });
+    write(path.join(outputDir, 'verification.json'), { rounds: [{
+      head, repo: { name: path.basename(temp), url }, dirtyPaths: [],
+      scenarios: [{ path: scenario.feature, ids: [id], role: scenario.kind }],
+      result: { passed: 1, failed: 0, blocked: 0, notRun: 0 },
+    }] });
+    fs.writeFileSync(path.join(outputDir, 'REPORT.md'), '## Result\nPassed');
+    return file;
+  });
+  const destination = path.join(temp, 'summary');
+  const trace = path.join(temp, 'trace.ndjson');
+  const run = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', destination,
+    ...files.flatMap(file => ['--assignment', file])], { encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace } });
+  assert.equal(run.status, 0, run.stderr || run.stdout);
+  assert.equal(JSON.parse(run.stdout).counts.passed, files.length);
+  const commands = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start').map(event => event.argv);
+  const calls = arg => commands.filter(argv => argv.includes(arg)).length;
+  assert.ok(calls(head + '^{commit}') <= 2, 'expected bounded commit resolution');
+  assert.ok(calls('get-url') <= 2, 'expected bounded remote resolution');
+  assert.ok(calls('--show-toplevel') <= 3, 'expected bounded checkout discovery');
+
+  const independent = path.join(temp, 'independent');
+  fs.mkdirSync(independent);
+  git('-C', independent, 'init', '-q');
+  git('-C', independent, '-c', 'user.name=Fixture', '-c', 'user.email=bdd@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'independent');
+  git('-C', independent, 'remote', 'add', 'origin', url);
+  const independentHead = git('-C', independent, 'rev-parse', 'HEAD');
+  const independentAssignment = JSON.parse(fs.readFileSync(files[1], 'utf8'));
+  Object.assign(independentAssignment.target, { repo: independent, workDir: independent, head: independentHead });
+  write(files[1], independentAssignment);
+  const independentRecord = path.join(temp, 'B', 'verification.json');
+  const independentRound = JSON.parse(fs.readFileSync(independentRecord, 'utf8'));
+  independentRound.rounds[0].repo.name = path.basename(independent);
+  independentRound.rounds[0].head = independentHead;
+  write(independentRecord, independentRound);
+
+  const originalRead = fs.readFileSync;
+  const lastRound = path.join(temp, 'D', 'verification.json');
+  const read = t.mock.method(fs, 'readFileSync', function(file, ...args) {
+    if (file === lastRound) git('remote', 'set-url', 'origin', url + '-moved');
+    return originalRead.call(this, file, ...args);
+  });
+  const changed = summarize(files, destination);
+  read.mock.restore();
+  assert.equal(changed.eligibleForReview, false);
+  assert.match(changed.issues.join('\n'), /repo changed during summary/i);
+  assert.deepEqual(changed.scenarios.map(s => s.status), ['not-run', 'passed', 'not-run', 'not-run']);
+  assert.deepEqual(changed.counts, { passed: 1, failed: 0, blocked: 0, 'not-run': 3 });
+  const next = summarize(files, destination);
+  assert.deepEqual(next.counts, changed.counts);
+  assert.ok(!next.issues.some(issue => /repo changed during summary/i.test(issue)));
+  assert.match(next.issues.join('\n'), /Verification repo differs/);
+
+  git('remote', 'set-url', 'origin', url);
+  const otherDir = JSON.parse(fs.readFileSync(files[2], 'utf8'));
+  otherDir.target.workDir = path.join(temp, 'missing-directory');
+  write(files[2], otherDir);
+  const otherHead = JSON.parse(fs.readFileSync(files[3], 'utf8'));
+  otherHead.target.head = '1'.repeat(head.length);
+  write(files[3], otherHead);
+  const otherRound = JSON.parse(fs.readFileSync(lastRound, 'utf8'));
+  otherRound.rounds[0].head = otherHead.target.head;
+  write(lastRound, otherRound);
+  const mixed = summarize(files, destination);
+  assert.deepEqual(mixed.counts, { passed: 2, failed: 0, blocked: 0, 'not-run': 2 });
+  assert.ok(mixed.issues.includes('C: Assignment workDir differs from repo'));
+  assert.ok(mixed.issues.includes('D: Recorded HEAD is not an existing full commit SHA'));
+});
+
 test('summary destination cannot alias group output through a directory link', t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-link-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
@@ -283,6 +374,63 @@ test('approved assignments account for the entire plan even when the caller omit
   assert.equal(stale.eligibleForReview, false);
   assert.equal(stale.counts['not-run'], 2);
   assert.match(stale.issues.join('\n'), /Result approved plan digest/);
+});
+
+test('summary batches historical Features across groups and isolates a missing path or ID', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-summary-history-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'checkout');
+  fs.mkdirSync(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  const features = ['one.feature', '中文 two.feature', 'three.feature', 'absent.feature'];
+  const ids = ['AA-01', 'AA-02', 'AA-03', 'AA-04'];
+  for (const [i, feature] of features.slice(0, 3).entries()) {
+    fs.writeFileSync(path.join(repo, feature), '@' + ids[i] + '\nScenario: At the tested revision\n');
+  }
+  git('add', '.');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'features');
+  const head = git('rev-parse', 'HEAD');
+  // The working tree has the missing ID/path. Only committed contents may satisfy this plan.
+  fs.writeFileSync(path.join(repo, features[2]), '@AA-99\nScenario: New ID');
+  fs.writeFileSync(path.join(repo, features[3]), '@AA-04\nScenario: New file');
+  const [template, result] = fs.readFileSync(docs, 'utf8').split('```json').slice(1, 3).map(s => JSON.parse(s.split('```')[0]));
+  const revision = { head, dirtySha256: null };
+  const groups = features.map((feature, i) => ({
+    groupId: 'team-' + i, revision, repo, scenarios: [{ feature, id: i === 2 ? 'AA-99' : ids[i], kind: 'changed',
+      assertions: [{ requirement: 'Read', action: 'Read list', expected: 'Item', method: 'API', evidence: 'Report' }] }],
+  }));
+  const plan = { contractVersion: 3, scope: 'non-batch', runId: template.runId, groups };
+  const write = (file, data) => fs.writeFileSync(file, JSON.stringify(data));
+  const planFile = path.join(root, 'approved.json');
+  write(planFile, plan);
+  const sha256 = createHash('sha256').update(fs.readFileSync(planFile)).digest('hex');
+  const files = groups.map(({ groupId, scenarios }) => {
+    const [{ feature, id, kind }] = scenarios;
+    const dir = path.join(root, groupId);
+    fs.mkdirSync(dir);
+    const file = path.join(dir, 'assignment.json');
+    write(file, { ...template, groupId, outputDir: dir, target: { ...template.target, repo, workDir: repo, head },
+      scenarios, approvedPlan: { path: planFile, sha256 } });
+    write(path.join(dir, 'result.json'), { ...result, groupId, approvedPlanSha256: sha256,
+      scenarios: [{ ...result.scenarios[0], feature, id, kind, evidence: ['REPORT.md'] }], artifacts: { report: 'REPORT.md', masking: null } });
+    write(path.join(dir, 'verification.json'), { rounds: [{ revision, head, repo: { name: 'checkout', url: '' }, dirtyPaths: [],
+      scenarios: [{ path: feature, ids: [id], role: kind }], result: { passed: 1, failed: 0, blocked: 0, notRun: 0 } }] });
+    fs.writeFileSync(path.join(dir, 'REPORT.md'), 'Checked list');
+    return file;
+  });
+  const trace = path.join(root, 'trace');
+  const run = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', path.join(root, 'out'),
+    ...files.flatMap(f => ['--assignment', f])], { encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace } });
+  assert.equal(run.status, 1, run.stderr || run.stdout);
+  const summary = JSON.parse(run.stdout);
+  assert.deepEqual(summary.scenarios.map(s => s.status), ['passed', 'passed', 'not-run', 'not-run']);
+  assert.ok(summary.issues.some(issue => issue.includes('AA-99')));
+  assert.ok(summary.issues.some(issue => issue.includes('absent.feature')));
+  const calls = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('cat-file'));
+  assert.equal(calls.filter(event => event.argv.includes('--batch')).length, 1);
+  assert.ok(calls.length <= 2, 'valid paths should share a single Git content query');
 });
 
 test('editable paths retain PowerShell string wildcard and literal rules', () => {

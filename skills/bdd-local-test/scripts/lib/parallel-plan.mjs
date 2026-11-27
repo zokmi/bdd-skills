@@ -142,7 +142,7 @@ export function compareApprovedPlan(plan, assignments) {
 }
 
 // Review and dispatch concern the live checkout. Historical summaries compare the recorded versions.
-function liveRevisionIssues(groups, assignments = []) {
+function liveRevisionIssues(groups, assignments = [], checkFeatures = true) {
   const issues = [];
   const snapshots = new Map();
   const featureIds = new Map();
@@ -155,6 +155,7 @@ function liveRevisionIssues(groups, assignments = []) {
         issues.push('Candidate revision changed for group ' + group.groupId + ' (' + group.repo + '). Review the updated plan before dispatch.');
         continue;
       }
+      if (!checkFeatures) continue;
       for (const scenario of group.scenarios) {
         const file = path.join(repo, scenario.feature);
         if (!featureIds.has(file)) featureIds.set(file, declaredScenarioIds(readFeature(file, repo)));
@@ -177,21 +178,85 @@ function liveRevisionIssues(groups, assignments = []) {
   return issues;
 }
 
-function generateAssignment(plan, file) {
+function readTemplate(plan, groups, file) {
   const template = parseJson(fs.readFileSync(file), file);
   if (!template || typeof template !== 'object' || Array.isArray(template)) throw new Error('Expected an assignment template object');
   if (['scenarios', 'approvedPlan', 'engineeringChecks'].some(key => Object.hasOwn(template, key))) {
     throw new Error('Omit scenarios, engineeringChecks and approvedPlan from the assignment template');
   }
-  const group = plan.groups.find(group => group.groupId === template.groupId);
+  const group = groups.get(template.groupId);
   if (!group) throw new Error('Group absent from approved plan: ' + template.groupId);
   const result = { ...template, scenarios: group.scenarios,
     ...(group.engineeringChecks && { engineeringChecks: group.engineeringChecks }), approvedPlan: plan.reference };
   validate(assignment, result, 'assignment schema');
-  const issues = liveRevisionIssues(plan.scope === 'batch' ? plan.groups : [group], [result]);
-  compareGroup(plan, group, result, issues);
-  if (issues.length) throw new Error(issues.join('\n'));
   return result;
+}
+
+function generateAssignments(plan, files, complete) {
+  const groups = new Map(plan.groups.map(group => [group.groupId, group]));
+  const records = files.map(file => readTemplate(plan, groups, file));
+  let issues;
+  if (complete) {
+    issues = compareApprovedPlan(plan, records).concat(liveRevisionIssues(plan.groups, [], false));
+  } else {
+    const group = groups.get(records[0].groupId);
+    issues = liveRevisionIssues(plan.scope === 'batch' ? plan.groups : [group], records);
+    compareGroup(plan, group, records[0], issues);
+  }
+  if (issues.length) throw new Error(issues.join('\n'));
+  return records;
+}
+
+function publishAssignments(plan, manifest, outputDir) {
+  const templates = parseJson(fs.readFileSync(manifest), manifest);
+  if (!Array.isArray(templates) || !templates.length || templates.some(file => typeof file !== 'string' || !file.trim())) {
+    throw new Error('Expected a nonempty JSON array of template file paths');
+  }
+  const files = templates.map(file => path.resolve(path.dirname(manifest), file));
+  const records = generateAssignments(plan, files, true);
+  const destination = path.resolve(outputDir);
+  const groupsDir = path.join(destination, 'groups');
+  // Reserve a new parent first. POSIX rename alone may replace an existing empty directory.
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.mkdirSync(destination, { mode: 0o700 });
+  let staged;
+  try {
+    const root = fs.realpathSync.native(destination);
+    const checkedParents = new Set([groupsDir]);
+    const paths = records.map(({ outputDir: groupDir, attempt }) => {
+      const resolved = path.resolve(groupDir);
+      const parent = path.dirname(resolved);
+      if (!checkedParents.has(parent) && path.basename(parent) === 'groups' && approvedRepoKey(path.dirname(parent)) === root) {
+        checkedParents.add(parent);
+      }
+      if (!path.isAbsolute(groupDir) || !checkedParents.has(parent)) {
+        throw new Error('Each template outputDir must be a direct child of ' + groupsDir);
+      }
+      return path.join(path.basename(resolved), 'coordination', 'attempt-' + attempt, 'assignment.json');
+    });
+    staged = fs.mkdtempSync(path.join(destination, '.bdd-staging-'));
+    for (const [index, file] of paths.entries()) {
+      // Exclusive mkdir also detects group directory aliases on the actual filesystem.
+      fs.mkdirSync(path.join(staged, file.split(path.sep)[0]));
+      const target = path.join(staged, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, JSON.stringify(records[index], null, 2) + '\n', { flag: 'wx' });
+    }
+    for (const source of [plan.reference, ...(plan.selections ?? [])]) {
+      if (createHash('sha256').update(fs.readFileSync(source.path)).digest('hex') !== source.sha256) {
+        throw new Error('Approved plan or batch selection changed before publication: ' + source.path);
+      }
+    }
+    // Git may omit working-tree edits to assume-unchanged files. Read approved IDs after staging.
+    const issues = liveRevisionIssues(plan.groups, records);
+    if (issues.length) throw new Error(issues.join('\n'));
+    fs.renameSync(staged, groupsDir);
+    return { runId: plan.runId, approvedPlan: plan.reference, assignments: paths.map(file => path.join(groupsDir, file)) };
+  } catch (error) {
+    if (staged) fs.rmSync(staged, { recursive: true, force: true, maxRetries: 3 });
+    fs.rmdirSync(destination);
+    throw error;
+  }
 }
 
 function markdownCell(value) {
@@ -230,17 +295,20 @@ export function parallelPlan(args) {
   try {
     const { values } = parseArgs({ args, options: {
       plan: { type: 'string' }, revision: { type: 'string' }, template: { type: 'string' }, report: { type: 'boolean' },
-      assignment: { type: 'string', multiple: true }, output: { type: 'string' },
+      templates: { type: 'string' }, 'output-dir': { type: 'string' }, assignment: { type: 'string', multiple: true }, output: { type: 'string' },
     } });
     if (values.revision !== undefined) {
       if (!values.revision || Object.keys(values).length !== 1) throw new Error('Use --revision <checkout root> on its own.');
       console.log(JSON.stringify(captureApprovedRevision(path.resolve(values.revision))));
       return 0;
     }
-    if (!values.plan || [values.template, values.report, values.assignment].filter(Boolean).length !== 1) {
-      throw new Error('Expected --plan and one of --template, --report, or --assignment.');
+    if (!values.plan || [values.template, values.templates, values.report, values.assignment].filter(Boolean).length !== 1) {
+      throw new Error('Expected --plan and one of --template, --templates, --report, or --assignment.');
     }
     if (values.output !== undefined && (!values.output || !values.template)) throw new Error('--output requires --template and a new file path');
+    if ((values['output-dir'] !== undefined || values.templates) && (!values.templates || !values['output-dir'])) {
+      throw new Error('--templates requires --output-dir and a new directory path');
+    }
     const plan = loadApprovedPlan(values.plan);
     if (plan.contractVersion === 1) {
       throw new Error('Historical plan v1 lacks a reviewed candidate revision. Capture --revision and submit a v3 plan for review.');
@@ -249,9 +317,12 @@ export function parallelPlan(args) {
       throw new Error('Historical plan v2 does not bind the batch selection. Submit a v3 plan with an explicit scope before dispatch.');
     }
     if (values.template) {
-      const json = JSON.stringify(generateAssignment(plan, values.template), null, 2);
+      const [record] = generateAssignments(plan, [values.template], false);
+      const json = JSON.stringify(record, null, 2);
       if (values.output) writeNewFile(values.output, json + '\n');
       else console.log(json);
+    } else if (values.templates) {
+      console.log(JSON.stringify(publishAssignments(plan, values.templates, values['output-dir'])));
     } else if (values.report) {
       const issues = liveRevisionIssues(plan.groups);
       if (issues.length) throw new Error(issues.join('\n'));

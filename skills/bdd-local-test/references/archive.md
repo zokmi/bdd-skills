@@ -125,7 +125,7 @@ node "<skill 目錄>/scripts/bdd.mjs" archive --dir <最終 .bdd/單號-主題>
 
 讀取舊索引時，若建立紀錄可證明自動取代事件把兩張不同單號的封存連在一起，會略過該事件，依其餘紀錄還原狀態與附件。手動標記與單號無從判定的歷史取代仍按原紀錄處理。
 
-受測 SHA 預設取 `verification.json` 最後一輪的 `head`。單號取主題目錄名稱開頭的數字，分組目錄 `.bdd/<單號>-<主題>/groups/<組別>` 則從上層主題目錄取得。必要時可用 `--commit`、`--issue` 明確指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
+受測 SHA 預設取 `verification.json` 最後一輪的 `head`。單號取主題目錄名稱開頭的數字。從 `.bdd/<單號>-<主題>/groups/<組別>` 或 `.bdd/<單號>-<主題>/<批次>/groups/<組別>` 建立分組封存時，單號都取自上層主題目錄。必要時可用 `--commit`、`--issue` 明確指定。輸出的 `exceedsAttachmentLimit` 為 true 時，上傳前要拆分，或 issue 只附最後一輪截圖，並註明完整封存只留本機。
 
 ZIP 內第一層是輸出資料夾名稱，`bdd-manifest.json` 記錄每個檔案的 SHA-256、大小、aliases、受測 commit、是否已遮罩。只用系統內建解壓縮也能看到報告與所有不重複的截圖；要完整還原（含 aliases）用：
 

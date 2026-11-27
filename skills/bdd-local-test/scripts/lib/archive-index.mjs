@@ -84,11 +84,13 @@ async function* indexEvents(index, stat, priorIssue) {
 
 const isDigest = value => typeof value === 'string' && /^[a-f\d]{64}$/i.test(value);
 
-export function archiveIssue({ issue, sourceDir, topic }) {
+export function archiveIssue({ issue, sourceDir, topic }, { includeBatchDirectory = false } = {}) {
   if (issue != null && issue !== '') return String(issue);
-  // A group's leaf carries its role; its parent task directory carries the issue.
-  const group = sourceDir?.match(/(?:^|[/\\])\.bdd[/\\](\d+)-[^/\\]+[/\\]groups[/\\][^/\\]+$/i);
-  return group?.[1] ?? topic?.match(/^(\d+)-/)?.[1] ?? '';
+  // New archives store the inferred issue explicitly. Replaying older events keeps
+  // their original direct-group rule when the recorded issue is missing.
+  const group = sourceDir?.match(/(?:^|[/\\])\.bdd[/\\](\d+)-[^/\\]+[/\\](?:([^/\\]+)[/\\])?groups[/\\][^/\\]+$/i);
+  if (group && (!group[2] || includeBatchDirectory)) return group[1];
+  return topic?.match(/^(\d+)-/)?.[1] ?? '';
 }
 
 export async function readArchiveStates(index, { archive, includeVerifiedOriginals = false } = {}) {

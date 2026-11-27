@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { captureApprovedRevision } from './approved-revision.mjs';
 import { validateEngineeringChecks } from './engineering-checks.mjs';
+import { readGitBlobs } from './git-blobs.mjs';
 import { changedPaths, commit, repoRoot } from './git-changes.mjs';
 import { isIgnoredPath } from './gitignore.mjs';
 import { lint } from './module-lint.mjs';
@@ -133,10 +134,10 @@ function scenarioSections(text, feature) {
   return { header, sections };
 }
 
-function changedScenarioIds(repo, feature, originalBlob) {
+function changedScenarioIds(repo, feature, originalBytes) {
+  if (!originalBytes) return { ids: feature.scenarios.flatMap(s => s.ids), needsMapping: Boolean(feature.requiresFullFeature) };
   const currentText = fs.readFileSync(path.join(repo, feature.feature), 'utf8');
-  if (!originalBlob) return { ids: feature.scenarios.flatMap(s => s.ids), needsMapping: Boolean(feature.requiresFullFeature) };
-  const previousText = git(repo, ['cat-file', 'blob', originalBlob]);
+  const previousText = originalBytes.toString('utf8');
   const before = scenarioSections(previousText, parseFeature(previousText, feature.feature));
   const after = scenarioSections(currentText, feature);
   if (!before || !after) return { ids: [], needsMapping: true };
@@ -182,13 +183,17 @@ function feedbackPlan(repo, opts, index, result) {
   const changedFeatures = result.paths.filter(p => features.has(p));
   const requiredMappings = new Set(result.paths.filter(p => !isDocumentation(p) && (result.batchPaths !== undefined || !features.has(p))));
   if (!result.batchPaths && changedFeatures.length) {
-    const { blobs, modes } = treeEntriesAt(repo, result.base, changedFeatures);
+    const { blobs, modes, sizes } = treeEntriesAt(repo, result.base, changedFeatures, { includeSizes: true });
+    const regular = new Set(['100644', '100755']);
+    const oldFiles = changedFeatures.filter(file => regular.has(modes[file]));
+    const oldBlobs = readGitBlobs(repo, oldFiles.map(file => ({ oid: blobs[file], size: sizes[file] })));
     for (const file of changedFeatures) {
-      if (modes[file] && !['100644', '100755'].includes(modes[file])) {
+      if (modes[file] && !regular.has(modes[file])) {
         requiredMappings.add(file);
         continue;
       }
-      const delta = changedScenarioIds(repo, features.get(file).feature, blobs[file]);
+      const originalBytes = blobs[file] ? oldBlobs.next().value.bytes : null;
+      const delta = changedScenarioIds(repo, features.get(file).feature, originalBytes);
       for (const id of delta.ids) selectedIds.add(id);
       if (delta.needsMapping) requiredMappings.add(file);
     }

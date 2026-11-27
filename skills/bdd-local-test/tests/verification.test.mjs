@@ -242,6 +242,64 @@ test('records scoped scenario IDs and tracks dirty, new and changed features fro
   run(2, '--record', '--base', base, '--changed-scenarios', module + '/missing.feature');
 });
 
+test('historical record batches unique Feature blobs and preserves scenario roles and input order', t => {
+  const { repo, output, git, base, args, run } = fixture(t);
+  const dir = '.bdd/modules/sample';
+  fs.mkdirSync(path.join(repo, dir), { recursive: true });
+  const first = dir + (process.platform === 'win32' ? '/[訂單] A.feature' : '/[訂單]\nA.feature');
+  const alias = dir + '/same.feature', second = dir + '/other.feature';
+  const feature = id => 'Feature: 訂單\n' + id.map(n => '@OR-' + n + ' @#42 @API\nScenario: 狀態 ' + n).join('\n');
+  for (const file of [first, alias]) fs.writeFileSync(path.join(repo, file), feature(['01', '02']));
+  fs.writeFileSync(path.join(repo, second), feature(['03']));
+  // Recorded product paths and scenario paths together cross the Windows Git argument batch boundary.
+  for (let i = 0; i < 130; i++) fs.writeFileSync(path.join(repo, 'p'.repeat(94) + i), '');
+  git('add', '.');
+  const linkPath = dir + '/link.feature', submodule = dir + '/nested';
+  const linkBlob = git('rev-parse', 'HEAD:readme');
+  git('update-index', '--add', '--cacheinfo', '120000', linkBlob, linkPath);
+  git('update-index', '--add', '--cacheinfo', '160000', base, submodule);
+  git('commit', '-qm', 'tested Features');
+  const tested = git('rev-parse', 'HEAD');
+  const firstBlob = git('rev-parse', tested + ':' + first);
+  const secondBlob = git('rev-parse', tested + ':' + second);
+  fs.writeFileSync(path.join(repo, first), feature(['99']));
+  fs.unlinkSync(path.join(repo, alias));
+  git('add', '-u');
+  git('commit', '-qm', 'newer Features');
+  const changed = [second, first + '::OR-02,or-01', alias + '::OR-01', second, linkPath].join(';');
+  const trace = path.join(output, 'historical-trace.ndjson');
+  const result = spawnSync(process.execPath, args('--record', '--head', tested, '--base', base, '--changed-scenarios',
+    changed, '--regression-scenarios', first + '::OR-01'), {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const round = JSON.parse(result.stdout);
+  assert.deepEqual(round.scenarios.map(s => [s.path, s.blob, s.ids, s.role]), [
+    [second, secondBlob, ['OR-03'], 'changed'], [first, firstBlob, ['OR-02', 'or-01'], 'changed'],
+    [alias, firstBlob, ['OR-01'], 'changed'], [second, secondBlob, ['OR-03'], 'changed'],
+    [linkPath, linkBlob, [], 'changed'], [first, firstBlob, ['OR-01'], 'regression'],
+  ]);
+  assert.equal(Object.keys(round.files).length, 130);
+  assert.equal(round.worktreeSnapshot, undefined);
+  const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start').map(event => event.argv);
+  assert.equal(queries.filter(argv => argv.includes('ls-tree')).length, 2);
+  assert.deepEqual(queries.filter(argv => argv.includes('cat-file')).map(argv => argv.at(-1)), ['--batch']);
+
+  // A single legacy ./ spelling is resolved by Git's revision:path syntax.
+  const legacy = run(0, '--record', '--head', tested, '--base', tested, '--changed-scenarios', '././' + alias);
+  assert.deepEqual(legacy.scenarios, [{ path: './' + alias, blob: null, ids: ['OR-01', 'OR-02'], role: 'changed' }]);
+  const single = run(0, '--record', '--head', tested, '--base', tested, '--regression-scenarios', first + '::OR-01');
+  assert.deepEqual(single.scenarios, [{ path: first, blob: firstBlob, ids: ['OR-01'], role: 'regression' }]);
+  const published = fs.readFileSync(path.join(output, 'verification.json'));
+  for (const invalid of [dir + '/absent.feature', second + '::OR-99', dir, submodule, second.replace('/other', '//other')]) {
+    const rejected = spawnSync(process.execPath, args('--record', '--head', tested, '--base', tested,
+      '--changed-scenarios', first + ';' + invalid), { cwd: repo, encoding: 'utf8' });
+    assert.notEqual(rejected.status, 0, invalid);
+    assert.deepEqual(fs.readFileSync(path.join(output, 'verification.json')), published);
+  }
+});
+
 test('captured out-of-scope working changes still require a rerun after cleanup', t => {
   const { repo, base, run } = fixture(t);
   const extra = path.join(repo, 'local-settings.json');
@@ -426,6 +484,7 @@ test('engineering assignment binds selected source paths to this checkout even w
 
 test('records touched paths and ordered subjects with one Git query each across explicit commits', t => {
   const { repo, output, git, args } = fixture(t);
+  git('config', 'core.logAllRefUpdates', 'true');
   git('switch', '-qc', 'side');
   fs.writeFileSync(path.join(repo, 'only-on-side'), 'side');
   git('add', '.');
@@ -446,21 +505,35 @@ test('records touched paths and ordered subjects with one Git query each across 
   git('merge', '--no-ff', '-qm', 'merge side', 'side');
   const merge = git('rev-parse', 'HEAD');
 
-  const selected = [remove, merge, add, remove];
+  git('tag', '-a', '--no-sign', '測試/baseline', add, '-m', 'feature baseline');
+  const references = ['HEAD^1', 'HEAD', '測試/baseline', remove, 'HEAD@{0}'];
+  const selected = [remove, merge, add, remove, merge];
   const trace = path.join(output, 'git-trace.ndjson');
-  const res = spawnSync(process.execPath, args('--record', '--commits', selected.join(',')), {
+  const res = spawnSync(process.execPath, args('--record', '--commits', references.join(',')), {
     cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
   });
   assert.equal(res.status, 0, res.stderr + res.stdout);
   const round = JSON.parse(res.stdout);
   assert.deepEqual(round.commits.map(c => c.sha), selected);
-  assert.deepEqual(round.commits.map(c => c.subject), ['remove', 'merge side', '加入暫存檔', 'remove']);
+  assert.deepEqual(round.commits.map(c => c.subject), ['remove', 'merge side', '加入暫存檔', 'remove', 'merge side']);
   assert.deepEqual(round.files, { [name]: null, 'only-on-side': git('rev-parse', merge + ':only-on-side') });
 
   const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
     .filter(event => event.event === 'start').map(event => event.argv);
   assert.equal(queries.filter(argv => argv.includes('show') && argv.includes('--name-only')).length, 1);
   assert.equal(queries.filter(argv => argv.includes('log')).length, 1);
+  assert.equal(queries.filter(argv => argv.includes('cat-file') && argv.some(a => a.startsWith('--batch-check'))).length, 1);
+  assert.ok(queries.filter(argv => argv.includes('rev-parse') && argv.includes('--verify')).length <= 2);
+
+  const record = path.join(output, 'verification.json');
+  const published = fs.readFileSync(record);
+  for (const invalid of ['no-such-commit', git('rev-parse', merge + ':only-on-side'), '--not-a-revision']) {
+    const rejected = spawnSync(process.execPath, args('--record', '--commits', 'HEAD,' + invalid + ',' + add), {
+      cwd: repo, encoding: 'utf8',
+    });
+    assert.notEqual(rejected.status, 0);
+    assert.deepEqual(fs.readFileSync(record), published);
+  }
 });
 
 test('explicit merge selections track rename endpoints and recheck incomplete historical rounds', t => {

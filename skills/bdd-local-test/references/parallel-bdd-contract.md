@@ -167,15 +167,20 @@ blockers 每項使用 `{ "reason": "缺少指定角色帳號", "scenarioIds": ["
 
 1. 對每個受測 checkout 根目錄執行 `--revision`，將回傳的完整物件填入對應組別的 `revision`。`head` 為實際 commit，乾淨工作區的 `dirtySha256` 為 `null`；有異動時，此值涵蓋 Git 暫存區、工作樹變更與未被忽略的未追蹤檔。將本輪清單、派工檔及報告放在既有 Git 忽略的執行輸出目錄或 checkout 外，避免這些檔案本身改變受審內容。
 2. 以 `--report` 核對選測檔內容的 SHA-256、批次、受測版本，以及各組合計的 Feature 路徑與情境 ID。漏列、多列或錯用上一批的 ID 時，先修正清單再送審。通過後產生清單 SHA-256、候選版本與情境斷言表，放入 `REPORT.md` 的〈預計驗證項目〉，連同清單原檔、選取理由及適用的工程檢查送獨立審核。把 PASS 與該次審核的路徑及 SHA-256 一起記錄。候選版本、未提交內容或範圍變更時，重新擷取版本、另存新清單並複審。
-3. 依上方派工輸入範例準備各組的 `template.json`，填入實際環境、版本、資源、權限與 attempt，省略 `scenarios`、`engineeringChecks` 及 `approvedPlan`。建立各組本次 attempt 的目錄後，用 `--template` 產生派工檔。產生器核對整批情境、工程檢查和受審版本，再寫入各組的核准內容、清單絕對路徑及 SHA-256。
+3. 依上方派工輸入範例準備各組的 `template.json`，填入實際環境、版本、資源、權限與 attempt，省略 `scenarios`、`engineeringChecks` 及 `approvedPlan`。多組派工使用 `--templates` 一次產生整份清單內的所有組別。單獨產生一組可建立該組本次 attempt 的目錄，再用 `--template` 輸出。
 4. 開始派工前，將本輪所有組的派工檔逐一以 `--assignment` 傳給 `parallel-plan`。此時再次核對工作區版本。清單雜湊與審核紀錄一致且整輪核對通過後，再按原先的依賴與批次交付派工。複測時選定每組採用的 attempt。
 
 ```sh
 node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --revision "<受測 checkout 根目錄>"
 node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-plan.json" --report
+node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-plan.json" --templates "<本輪>/templates.json" --output-dir "<本輪>/dispatch-R1"
 node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-plan.json" --template "<組>/template.json" --output "<組>/coordination/attempt-1/assignment.json"
 node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-plan.json" --assignment "<A組>/coordination/attempt-1/assignment.json" --assignment "<B組>/coordination/attempt-1/assignment.json"
 ```
+
+`templates.json` 是每組模板檔路徑組成的 JSON 陣列，例如 `["templates/ui.json", "templates/api.json"]`。相對路徑從清單所在目錄解析。每個核准組別須出現一次，各模板的 `outputDir` 填寫新批次目錄下 `groups/<組目錄>` 的絕對路徑，例如 `C:/reports/5410/dispatch-R1/groups/ui`。保留新批次的目錄名稱供工具建立。
+
+工具一起核對模板、組別、Feature 和情境編號，並在發布前複核清單、選測檔及各 checkout 的候選版本。整批就緒後，所有派工檔一起出現在 `groups/<組目錄>/coordination/attempt-<N>/assignment.json`。成功時標準輸出的 `assignments` 陣列列出每組派工檔的絕對路徑，可直接用於派工前核對與後續彙整。相同名稱的既有批次或其他程序已取得的目錄會被保留。若程序遭強制中斷而只留下暫存目錄，請使用新的批次目錄名稱重試，只派送成功回傳的檔案。
 
 `--output` 透過同目錄的硬連結發布完整新檔，既有檔案會保留。在不支援硬連結的檔案系統上，省略 `--output` 取得派工 JSON，保存到該組新的 attempt 後執行同一項派工前核對。
 

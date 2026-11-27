@@ -96,19 +96,22 @@ function* batches(paths) {
   if (batch.length) yield batch;
 }
 
-export function treeEntriesAt(root, head, paths) {
+export function treeEntriesAt(root, head, paths, { includeSizes = false } = {}) {
   const blobs = Object.fromEntries(paths.map(p => [p, null]));
   const modes = { ...blobs };
+  const sizes = includeSizes ? { ...blobs } : null;
   for (const batch of batches(paths)) {
-    for (const row of git(root, ['ls-tree', '-z', head, '--', ...batch]).split('\0').filter(Boolean)) {
+    const args = ['ls-tree', includeSizes ? '-lz' : '-z', head, '--', ...batch];
+    for (const row of git(root, args).split('\0').filter(Boolean)) {
       const tab = row.indexOf('\t');
-      const [mode, , oid] = row.slice(0, tab).split(' ');
+      const [mode, type, oid, size] = row.slice(0, tab).split(/\s+/);
       const name = row.slice(tab + 1);
       modes[name] = mode;
       blobs[name] = oid;
+      if (sizes && type === 'blob') sizes[name] = Number(size);
     }
   }
-  return { blobs, modes };
+  return includeSizes ? { blobs, modes, sizes } : { blobs, modes };
 }
 
 export function dirtyPaths(root, paths) {
@@ -205,9 +208,30 @@ export function selectedCommitPaths(root, shas) {
   return changedPaths(root, shas);
 }
 
+function resolveCommitRefs(root, references) {
+  if (references.length === 1) return [commit(root, references[0])];
+  // Batch plain names, object IDs and parent selectors. Keep other revision
+  // expressions under the original rev-parse --verify --end-of-options rules.
+  const names = [...new Set(references.filter(ref =>
+    /^[\p{L}\p{M}\p{N}_./-]+(?:[~^]\d*)*$/u.test(ref) && !ref.startsWith('-') && !ref.includes('..')))];
+  const resolved = new Map();
+  if (names.length) {
+    const input = names.map(ref => ref + '^{commit}').join('\n') + '\n';
+    const lines = git(root, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], [0], input).trimEnd().split('\n');
+    if (lines.length !== names.length) throw new Error('git cat-file returned an incomplete list of revisions');
+    for (const [i, line] of lines.entries()) {
+      const [sha, type] = line.split(' ');
+      if (type === 'commit' && fullCommitId.test(sha)) resolved.set(names[i], sha);
+    }
+  }
+  // cat-file can exit successfully for a missing object. Re-run verify for
+  // unresolved refs in input order so failures keep their original diagnostic.
+  return references.map(ref => resolved.get(ref) ?? commit(root, ref));
+}
+
 export function testedChanges(root, references, base, head) {
   if (references.length) {
-    const shas = references.map(ref => commit(root, ref));
+    const shas = resolveCommitRefs(root, references);
     return { shas, paths: selectedCommitPaths(root, shas) };
   }
   if (!base) throw new Error('記錄模式需要 --base 或 --commits');
