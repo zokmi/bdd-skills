@@ -16,7 +16,9 @@
 1. **範圍與依據**。讀 issue 或原始需求、驗收條件、實際 diff、模組情境與驗證階段，依[情境等級與必測範圍](scenario-priority.md)列出選入情境的編號、等級、檔案與理由，以及必要回歸、略過理由和覆蓋缺口。需要補寫情境時先由主代理處理並 lint，再依更新的內容完成清單。
 2. **逐項驗證清單**。每個斷言對應需求、情境編號（工程驗證填「不適用」）、必要前置與操作、可判定的預期結果，以及能直接驗證該結果的手段和證據。[逐項選擇驗證手段](feature-guide.md#逐項選擇驗證手段)說明何時採 UI、API 或 DB。UI 寫明可觀察結果，需要留圖時列出截圖時點。API／DB 寫明請求回應或查詢結果。工程調整列技術檢查。依[實測順序](execution-workflow.md#issue-優先驗證與回寫)標出核心異動、必要前置與排序依據。
 
-本批送審時附上回饋位置、異動範圍與選測檔引用。核對全部派工組的 Feature 與情境 ID 後，依本批涉及的條目編製清單，保留對應的原條號及回饋識別。整單範圍逐條對齊完整驗收標準及後續修訂。已授權 Redmine 回寫時，把本輪各項斷言連到對應條目，標出能顯示畫面結果的截圖時點，列為本階段必要交付證據。若同條還承諾 API、資料庫或下載檔結果，另列可核對該結果的證據。
+本批送審時附上回饋位置、異動範圍與選測檔引用。核對全部派工組的 Feature 與情境 ID 後，保留對應的原條號及回饋識別；整單範圍逐條對齊完整驗收標準及後續修訂。授權 Redmine 回寫時也逐條對應本版實測證據。混合條件分別列出畫面、API、資料庫或下載檔的實際核對方式。
+
+依斷言選擇截圖時點。文字、數值、選取狀態可由實際操作後的 locator 或文字快照核對，清單寫明要觀察的值即可。版面遮擋、裁切、響應式排列等視覺驗收，以及使用者或交付模板指定的圖片，列出要保留的畫面狀態及對應條號。同輪同版、相同角色、資料與視窗下，多個結果同時可見時共用一張；跨角色、視窗或操作前後的差異，各自驗證，僅在需要呈現該差異時分別留圖。
 
 主代理依[核准清單格式](parallel-bdd-contract.md#從核准清單產生派工)擷取各受測工作區的 commit 與未提交變更雜湊，連同本輪派工情境及逐項斷言產生表格供獨立審核。在 `REPORT.md`〈預計驗證項目〉記錄派工方式、規劃者、選取依據及適用的工程檢查，並在審核紀錄標明清單路徑與 SHA-256。獨立審核者須未參與選取、清單編寫、情境撰寫或實測。必要的派工不可用時記錄阻塞，保留已完成的材料。
 
@@ -59,7 +61,7 @@ Read the requirements and the actual code changes independently. Check the follo
 1. Cover the in-scope externally observable business requirements with success and applicable failure scenarios. List engineering changes separately as technical checks. Follow the requirement in each Then step (「那麼」). Tag known mismatches with @已知缺陷 and record the reason.
 2. Check applicable branches against feature-guide.md, including validation, error messages, permissions, states, empty values, duplicates, and missing records. Report missing business branches with file:line locations. Treat SQL-only constraints and data migrations as engineering checks.
 3. For each assertion, verify that its expected outcome is observable and determinate and that the assigned method and evidence prove that outcome. Require UI observation for presentation or interaction, and check real API responses or database results for the assertions assigned to those methods. Include exact message text where required.
-4. Map each planned check to a requirement. Use scenarios for external business behavior and technical checks with evidence for engineering changes. Use 「不適用（工程驗證）」 as the scenario ID for engineering checks. Verify that actions and expectations are testable and that the screenshot timing and API or database evidence can support the assertions.
+4. Map each planned check to a requirement. Use scenarios for external business behavior and technical checks with evidence for engineering changes. Use 「不適用（工程驗證）」 as the scenario ID for engineering checks. Check that the planned observation supports each assertion. For visual or explicitly requested evidence, check what each distinct view must show and which assertions it covers.
 5. Check the file header, numbering, issue and verification-method tags, and BDD- prefix. Each scenario should verify one behavior. Keep credentials and connection strings out of the files.
 
 Return valid JSON only. Example: `{"issues":[["必修","IC-01","問題","需求原文或檔案:行號","改法"]]}`.
