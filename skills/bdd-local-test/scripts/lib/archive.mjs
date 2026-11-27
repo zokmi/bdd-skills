@@ -30,12 +30,17 @@ async function readSource(source) {
   }
   const entries = [];
   const json = new Map();
+  const reportValidation = files.some(file => /^evidence\//i.test(file.name)) ? null : await import('./archive-report.mjs');
+  let smallReport;
   for (const file of files.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
     const key = process.platform === 'win32' ? file.name.toLowerCase() : file.name;
     if (key === 'verification.json' || key === 'masking.json') {
       const data = await readFile(file.path);
       json.set(key, decodeArchiveText(data));
       entries.push({ name: file.name, data, sha256: hashBytes(data), size: data.length, mtime: (await lstat(file.path)).mtime, extra: {} });
+    } else if (reportValidation && /^report\.md$/i.test(file.name)) {
+      smallReport = await reportValidation.readSmallReport(file);
+      entries.push(smallReport?.entry ?? await fileEntry(file.name, file.path));
     } else {
       entries.push(await fileEntry(file.name, file.path));
     }
@@ -46,9 +51,8 @@ async function readSource(source) {
   if (!Array.isArray(scenarios)) throw new Error('verification.json 的 scenarios 必須為陣列');
   const evidence = entries.filter(e => /^evidence\//i.test(e.name));
   const ledger = parseMaskLedger(json.get('masking.json') ?? '{}');
-  if (!evidence.length) {
-    const { verifyReportEvidence } = await import('./archive-report.mjs');
-    await verifyReportEvidence(entries, ledger, verification.rounds);
+  if (reportValidation) {
+    await reportValidation.verifyReportEvidence(entries, ledger, verification.rounds, smallReport);
   } else if (!scenarios.length && !entries.some(e => /\.feature$/i.test(e.name))) {
     throw new Error('缺少情境：沒有 .feature 或受測 scenarios');
   }

@@ -6,7 +6,7 @@ export const fullCommitId = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
 const emptyBlobIds = new Set(['sha1', 'sha256'].map(algo => createHash(algo).update('blob 0\0').digest('hex')));
 
 function git(repo, ...args) {
-  return execFileSync('git', ['-C', repo, ...args], {
+  return execFileSync('git', ['-C', repo, '--no-optional-locks', ...args], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 64 * 1024 * 1024,
   });
 }

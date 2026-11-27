@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { addSnapshots } from '../scripts/lib/archive-pack.mjs';
+import { archiveCommand } from '../scripts/lib/archive.mjs';
 import { verifyReportEvidence } from '../scripts/lib/archive-report.mjs';
 import { repository, resolveArchiveRoot } from '../scripts/lib/archive-store.mjs';
 import { expandArchive } from '../scripts/lib/extract.mjs';
@@ -74,6 +77,39 @@ test('concurrent archives preserve both index events and supersede exactly one p
   assert.equal(events[2].by, events[1].archive);
   assert.deepEqual(items.flatMap(i => i.superseded), [events[0].archive]);
   assert.deepEqual((await readdir(f.root)).sort(), ['index.jsonl', 'one.zip', 'two.zip']);
+});
+
+test('a small text-only report is read once for validation and again from disk for the ZIP', async t => {
+  const f = await fixture(t);
+  await rm(f.evidence, { recursive: true });
+  const report = path.join(f.dir, 'REPORT.md'), contents = '## CHECK-1\nObserved 42\n';
+  await writeFile(report, contents);
+  await writeFile(path.join(f.dir, 'verification.json'), JSON.stringify({ rounds: [{ head: f.head, engineeringChecks: ['CHECK-1'] }] }));
+  const archive = name => archiveCommand(['--dir', f.dir, '--archive-root', f.root, '--destination', path.join(f.root, name)]);
+  const stream = fs.createReadStream, read = fs.promises.readFile;
+  let reads = 0, changeOnZip = false;
+  const streamed = t.mock.method(fs, 'createReadStream', (file, ...args) => {
+    if (file === report && ++reads === 2 && changeOnZip) fs.writeFileSync(report, contents.replace('42', '43'));
+    return stream(file, ...args);
+  });
+  const buffered = t.mock.method(fs.promises, 'readFile', (file, ...args) => {
+    if (file === report) reads++;
+    return read(file, ...args);
+  });
+  t.mock.method(console, 'log', () => {});
+  syncBuiltinESMExports();
+  try {
+    await archive('first.zip');
+    assert.equal(reads, 2);
+    reads = 0;
+    changeOnZip = true;
+    await assert.rejects(archive('changed.zip'), /封存內容不符.*REPORT\.md/);
+    assert.equal(fs.existsSync(path.join(f.root, 'changed.zip')), false);
+  } finally {
+    streamed.mock.restore();
+    buffered.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test('text-only archives require populated report sections for the selected round and retain their exact bytes', async t => {

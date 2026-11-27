@@ -1,10 +1,10 @@
 import { constants, createReadStream } from 'node:fs';
-import { access, copyFile, link, lstat, mkdir, mkdtemp, realpath, rename, rmdir, unlink } from 'node:fs/promises';
+import { access, copyFile, link, lstat, mkdir, mkdtemp, open, realpath, rename, rmdir, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { appendIndexEvents, findArchiveIndexRoot, readArchiveStates, withIndexLock } from './archive-index.mjs';
-import { safePathComponent } from './archive-limits.mjs';
+import { safePathComponent, sequentialReadOptions } from './archive-limits.mjs';
 import { hashStream } from './archive-pack.mjs';
 import { outsideWorktrees, repository, resolveArchiveRoot } from './archive-store.mjs';
 
@@ -34,17 +34,34 @@ async function listArchives(index, opts) {
   return { count: archives.length, archives };
 }
 
+const archiveStat = file => lstat(file, { bigint: true });
+
 function sameFile(a, b) {
-  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs;
+}
+
+function sameVersion(a, b) {
+  return b.isFile() && sameFile(a, b) && a.ctimeNs === b.ctimeNs;
+}
+
+function assertArchiveVersion(file, before, after) {
+  if (!sameVersion(before, after)) throw new Error(`封存檔在核對期間變動：${file}`);
 }
 
 async function checkedHash(file) {
-  const before = await lstat(file);
+  const before = await archiveStat(file);
   if (!before.isFile()) throw new Error(`不是一般封存檔：${file}`);
-  const sha256 = await hashStream(createReadStream(file));
-  const after = await lstat(file);
-  if (!sameFile(before, after) || before.ctimeMs !== after.ctimeMs) throw new Error(`封存檔在核對期間變動：${file}`);
-  return { sha256, stat: after };
+  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    assertArchiveVersion(file, before, await handle.stat({ bigint: true }));
+    const options = sequentialReadOptions(Number(before.size));
+    const sha256 = await hashStream(createReadStream(file, { ...options, fd: handle.fd, autoClose: false }));
+    const after = await archiveStat(file);
+    assertArchiveVersion(file, before, after);
+    return { sha256, stat: after };
+  } finally {
+    await handle.close();
+  }
 }
 
 async function markArchive(index, opts) {
@@ -55,10 +72,20 @@ async function markArchive(index, opts) {
   if (status.startsWith('uploaded') && !attachments.length) throw new Error(status + ' 必須以 --attachment 指定 issue 附件 ID 或網址');
   const archive = opts.archive;
   if (!(await exists(index))) throw new Error(`索引裡沒有這個封存檔：${archive}`);
-  return withIndexLock(index, async stat => {
+  const registeredState = async () => {
     const [state] = await readArchiveStates(index, { archive });
     if (!state) throw new Error(`索引裡沒有這個封存檔：${archive}`);
-    const { sha256 } = await checkedHash(archive);
+    return state;
+  };
+  // Check membership before reading the archive. Reuse this replay only if the
+  // append-only index is still the same version after the unlocked hash.
+  const initial = await withIndexLock(index, async () => ({
+    version: await archiveStat(index), state: await registeredState(),
+  }));
+  const { sha256, stat: verified } = await checkedHash(archive);
+  return withIndexLock(index, async stat => {
+    const state = stat && sameVersion(initial.version, await archiveStat(index)) ? initial.state : await registeredState();
+    assertArchiveVersion(archive, verified, await archiveStat(archive));
     if (sha256 !== String(state.sha256).toUpperCase()) throw new Error(`封存檔 SHA-256 與建立時不同（建立 ${state.sha256}、目前 ${sha256}），拒絕登記`);
     await appendIndexEvents(index, stat, [{ event: 'status', archive: state.archive, status, attachments,
       note: opts.note ?? '', at: new Date().toISOString() }]);
@@ -153,16 +180,16 @@ async function importArchive(root, index, opts, repoInfo) {
         let linked = false;
         try {
           linked = await linkOrCopy(staged, target);
-          published = linked ? stagedHash.stat : await lstat(target);
+          published = linked ? stagedHash.stat : await archiveStat(target);
         }
         catch (error) { if (error.code !== 'EEXIST') throw error; }
-        const saved = linked && sameFile(stagedHash.stat, await lstat(target)) ? stagedHash : await checkedHash(target);
+        const saved = linked && sameFile(stagedHash.stat, await archiveStat(target)) ? stagedHash : await checkedHash(target);
         if (saved.sha256 !== verified.sha256) throw new Error('封存庫已有同名但內容不同的檔案：' + target);
         await appendIndexEvents(index, stat, [{ event: 'created', archive: target, name, issue, topic: opts.topic,
-          commit: opts.commit ?? '', sha256: saved.sha256, bytes: saved.stat.size, repo: repoInfo?.worktrees[0] ?? null,
+          commit: opts.commit ?? '', sha256: saved.sha256, bytes: Number(saved.stat.size), repo: repoInfo?.worktrees[0] ?? null,
           sourceDir: null, legacy: true, importedFrom: source, note: opts.note ?? '', at: new Date().toISOString() }]);
       } catch (error) {
-        if (published && await exists(target) && sameFile(published, await lstat(target))) await unlink(target);
+        if (published && await exists(target) && sameFile(published, await archiveStat(target))) await unlink(target);
         throw error;
       }
       if (opts.move) movedSource = await removeImportedSource(source, verified, target, warnings);

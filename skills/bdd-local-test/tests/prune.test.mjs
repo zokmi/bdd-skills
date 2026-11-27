@@ -154,6 +154,7 @@ test('apply replays one authoritative index per small batch', async t => {
 
 test('prune batches the literal Git preflight and reports tracked evidence per topic', async t => {
   const f = await batchFixture(t, 5);
+  execFileSync('git', ['init', '-q', f.root]);
   const tracked = ['.bdd/' + topic + '/evidence/a.txt', '.bdd/batch-2/evidence.zip'];
   fs.writeFileSync(path.join(f.repo, tracked[1]), 'tracked ZIP');
   execFileSync('git', ['-C', f.repo, '--literal-pathspecs', 'add', '-f', '--', ...tracked]);
@@ -170,9 +171,12 @@ test('prune batches the literal Git preflight and reports tracked evidence per t
   }
   assert.equal(items.filter(i => i.action === 'prune').length, 3);
   const starts = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
-    .filter(e => e.event === 'start' && e.argv.includes('ls-files'));
-  assert.equal(starts.length, 1);
-  assert.ok(starts[0].argv.includes('--literal-pathspecs'));
+    .filter(e => e.event === 'start');
+  const preflight = starts.filter(e => e.argv.includes('ls-files'));
+  assert.equal(preflight.length, 1);
+  assert.ok(preflight[0].argv.includes('--literal-pathspecs'));
+  assert.equal(starts.filter(e => e.argv.includes('rev-parse')).length, 1);
+  assert.equal(starts.filter(e => e.argv.includes('check-ignore')).length, 0);
 });
 
 test('changes during a batch retain revoked, edited or replaced evidence and allow other topics to finish', async t => {
@@ -278,4 +282,18 @@ test('a linked evidence directory preserves the linked target', async t => {
   fs.symlinkSync(detached, f.evidence, process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal((await f.command('--apply')).items[0].action, 'keep');
   assert.deepEqual(fs.readFileSync(path.join(detached, 'a.txt')), payload);
+});
+
+test('apply rejects archive roots that enter or leave the worktree through a directory link', async t => {
+  const f = await fixture(t);
+  await f.publish();
+  const outside = path.join(f.base, 'into-repo'), inside = path.join(f.repo, 'into-archives');
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  fs.symlinkSync(f.repo, outside, linkType);
+  fs.symlinkSync(f.root, inside, linkType);
+  for (const root of [path.join(outside, 'missing'), inside]) {
+    await assert.rejects(pruneCommand(['--repo', f.repo, '--archive-root', root, '--apply']), /worktree 內/);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(f.evidence, 'a.txt')), payload);
+  assert.equal(fs.existsSync(f.zip), true);
 });

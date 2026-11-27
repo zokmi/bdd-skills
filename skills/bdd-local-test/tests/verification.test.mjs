@@ -36,7 +36,7 @@ function fixture(t) {
 }
 
 test('recorded worktrees retain rollback, untracked and scenario deltas across same-HEAD feedback', t => {
-  const { repo, git, base } = fixture(t);
+  const { repo, output, git, base } = fixture(t);
   git('config', 'core.autocrlf', 'false');
   const write = (file, value) => {
     fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
@@ -100,7 +100,17 @@ test('recorded worktrees retain rollback, untracked and scenario deltas across s
   git('update-index', '--no-assume-unchanged', 'src/current.js');
   const args = ['quality-plan', '--issue', '42', '--previous-verification', record,
     '--review-reason', 'batch change', '--impact-complete', '--static-passed'];
-  assert.deepEqual(ok(...args).paths, []); // Unchanged untracked and staged-only versions are excluded.
+  const headRef = snapshot.ref.replace(/\/tree$/, '/head');
+  const trace = path.join(output, 'snapshot-refs.ndjson');
+  const result = spawnSync(process.execPath, [cli, ...args], {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).paths, []); // Unchanged untracked and staged-only versions are excluded.
+  const refQueries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && (event.argv.includes(snapshot.ref) || event.argv.includes(headRef)));
+  assert.equal(refQueries.length, 1);
+  assert.ok(refQueries[0].argv.includes(snapshot.ref) && refQueries[0].argv.includes(headRef));
 
   write('src/prior.js', 'at HEAD\n');
   write('src/current.js', 'second batch\n');
@@ -136,12 +146,20 @@ test('recorded worktrees retain rollback, untracked and scenario deltas across s
   assert.equal(next.head, branchHead);
   assert.equal(ok('verification', '--record', '--dir', 'src', '--base', next.baseHead).base, head);
   fs.writeFileSync(path.join(repo, record), rounds);
-  const headRef = snapshot.ref.replace(/\/tree$/, '/head');
+  function assertInvalidRefs() {
+    const result = command(...args);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /所在 Git 儲存庫找不到上一輪登記的工作樹快照/);
+  }
+  git('update-ref', headRef, branchHead);
+  assertInvalidRefs();
   git('update-ref', '-d', headRef);
-  assert.match(command(...args).stderr, /快照/);
+  assertInvalidRefs();
   git('update-ref', headRef, head);
+  git('update-ref', snapshot.ref, git('rev-parse', branchHead + '^{tree}'));
+  assertInvalidRefs();
   git('update-ref', '-d', snapshot.ref);
-  assert.match(command(...args).stderr, /快照/);
+  assertInvalidRefs();
 });
 
 test('records concurrent rounds without losing BOM-prefixed legacy data or top-level fields', async t => {

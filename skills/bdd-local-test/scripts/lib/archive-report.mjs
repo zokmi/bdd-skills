@@ -1,5 +1,7 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { lstat, readFile } from 'node:fs/promises';
+import { buffer } from 'node:stream/consumers';
 import { hashBytes } from './archive-pack.mjs';
 import { decodeArchiveText } from './archive-text.mjs';
 import { isEvidenceImage } from './mask-ledger.mjs';
@@ -9,6 +11,17 @@ import { pathKey } from './summary-evidence.mjs';
 
 const coordination = /^(?:coordination\/attempt-([1-9]\d*)\/)?(assignment|result)\.json$/i;
 const scenarioKey = (feature, id, role) => JSON.stringify([pathKey(feature.replaceAll('\\', '/')), id.toLowerCase(), role]);
+
+export async function readSmallReport(file) {
+  const stat = await lstat(file.path, { bigint: true });
+  if (!stat.isFile()) throw new Error('來源不是一般檔案：' + file.path);
+  if (stat.size > 64n * 1024n) return null;
+  // Reading one extra byte detects growth while keeping the single report buffer bounded.
+  const bytes = await buffer(createReadStream(file.path, { end: Number(stat.size) }));
+  if (bytes.length !== Number(stat.size)) throw new Error('封存時來源已變動：' + file.name);
+  const entry = { ...file, size: bytes.length, mtime: stat.mtime, sha256: hashBytes(bytes), extra: {} };
+  return { entry, stat, bytes };
+}
 
 function requiresScreenshot(description) {
   // Only explicit retention instructions are machine-checkable. A conditional
@@ -73,7 +86,7 @@ function selectedChecks(round) {
   return selected;
 }
 
-export async function verifyReportEvidence(entries, ledger, rounds) {
+export async function verifyReportEvidence(entries, ledger, rounds, smallReport) {
   const selected = selectedChecks(rounds?.at(-1));
   const inventory = new Map(entries.map(entry => [pathKey(entry.name), entry]));
   function required(name) {
@@ -88,7 +101,13 @@ export async function verifyReportEvidence(entries, ledger, rounds) {
   const image = entries.find(entry => isEvidenceImage(entry.name));
   if (image) throw new Error('圖片須放在 evidence/ 並核對遮罩：' + image.name);
   const report = required('REPORT.md');
-  const { populated, attachments } = reportEvidence(await entryText(report));
+  let text;
+  if (smallReport?.entry === report) {
+    const before = smallReport.stat, now = await lstat(report.path, { bigint: true });
+    if (now.isFile() && now.dev === before.dev && now.ino === before.ino && now.size === before.size &&
+        now.mtimeNs === before.mtimeNs && now.ctimeNs === before.ctimeNs) text = decodeArchiveText(smallReport.bytes);
+  }
+  const { populated, attachments } = reportEvidence(text ?? await entryText(report));
   for (const name of attachments) required(name);
   const anchors = new Map();
   async function checkReference(reference) {

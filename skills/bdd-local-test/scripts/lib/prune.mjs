@@ -115,7 +115,7 @@ async function sourceHashes(topic, files) {
 async function archiveCoverage(state, worktrees) {
   const file = state.archive;
   if (!path.isAbsolute(file)) throw new Error('索引封存位置不是絕對路徑');
-  await outsideWorktrees(file, worktrees, []);
+  await outsideWorktrees(file, worktrees);
   checkPhysical(file);
   const version = stat(file);
   if (!version?.isFile() || await hashStream(fs.createReadStream(file, sequentialReadOptions(version.size))) !== state.sha256.toUpperCase()) {
@@ -326,7 +326,7 @@ export async function pruneCommand(args) {
     checkPhysical(bdd);
     const { root } = resolveArchiveRoot({ archiveRoot: values['archive-root'], outputDir: path.join(bdd, '_'), worktrees });
     const index = path.join(root, 'index.jsonl');
-    await outsideWorktrees(root, worktrees, []);
+    await outsideWorktrees(root, worktrees);
     const states = await readArchiveStates(index, { includeVerifiedOriginals: true });
     const accepted = values['allow-local-only'] ? ['uploaded-verified', 'uploaded', 'local-only'] : ['uploaded-verified'];
     const context = { repo, worktrees, states, index, accepted };

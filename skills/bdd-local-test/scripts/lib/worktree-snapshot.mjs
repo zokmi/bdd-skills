@@ -147,9 +147,9 @@ export function previousWorktreeChanges(repo, head, file, issue) {
   }
   const remote = repoIdentity(repo).url;
   const normalize = url => url.trim().toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '');
+  const pinnedRefs = ['show-ref', '--verify', '--hash', snapshot.ref, headRefOf(snapshot)];
   if (typeof round.repo?.url !== 'string' || normalize(remote) !== normalize(round.repo.url) ||
-      git(repo, ['rev-parse', '--verify', '--quiet', snapshot.ref], [0, 1])?.trim() !== snapshot.tree ||
-      git(repo, ['rev-parse', '--verify', '--quiet', headRefOf(snapshot)], [0, 1])?.trim() !== snapshot.head) {
+      git(repo, pinnedRefs, [0, 1, 128])?.trimEnd().replace(/\r\n/g, '\n') !== snapshot.tree + '\n' + snapshot.head) {
     throw new Error('所在 Git 儲存庫找不到上一輪登記的工作樹快照');
   }
   const tree = worktreeTree(repo, head, snapshot.outputDir);

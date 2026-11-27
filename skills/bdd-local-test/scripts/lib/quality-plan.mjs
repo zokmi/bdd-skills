@@ -98,13 +98,15 @@ function scenarioImpact(entries, affectedModules, index, paths) {
 const isDocumentation = p => /^(README\.md|docs\/[\p{L}\p{M}\p{N}\p{Pc}/.-]+\.md)$/u.test(p);
 
 function batchChangedPaths(repo, base, head) {
+  // At HEAD the staged intersection is just the full set of staged paths.
+  if (base === head) return changedPaths(repo, base, head);
   const paths = args => git(repo, args).split('\0').filter(Boolean);
   const diff = ['diff', '--no-renames', '--name-only', '-z'];
   const changed = new Set(paths([...diff, base, '--']));
   const staged = paths([...diff, '--cached', head, '--']);
   if (staged.length) {
     // A saved feedback snapshot can differ from HEAD even when the index is untouched.
-    const differsFromBase = new Set(base === head ? staged : paths([...diff, '--cached', base, '--']));
+    const differsFromBase = new Set(paths([...diff, '--cached', base, '--']));
     for (const p of staged) if (differsFromBase.has(p)) changed.add(p);
   }
   for (const p of paths(['ls-files', '-z', '--others', '--exclude-standard'])) changed.add(p);

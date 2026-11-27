@@ -107,6 +107,93 @@ test('an upload needs an attachment identifier and marking never certifies a cha
   assert.deepEqual(await readFile(index), before);
 });
 
+test('a second archive can be marked while the first archive is being hashed', async t => {
+  const { dir, root, index, importArgs, run } = await fixture(t);
+  const first = (await run(...importArgs)).archive;
+  const source = path.join(dir, 'second.zip');
+  await writeFile(source, 'second');
+  const second = (await run('--import', '--archive-root', root, '--issue', '42', '--topic', '42-other', '--archive', source)).archive;
+  const mark = archive => ['--mark', '--archive-root', root, '--archive', archive, '--status', 'uploaded', '--attachment', '42'];
+  const original = fs.createReadStream;
+  let markingSecond, summary;
+  const output = t.mock.method(console, 'log', row => { summary = JSON.parse(row); });
+  const stream = t.mock.method(fs, 'createReadStream', (...args) => {
+    if (args[0] !== first) return original(...args);
+    assert.equal(fs.existsSync(index + '.lock'), false, 'another mark must be able to acquire the index lock');
+    const input = original(...args);
+    const iterator = input[Symbol.asyncIterator].bind(input);
+    markingSecond = run(...mark(second));
+    // The first mark must also see a new status recorded against its own archive during the hash.
+    input[Symbol.asyncIterator] = async function* () {
+      await markingSecond;
+      await run('--mark', '--archive-root', root, '--archive', first, '--status', 'superseded');
+      yield* iterator();
+    };
+    return input;
+  });
+  syncBuiltinESMExports();
+  try {
+    await archiveIndexCommand(mark(first));
+    assert.equal((await markingSecond).status, 'uploaded');
+    assert.equal(summary.previousStatus, 'superseded');
+  } finally {
+    output.mock.restore();
+    stream.mock.restore();
+    syncBuiltinESMExports();
+  }
+  const states = await readArchiveStates(index);
+  assert.deepEqual(states.map(s => s.status), ['uploaded', 'uploaded']);
+});
+
+test('mark reads only registered files and replays an unchanged index once', async t => {
+  const { root, source, index, importArgs, run } = await fixture(t);
+  const { archive } = await run(...importArgs);
+  const mark = file => archiveIndexCommand(['--mark', '--archive-root', root, '--archive', file, '--status', 'local-only']);
+  const original = fs.createReadStream;
+  const reads = [];
+  const hook = t.mock.method(fs, 'createReadStream', (file, options) => {
+    reads.push(file);
+    return original(file, options);
+  });
+  const output = t.mock.method(console, 'log', () => {});
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(mark(source), /索引裡沒有/);
+    assert.deepEqual(reads, [index]);
+    reads.length = 0;
+    await mark(archive);
+    assert.deepEqual(reads, [index, archive]);
+  } finally {
+    output.mock.restore();
+    hook.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test('mark rejects a file replaced with equal bytes after hashing and before appending', async t => {
+  const { root, index, importArgs, run } = await fixture(t);
+  const { archive } = await run(...importArgs);
+  const before = await readFile(index);
+  const open = fs.promises.open;
+  let lockAttempts = 0;
+  const hook = t.mock.method(fs.promises, 'open', async (file, ...args) => {
+    if (file === index + '.lock' && ++lockAttempts === 2) {
+      await fs.promises.rename(archive, archive + '.original');
+      await fs.promises.copyFile(archive + '.original', archive);
+    }
+    return open(file, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(archiveIndexCommand(['--mark', '--archive-root', root, '--archive', archive,
+      '--status', 'uploaded-verified', '--attachment', '42']), /核對期間變動/);
+  } finally {
+    hook.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(await readFile(index), before);
+});
+
 test('replays only proven cross-issue automatic replacements without changing the index', async t => {
   const { dir, root, index } = await fixture(t);
   await mkdir(root);

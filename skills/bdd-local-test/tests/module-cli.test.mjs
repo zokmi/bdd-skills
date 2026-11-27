@@ -272,6 +272,52 @@ test('successive feedback commits select their own cases and reviewed dependenci
   assert.deepEqual(ids(rollback), ['PY-02']);
 });
 
+test('batch quality-plan uses one status at HEAD and keeps the staged intersection for an older base', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-batch-paths-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const repo = path.join(tmp, 'repo');
+  fs.mkdirSync(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args]);
+  const write = (name, text) => fs.writeFileSync(path.join(repo, name), text);
+  const commit = message => git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '-qm', message);
+  git('init', '-q');
+  git('config', 'core.autocrlf', 'false');
+  write('reverted', 'prior\n');
+  write('staged-only', 'initial\n');
+  git('add', '.');
+  commit('prior feedback');
+  write('reverted', 'current\n');
+  git('add', '.');
+  commit('current feedback');
+  write('reverted', 'prior\n');
+  write('staged-only', 'staged\n');
+  git('add', '.');
+  write('staged-only', 'initial\n');
+  write('untracked', 'new\n');
+
+  const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
+  const trace = path.join(tmp, 'trace.jsonl');
+  const plan = (base, paths, commands) => {
+    fs.writeFileSync(trace, '');
+    const output = execFileSync(process.execPath, [cli, 'quality-plan', '--base', base, '--issue', '42',
+      '--review-reason', 'feedback'], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace } });
+    assert.deepEqual(JSON.parse(output).paths, paths);
+    const starts = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      .filter(event => event.event === 'start').map(event => event.argv);
+    const pathQueries = starts.flatMap(args => args.filter(arg => ['status', 'diff', 'ls-files'].includes(arg)));
+    assert.deepEqual(pathQueries, commands);
+  };
+  const all = ['reverted', 'staged-only', 'untracked'];
+  plan('HEAD', all, ['status']);
+  plan('HEAD^', ['staged-only', 'untracked'], ['diff', 'diff', 'diff', 'ls-files']);
+
+  write('intent', 'temporary\n');
+  git('add', '-N', 'intent');
+  fs.unlinkSync(path.join(repo, 'intent'));
+  plan('HEAD', all, ['status', 'diff', 'diff', 'ls-files']);
+});
+
 test('reviewed batch paths separate two uncommitted feedback fixes at the same HEAD', t => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-working-feedback-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));

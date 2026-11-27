@@ -43,6 +43,7 @@ export async function outsideWorktrees(target, worktrees, warnings) {
       throw new Error(`封存位置不可在受測 repo 的 worktree 內（${tree}）：${target}`);
     }
   }
+  if (!warnings) return;
   const probe = (await lstat(ancestor)).isDirectory() ? ancestor : path.dirname(ancestor);
   const other = git(probe, ['rev-parse', '--show-toplevel']);
   if (other.status === 0 && git(probe, ['check-ignore', '-q', '--', physical]).status !== 0) {
