@@ -165,15 +165,24 @@ function liveRevisionIssues(groups, assignments = [], checkFeatures = true) {
       issues.push('Cannot confirm candidate revision for ' + group.groupId + ': ' + error.message);
     }
   }
-  for (const { groupId, target } of assignments) {
+  const worktreeRoots = new Map();
+  const locations = assignments.map(({ groupId, target }) => {
     const repo = approvedRepoKey(target.repo);
-    const workDir = approvedRepoKey(target.workDir);
-    // A subdirectory is valid only when Git resolves it to the same checkout.
-    if (workDir && workDir === repo) continue;
+    let workDir;
     try {
-      if (workDir && approvedRepoKey(repoRoot(target.workDir)) === repo) continue;
-    } catch { /* No checkout at the specified workDir. */ }
-    issues.push('Assignment workDir differs from the approved checkout: ' + groupId);
+      if (path.isAbsolute(target.workDir)) workDir = fs.realpathSync.native(target.workDir);
+    } catch { /* An inaccessible spelling cannot borrow another assignment's checkout. */ }
+    if (workDir && workDir !== repo) worktreeRoots.set(workDir, null);
+    return { groupId, repo, workDir };
+  });
+  // Sample ownership once per existing physical subdirectory in this stage.
+  for (const dir of worktreeRoots.keys()) {
+    try { worktreeRoots.set(dir, approvedRepoKey(repoRoot(dir))); } catch { /* No checkout here. */ }
+  }
+  for (const { groupId, repo, workDir } of locations) {
+    if (!repo || !workDir || (repo !== workDir && repo !== worktreeRoots.get(workDir))) {
+      issues.push('Assignment workDir differs from the approved checkout: ' + groupId);
+    }
   }
   return issues;
 }

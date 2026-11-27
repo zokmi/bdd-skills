@@ -367,16 +367,66 @@ test('checks reachable commits in a batch and preserves order and duplicate expl
   }
   commits.push(commits[1]);
   run(0, '--record', '--commits', commits.join(','));
+  assert.equal(run(0, '--check').verdict, 'current');
+  git('commit', '--allow-empty', '-qm', 'unrelated later commit');
   const trace = path.join(output, 'check-trace.ndjson');
   const checked = spawnSync(process.execPath, args('--check'), {
     cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
   });
   assert.equal(checked.status, 0, checked.stderr + checked.stdout);
+  assert.equal(JSON.parse(checked.stdout).verdict, 'still-valid');
   assert.deepEqual(JSON.parse(checked.stdout).commits.map(c => [c.source, c.status]), commits.map(sha => [sha, 'same']));
   const starts = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(row => JSON.parse(row))
     .filter(row => row.event === 'start').map(row => row.argv);
   const historyCalls = starts.filter(argv => ['cat-file', 'merge-base', 'rev-list'].some(cmd => argv.includes(cmd)));
   assert.ok(historyCalls.length <= 2, JSON.stringify(historyCalls));
+});
+
+test('mixed and truncated histories classify original SHAs, tag objects and missing objects independently', t => {
+  const { repo, output, git, base, run, args } = fixture(t);
+  // A single import keeps the deep history inexpensive on Windows.
+  const history = Array.from({ length: 48 }, (_, index) => {
+    const n = index + 1;
+    return ['commit refs/heads/tested', 'mark :' + n, 'committer Fixture <fixture@example.invalid> ' + (1700000000 + n) + ' +0000',
+      'data <<END', 'tested ' + n, 'END', 'from ' + (index ? ':' + index : base),
+      'M 100644 inline readme', 'data <<END', String(n), 'END', '', ''].join('\n');
+  });
+  execFileSync('git', ['fast-import', '--quiet'], { cwd: repo, input: history.join('') + 'done\n' });
+  git('switch', '-q', 'tested');
+  const chain = git('rev-list', '--reverse', base + '..HEAD').split(/\r?\n/);
+  const selected = [1, 8, 11, 46, 47, 48].map(n => chain[n - 1]);
+  const round = run(0, '--record', '--commits', selected.join(','));
+  git('tag', '-a', '--no-sign', 'inside', selected[1], '-m', 'ancestor');
+  git('tag', '-a', '--no-sign', 'outside', selected[5], '-m', 'divergent');
+  round.commits.push({ ...round.commits[1], sha: git('rev-parse', 'inside') },
+    { ...round.commits[5], sha: git('rev-parse', 'outside') }, { ...round.commits[5], sha: selected[5].toUpperCase() },
+    { sha: '0'.repeat(base.length), subject: 'absent object', patchId: '' },
+    { sha: git('rev-parse', 'HEAD:readme'), subject: 'not a commit', patchId: '' });
+  fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify({ rounds: [round] }));
+
+  function checkFork(branch, from, expected, fallbackShas) {
+    git('switch', '-qc', branch, from);
+    git('commit', '--allow-empty', '-qm', branch);
+    const trace = path.join(output, branch + '.ndjson');
+    const checked = spawnSync(process.execPath, args('--check'), {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+    });
+    assert.equal(checked.status, 1, checked.stdout + checked.stderr);
+    const result = JSON.parse(checked.stdout);
+    assert.equal(result.verdict, 'rerun');
+    assert.ok(result.reasons.includes('目前 HEAD 並非由受測版本前進'));
+    assert.deepEqual(result.commits.map(c => c.source), round.commits.map(c => c.sha));
+    assert.deepEqual(result.commits.map(c => c.status), expected);
+    const calls = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+      .filter(event => event.event === 'start').map(event => event.argv);
+    assert.equal(calls.filter(argv => argv.includes('cat-file') && argv.includes('-e')).length, 0);
+    assert.equal(calls.filter(argv => argv.includes('rev-list')).length, 1);
+    assert.deepEqual(calls.filter(argv => argv.includes('--is-ancestor')).map(argv => argv.at(-2)).sort(), fallbackShas.sort());
+  }
+  checkFork('one-diverged', chain[46], ['same', 'same', 'same', 'same', 'same', 'missing', 'same', 'missing', 'missing', 'missing', 'missing'], []);
+  // Outside this older fork, commit 11 lies beyond the bounded page and is still missing.
+  checkFork('deep-fork', chain[7], ['same', 'same', 'missing', 'missing', 'missing', 'missing', 'same', 'missing', 'missing', 'missing', 'missing'],
+    [selected[0], selected[1], selected[2]]);
 });
 
 test('verification rejects invalid result counts before appending a round', t => {

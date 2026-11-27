@@ -7,6 +7,7 @@ import os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { moduleIndex, nextId } from '../scripts/lib/module-index.mjs';
+import { modulesCommand } from '../scripts/lib/module-query.mjs';
 import { lint } from '../scripts/lib/module-lint.mjs';
 import { buildQualityPlan } from '../scripts/lib/quality-plan.mjs';
 import { readGitBlobs } from '../scripts/lib/git-blobs.mjs';
@@ -510,6 +511,33 @@ test('module impact and quality plans include both rename endpoints and staged-o
   const plan = run('quality-plan', '--base', base, '--review-risk', 'MEDIUM', '--review-reason', 'reviewed callers', '--impact-complete', '--static-passed');
   assert.deepEqual(plan.paths, paths);
   assert.deepEqual(plan.selected.map(row => row.module), modules.modules.map(row => row.name));
+});
+
+test('next-id reads only the requested module and preserves removed and reserved IDs', t => {
+  const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'bdd-next-id-')));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  const root = path.join(repo, '.bdd', 'modules');
+  const selected = path.join(root, 'API', 'Orders');
+  const manifest = '---\nprefix: OR\nremoved:\n  - OR-12\n---';
+  for (const dir of [root, selected, path.join(selected, 'Nested'), path.join(root, 'Other', 'Orders')]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.MD'), manifest);
+    fs.writeFileSync(path.join(dir, 'orders.feature'), dir === selected ? '@OR-15' : '@OR-02');
+  }
+  const reads = [], visits = [], output = [];
+  const read = fs.readFileSync, list = fs.readdirSync;
+  t.mock.method(fs, 'readFileSync', (file, ...args) => { reads.push(file); return read(file, ...args); });
+  t.mock.method(fs, 'readdirSync', (dir, ...args) => { visits.push(dir); return list(dir, ...args); });
+  t.mock.method(console, 'log', value => output.push(JSON.parse(value)));
+  const run = name => modulesCommand(['--repo', repo, '--next-id', '--module', name]);
+  assert.equal(run('api\\ORDERS'), 0);
+  assert.deepEqual(output[0], { module: 'API/Orders', prefix: 'OR', next: 'OR-16' });
+  assert.deepEqual(reads.map(file => path.relative(selected, file)), ['module.MD', 'orders.feature']);
+  assert.deepEqual(visits.map(dir => path.relative(root, dir)), ['', 'API', path.join('API', 'Orders')]);
+  assert.equal(run('.'), 0);
+  assert.deepEqual(output[1], { module: '.', prefix: 'OR', next: 'OR-13' });
+  assert.throws(() => run('../Other/Orders'), /找不到模組/);
 });
 
 test('native module queries and quality plans share the same scenario index', t => {

@@ -98,12 +98,19 @@ export function checkScenarioIds(available, selected, feature) {
   if (missing.length) throw new Error('情境檔 ' + feature + ' 找不到指定編號：' + missing.join('、'));
 }
 
-function moduleIndex(root, { hashFeatures = false } = {}) {
+function moduleIndex(root, { hashFeatures = false, moduleName } = {}) {
   const base = path.join(root, '.bdd', 'modules');
   const modules = [];
   const orphans = [];
-  function visit(dir) {
+  function visit(dir, remaining) {
     const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => compare(a.name, b.name));
+    if (remaining?.length) {
+      const [name, ...rest] = remaining;
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.toLowerCase() === name) visit(path.join(dir, entry.name), rest);
+      }
+      return;
+    }
     const files = entries.filter(e => e.isFile() || (e.isSymbolicLink() &&
       fs.statSync(path.join(dir, e.name), { throwIfNoEntry: false })?.isFile()));
     const features = files.filter(e => /\.feature$/i.test(e.name)).map(e => path.join(dir, e.name));
@@ -125,9 +132,12 @@ function moduleIndex(root, { hashFeatures = false } = {}) {
     } else {
       orphans.push(...features.map(f => relative(root, f)));
     }
-    for (const entry of entries) if (entry.isDirectory()) visit(path.join(dir, entry.name));
+    if (remaining === undefined) {
+      for (const entry of entries) if (entry.isDirectory()) visit(path.join(dir, entry.name));
+    }
   }
-  if (fs.statSync(base, { throwIfNoEntry: false })?.isDirectory()) visit(base);
+  const parts = moduleName === '.' ? [] : moduleName?.replaceAll('\\', '/').toLowerCase().split('/');
+  if (fs.statSync(base, { throwIfNoEntry: false })?.isDirectory()) visit(base, parts);
   return { modules: modules.sort((a, b) => compare(a.file, b.file)), orphans };
 }
 

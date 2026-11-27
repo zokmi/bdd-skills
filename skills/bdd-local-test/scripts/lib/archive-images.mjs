@@ -10,7 +10,7 @@ import { deleteMaskRecord, evidencePathKey, maskRecord, setMaskRecord } from './
 import { decodeArchiveText } from './archive-text.mjs';
 
 const helper = fileURLToPath(new URL('./bdd_webp.py', import.meta.url));
-const candidate = name => /^evidence\/.*\.(?:png|jpe?g|bmp)$/is.test(name);
+export const isWebpCandidate = name => /^evidence\/.*\.(?:png|jpe?g|bmp)$/is.test(name);
 
 function findPillow() {
   const wanted = (process.env.BDD_WEBP_ENCODER || 'auto').toLowerCase();
@@ -144,7 +144,7 @@ async function rewriteReferences(entries, ledger, converted, rewrittenLinks) {
 export async function optimizeImages(entries, ledger, setting, staging, warnings) {
   const webp = { encoder: null, converted: 0, skipped: [], savedBytes: 0 };
   const rewrittenLinks = Object.create(null);
-  if (setting === 'off' || (setting !== 'required' && !entries.some(e => candidate(e.name)))) {
+  if (setting === 'off' || (setting !== 'required' && !entries.some(e => isWebpCandidate(e.name)))) {
     return { webp, rewrittenLinks, verifiedOriginalSha256: [] };
   }
   const encoder = findPillow();
@@ -160,7 +160,7 @@ export async function optimizeImages(entries, ledger, setting, staging, warnings
   let batch;
   try {
     for (const [i, entry] of entries.entries()) {
-      if (!candidate(entry.name)) continue;
+      if (!isWebpCandidate(entry.name)) continue;
       const name = entry.name.replace(/\.[^.]+$/, '.webp');
       if (names.has(name.toLowerCase())) {
         webp.skipped.push({ file: entry.name, reason: 'name-conflict' });

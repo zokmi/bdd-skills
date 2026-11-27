@@ -140,17 +140,29 @@ function reachableCommits(root, head, commits) {
   const requested = [...new Set(commits.map(entry => entry.sha))].filter(sha => sha !== head);
   if (!requested.length) return reachable;
   if (!requested.every(sha => typeof sha === 'string' && fullCommitId.test(sha))) throw new Error('紀錄的 commit SHA 無效');
-  const types = git(root, ['cat-file', '--batch-check=%(objecttype)'], [0],
+  const objects = git(root, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], [0],
     requested.map(sha => sha + '^{commit}').join('\n') + '\n').trimEnd().split(/\r?\n/);
-  const existing = requested.filter((_, index) => types[index] === 'commit');
-  if (!existing.length) return reachable;
-  // The union of the selected histories minus HEAD is empty iff every tip is reachable.
-  const outside = git(root, ['rev-list', '--max-count=1', '--stdin'], [0], ['^' + head, ...existing].join('\n') + '\n').trim();
-  for (const sha of existing) {
-    if (!outside || (sha !== outside && git(root, ['merge-base', '--is-ancestor', sha, head], [0, 1]) !== null)) {
-      reachable.add(sha);
+  const peeled = new Map();
+  for (const [index, row] of objects.entries()) {
+    const [oid, type] = row.split(' ');
+    if (type === 'commit') peeled.set(requested[index], oid);
+  }
+  if (!peeled.size) return reachable;
+  const tips = new Set(peeled.values());
+  const limit = 32;
+  // Outside HEAD, a short history gives an exact answer for every selected tip.
+  // One extra entry signals truncation; only unclassified tips then need their own lookup.
+  const history = git(root, ['rev-list', '--max-count=' + (limit + 1), '--stdin'], [0],
+    ['^' + head, ...tips].join('\n') + '\n').trim();
+  const outside = new Set(history ? history.split(/\r?\n/) : []);
+  if (outside.size > limit) {
+    for (const oid of tips) {
+      if (oid !== head && !outside.has(oid) && git(root, ['merge-base', '--is-ancestor', oid, head], [0, 1]) === null) {
+        outside.add(oid);
+      }
     }
   }
+  for (const [source, oid] of peeled) if (!outside.has(oid)) reachable.add(source);
   return reachable;
 }
 

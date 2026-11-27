@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { appendIndexEvents, archiveKey, findArchiveIndexRoot, readArchiveStates, withIndexLock } from './archive-index.mjs';
 import { deduplicate, hashStream } from './archive-pack.mjs';
 import { writeVerifiedArchive } from './archive-store.mjs';
-import { optimizeImages } from './archive-images.mjs';
+import { isWebpCandidate, optimizeImages } from './archive-images.mjs';
 import { safePathComponent } from './archive-limits.mjs';
 import { decodeArchiveText } from './archive-text.mjs';
 import { planArchiveInventory, stageEntry } from './extract.mjs';
@@ -61,31 +61,40 @@ function sourceDirectory(files, root, folder) {
   return folder ?? inferred ?? root;
 }
 
-export async function stageArchiveEntries(snapshot, staging, indexedTopic) {
+export async function stageArchiveEntries(snapshot, staging, indexedTopic, { skipStagingWithoutImages = false } = {}) {
   const zip = await openZip(snapshot);
   try {
     const virtualRoot = path.join(staging, 'src');
     const { files, folder, manifest } = await planArchiveInventory(zip.entries, virtualRoot);
     const source = sourceDirectory(files, virtualRoot, folder);
     const topic = safePathComponent(source === virtualRoot ? indexedTopic : path.basename(source));
-    const records = new Map(Object.entries(manifest?.files ?? {}).map(([name, details]) =>
-      [archiveKey(path.join(source, name.replaceAll('\\', '/'))), details]));
-    const entries = [];
+    const logicalFiles = Array.from(files.values(), item => ({ item, name: path.relative(source, item.file).split(path.sep).join('/') }));
+    const stage = !skipStagingWithoutImages || logicalFiles.some(({ name }) => isWebpCandidate(name));
     let count = 0;
-    for (const item of files.values()) {
+    for (const { item, name } of logicalFiles) {
       if (item.entry) {
-        item.staged = path.join(staging, 'payload-' + count++);
-        item.hash = await stageEntry(item.entry, item.staged);
+        if (stage) {
+          item.staged = path.join(staging, 'payload-' + count++);
+          item.hash = await stageEntry(item.entry, item.staged);
+        } else {
+          item.hash = await hashStream(await item.entry.open());
+        }
       }
       // The inventory lists physical ZIP entries first. Aliases reuse their bytes while retaining individual metadata.
       const payload = item.original ?? item;
-      const name = path.relative(source, item.file).split(path.sep).join('/');
       if (item.expectedHash && payload.hash !== item.expectedHash) throw new Error('還原後內容不符：' + name);
+    }
+    if (!stage) return { entries: [], topic, manifest };
+
+    const records = new Map(Object.entries(manifest?.files ?? {}).map(([name, details]) =>
+      [archiveKey(path.join(source, name.replaceAll('\\', '/'))), details]));
+    const entries = logicalFiles.map(({ item, name }) => {
+      const payload = item.original ?? item;
       const extra = { ...records.get(archiveKey(item.file)) };
       delete extra.size;
       delete extra.sha256;
-      entries.push({ name, path: payload.staged, sha256: payload.hash, size: item.size, mtime: item.mtime, extra });
-    }
+      return { name, path: payload.staged, sha256: payload.hash, size: item.size, mtime: item.mtime, extra };
+    });
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     return { entries, topic, manifest };
   } finally { await zip.close(); }
@@ -146,7 +155,7 @@ async function recompress(archive, root) {
     await copyFile(archive, snapshot, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
     await verifyDigest(snapshot, previousSha256);
     const previousBytes = (await lstat(snapshot)).size;
-    const { entries, topic, manifest } = await stageArchiveEntries(snapshot, staging, state.topic);
+    const { entries, topic, manifest } = await stageArchiveEntries(snapshot, staging, state.topic, { skipStagingWithoutImages: true });
     await unlink(snapshot);
     const { webp, rewrittenLinks, verifiedOriginalSha256 } =
       await optimizeImages(entries, () => loadLedger(entries), 'required', staging, []);

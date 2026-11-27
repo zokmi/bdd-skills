@@ -15,16 +15,15 @@ export function modulesCommand(args) {
     throw new Error('請擇一指定 --lint、--next-id 或 --path／--base');
   }
   const repo = repoRoot(v.repo);
-  const index = moduleIndex(repo);
+  if (v['next-id'] && !v.module) throw new Error('--next-id 需要 --module');
+  const index = moduleIndex(repo, { moduleName: v['next-id'] ? v.module : undefined });
   if (v.lint) {
     const problems = lint(index);
     console.log(JSON.stringify({ repo, modules: index.modules.length, problems }));
     return problems.length ? 1 : 0;
   }
   if (v['next-id']) {
-    if (!v.module) throw new Error('--next-id 需要 --module');
-    const name = v.module.replaceAll('\\', '/').toLowerCase();
-    const m = index.modules.find(m => m.name.toLowerCase() === name);
+    const [m] = index.modules;
     if (!m) throw new Error('找不到模組：' + v.module);
     if (m.error) throw new Error('模組的 MODULE.md 有錯誤：' + m.error);
     console.log(JSON.stringify({ module: m.name, prefix: m.prefix, next: nextId(m) }));

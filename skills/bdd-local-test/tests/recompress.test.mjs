@@ -99,6 +99,72 @@ function pillowAvailable() {
   });
 }
 
+test('a retry without source images verifies all payloads without writing them to staging', async t => {
+  if (!pillowAvailable()) return t.skip('Requires Python with Pillow WebP support');
+  const entries = Array.from({ length: 48 }, (_, i) => ({
+    name: 'evidence/trace-' + i + '.bin', data: Buffer.alloc(256 * 1024, i),
+  }));
+  entries.push({ name: 'evidence/view.webp', data: Buffer.from('previously stored image') });
+  const f = await fixture(t, entries);
+  const index = await readFile(f.index);
+  const write = fs.createWriteStream;
+  let writes = 0, bytes = 0;
+  t.mock.method(fs, 'createWriteStream', (file, ...args) => {
+    const out = write(file, ...args);
+    if (/^payload-\d+$/.test(path.basename(file))) {
+      writes++;
+      out.on('close', () => { bytes += out.bytesWritten; });
+    }
+    return out;
+  });
+  const output = t.mock.method(console, 'log', () => {});
+  await recompressCommand(['--archive', f.archive]);
+  assert.deepEqual(JSON.parse(output.mock.calls[0].arguments[0]), {
+    archive: f.archive, previousBytes: f.original.length, converted: 0, skipped: [],
+    changed: false, bytes: f.original.length, savedBytes: 0, sha256: sha(f.original),
+  });
+  assert.deepEqual({ writes, bytes }, { writes: 0, bytes: 0 });
+  await assert.rejects(f.run({ BDD_WEBP_ENCODER: 'none' }), /Pillow/);
+  assert.deepEqual(await readFile(f.index), index);
+  assert.deepEqual(await readFile(f.archive), f.original);
+});
+
+test('verification without source images rejects corrupt payloads and mismatched alias hashes', async t => {
+  const data = Buffer.from('unique uncompressed fixture payload');
+  for (const failure of ['CRC32', 'alias']) {
+    const files = { 'a.webp': { sha256: sha(data) }, 'copy.webp': { sha256: failure === 'alias' ? sha('other') : sha(data) } };
+    const manifest = { schema: 2, topic: 'old', files, aliases: { 'copy.webp': 'a.webp' } };
+    const f = await fixture(t, [{ name: 'old/a.webp', data, compress: false },
+      { name: 'old/bdd-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]);
+    const expected = Buffer.from(f.original);
+    if (failure === 'CRC32') {
+      const at = expected.indexOf(data);
+      assert.notEqual(at, -1);
+      expected[at] ^= 1;
+      await writeFile(f.archive, expected);
+      const events = (await readFile(f.index, 'utf8')).replace(sha(f.original), sha(expected));
+      await writeFile(f.index, events);
+    }
+    const index = await readFile(f.index);
+    await assert.rejects(f.run(), failure === 'CRC32' ? /CRC32/ : /內容不符.*copy.webp/);
+    assert.deepEqual(await readFile(f.index), index);
+    assert.deepEqual(await readFile(f.archive), expected);
+  }
+});
+
+test('a source image found only through an evidence alias is converted', async t => {
+  if (!pillowAvailable()) return t.skip('Requires Python with Pillow WebP support');
+  const data = solidBmp(), alias = 'evidence\\copy.BMP', stored = 'assets/raw.bin';
+  const files = { [stored]: { sha256: sha(data) }, [alias]: { sha256: sha(data) } };
+  const manifest = { schema: 2, legacy: true, topic: 'indexed', files, aliases: { [alias]: stored } };
+  const f = await fixture(t, [{ name: 'old/' + stored, data },
+    { name: 'old/bdd-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]);
+  assert.equal((await f.run()).converted, 1);
+  const restored = await expandArchive({ archive: f.archive, to: path.join(f.root, 'restored') });
+  assert.deepEqual(await readFile(path.join(restored.folder, stored)), data);
+  assert.equal(restored.manifest.files['evidence/copy.webp'].originalSha256, sha(data));
+});
+
 test('stale backups, an unavailable encoder and invalid aliases leave the archive and index untouched', async t => {
   const data = solidBmp();
   const f = await fixture(t, [{ name: 'evidence/source.bmp', data }]);

@@ -431,6 +431,49 @@ test('summary batches historical Features across groups and isolates a missing p
     .filter(event => event.event === 'start' && event.argv.includes('cat-file'));
   assert.equal(calls.filter(event => event.argv.includes('--batch')).length, 1);
   assert.ok(calls.length <= 2, 'valid paths should share a single Git content query');
+
+  fs.unlinkSync(path.join(root, 'team-1', 'result.json'));
+  const staleFile = path.join(root, 'team-2', 'verification.json');
+  const stale = JSON.parse(fs.readFileSync(staleFile));
+  stale.rounds[0].repo.name = 'other-checkout';
+  write(staleFile, stale);
+  const blockedFile = path.join(root, 'team-3', 'result.json');
+  const blocked = JSON.parse(fs.readFileSync(blockedFile));
+  blocked.taskStatus = 'blocked';
+  blocked.verification = null;
+  blocked.blockers = [{ reason: 'no account', scenarioIds: [ids[3]], resolution: null }];
+  Object.assign(blocked.scenarios[0], { status: 'blocked', reason: 'no account', evidence: [] });
+  write(blockedFile, blocked);
+  const partialTrace = path.join(root, 'partial-trace');
+  const partial = spawnSync(process.execPath, [cli, 'parallel-summary', '--output-dir', path.join(root, 'partial'),
+    ...files.flatMap(f => ['--assignment', f])], { encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: partialTrace } });
+  assert.equal(partial.status, 1, partial.stderr);
+  const detail = JSON.parse(partial.stdout);
+  assert.deepEqual(detail.scenarios.map(s => s.status), ['passed', 'not-run', 'not-run', 'blocked']);
+  assert.deepEqual(detail.issues.map(s => s.split(':')[0]), ['team-1', 'Missing or unacceptable scenario result',
+    'team-2', 'Missing or unacceptable scenario result', 'team-3', 'team-3']);
+  const reads = fs.readFileSync(partialTrace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('cat-file')).map(event => event.argv);
+  assert.equal(reads.length, 1);
+  assert.ok(reads[0].includes(head + ':' + features[0]), 'only the completed, version-matched submission needs a historical Feature');
+
+  stale.rounds[0].repo.name = 'checkout';
+  write(staleFile, stale);
+  const invalidFile = path.join(root, 'team-2', 'result.json');
+  const invalid = JSON.parse(fs.readFileSync(invalidFile));
+  const proof = path.join(root, 'team-2', 'proof.md');
+  fs.writeFileSync(proof, '## Observation\nActual evidence');
+  invalid.scenarios[0].evidence = ['proof.md#observation', 'missing-evidence.txt'];
+  write(invalidFile, invalid);
+  let evidenceReads = 0;
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', function(file, ...args) {
+    if (file === proof) evidenceReads++;
+    return read.call(this, file, ...args);
+  });
+  const mixed = summarize(files, path.join(root, 'mixed'));
+  assert.match(mixed.issues.find(message => message.startsWith('team-2:')), /找不到指定編號：AA-99/);
+  assert.equal(evidenceReads, 0, 'a missing historical ID must stop the group before evidence contents are read');
 });
 
 test('editable paths retain PowerShell string wildcard and literal rules', () => {

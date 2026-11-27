@@ -151,6 +151,7 @@ test('multi-template batch publishes complete assignments with bounded revision 
   });
   Object.assign(plan, { scope: 'batch', selections: [{ path: selection, sha256: createHash('sha256').update(fs.readFileSync(selection)).digest('hex') }] });
   writeJson(f.file, plan);
+  f.template.target.workDir = path.join(repo, '.bdd', 'modules');
   const { manifest, files, args } = prepareTemplates(f, destination);
   writeJson(manifest, [files[0], files[0]]);
   assert.equal(f.run(...args).status, 2);
@@ -176,6 +177,7 @@ test('multi-template batch publishes complete assignments with bounded revision 
   const queries = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
     .filter(event => event.event === 'start');
   assert.equal(queries.filter(event => event.argv.includes('status')).length, 2);
+  assert.equal(queries.filter(event => event.argv.includes('--show-toplevel')).length, 1);
   const { assignments } = JSON.parse(output[0]);
   const paths = plan.groups.map(g => path.join(destination, 'groups', g.groupId, 'coordination', 'attempt-1', 'assignment.json'));
   assert.deepEqual(assignments, paths);
@@ -184,7 +186,12 @@ test('multi-template batch publishes complete assignments with bounded revision 
     assert.equal(old.status, 0, old.stderr);
     assert.deepEqual(JSON.parse(fs.readFileSync(file)), JSON.parse(old.stdout));
   }
-  assert.equal(f.run(...paths.flatMap(file => ['--assignment', file])).status, 0);
+  const preflightTrace = path.join(f.dir, 'preflight-trace');
+  const preflight = spawnSync(process.execPath, [cli, 'parallel-plan', '--plan', f.file, ...paths.flatMap(file => ['--assignment', file])],
+    { encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: preflightTrace } });
+  assert.equal(preflight.status, 0, preflight.stderr);
+  assert.equal(fs.readFileSync(preflightTrace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('--show-toplevel')).length, 1);
   assert.equal(f.run(...args).status, 2);
   assert.ok(paths.every(file => fs.existsSync(file)));
 });
@@ -273,6 +280,29 @@ test('concurrent multi-template publishers produce exactly one complete batch', 
   const { assignments } = JSON.parse(runs.find(run => !run.status).stdout);
   assert.deepEqual(assignments.map(file => JSON.parse(fs.readFileSync(file)).groupId), ['A', 'B']);
   assert.deepEqual(fs.readdirSync(destination), ['groups']);
+});
+
+test('an inaccessible workDir spelling cannot reuse a preceding valid subdirectory', t => {
+  const f = fixture(t);
+  const root = fs.realpathSync.native(f.repo);
+  const valid = path.join(root, '.bdd', 'modules');
+  const approvedPlan = loadApprovedPlan(f.file).reference;
+  const output = [];
+  t.mock.method(console, 'log', json => output.push(JSON.parse(json)));
+  const components = ['invalid\0component'];
+  if (process.platform !== 'win32') components.push('missing-component');
+  for (const component of components) {
+    const inaccessible = [root, component, '..', '.bdd', 'modules'].join(path.sep);
+    assert.equal(path.resolve(inaccessible), valid);
+    const inputs = f.plan.groups.map(({ groupId, scenarios }, index) => {
+      const file = path.join(f.dir, groupId + '.json');
+      writeJson(file, { ...f.template, groupId, scenarios, approvedPlan,
+        target: { ...f.template.target, workDir: index === 0 ? valid : inaccessible } });
+      return file;
+    });
+    assert.equal(parallelPlan(['--plan', f.file, ...inputs.flatMap(file => ['--assignment', file])]), 1);
+    assert.deepEqual(output.at(-1).issues, ['Assignment workDir differs from the approved checkout: B']);
+  }
 });
 
 test('normal CLI emits approved assignments and report rows and prevents partial dispatch', t => {
@@ -461,7 +491,7 @@ test('batch dispatch rejects a real but stale ID at review, template, preflight 
 });
 
 test('one batch selection covers the union of assignments in linked worktrees at the same revision', t => {
-  const { dir, repo, head, git, file, plan, run } = fixture(t);
+  const { dir, repo, head, git, file, plan, template, run } = fixture(t);
   const linked = path.join(dir, 'linked');
   git('worktree', 'add', '--quiet', '--detach', linked, head);
   plan.groups[1].repo = linked;
@@ -478,6 +508,17 @@ test('one batch selection covers the union of assignments in linked worktrees at
   const report = run('--report');
   assert.equal(report.status, 0, report.stderr);
   assert.match(report.stdout, /issue #42/);
+  const approvedPlan = loadApprovedPlan(file).reference;
+  const shared = path.join(repo, '.bdd', 'modules');
+  const files = plan.groups.map(group => {
+    const output = path.join(dir, group.groupId + '.json');
+    writeJson(output, { ...template, groupId: group.groupId, scenarios: group.scenarios, approvedPlan,
+      target: { ...template.target, repo: group.repo, workDir: shared } });
+    return output;
+  });
+  const preflight = run(...files.flatMap(output => ['--assignment', output]));
+  assert.equal(preflight.status, 1, preflight.stderr);
+  assert.deepEqual(JSON.parse(preflight.stdout).issues, ['Assignment workDir differs from the approved checkout: B']);
   plan.groups.pop();
   writeJson(file, plan);
   assert.match(run('--report').stderr, /Missing selected scenario: .*OR-02/);

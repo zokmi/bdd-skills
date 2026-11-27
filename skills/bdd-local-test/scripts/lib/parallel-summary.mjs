@@ -116,17 +116,24 @@ function engineeringResults(assigned, submitted, round, checkEvidence, total) {
   return results;
 }
 
-function historicalFeatureReader(approvedGroups) {
+function historicalFeatureReader(submissions) {
   const revisions = new Map();
   function revision(repo, head) {
     const key = JSON.stringify([repo, head]);
     if (!revisions.has(key)) revisions.set(key, { paths: new Set(), ids: new Map() });
     return revisions.get(key);
   }
-  for (const group of approvedGroups.values()) {
-    if (!group.revision || !group.submissions) continue;
-    const { paths } = revision(group.repo, group.revision.head);
-    for (const row of group.rows.values()) paths.add(row.feature);
+  for (const { prepared, approved, bound } of submissions) {
+    if (!bound || !approved.revision || !prepared || prepared.error ||
+        prepared.result.taskStatus !== 'completed' || prepared.result.blockers.length) continue;
+    const { paths } = revision(prepared.repo, prepared.round.head);
+    const seen = new Set();
+    for (const s of prepared.result.scenarios) {
+      const id = scenarioKey(s);
+      if (seen.has(id) || !prepared.recorded.has(roundKey(s.feature, s.id, s.kind))) break;
+      seen.add(id);
+      if (approved.rows.has(id)) paths.add(s.feature);
+    }
   }
   return (repo, head, feature) => {
     const { paths, ids } = revision(repo, head);
@@ -155,16 +162,17 @@ function historicalFeatureReader(approvedGroups) {
   };
 }
 
-function checkResults(root, a, r, round, repo, historicalFeatures) {
-  artifact(root, r.artifacts.report);
-  if (r.artifacts.masking) artifact(root, r.artifacts.masking);
-  checkModifiedPaths(r.modifiedPaths, a.permissions.editablePaths);
-  const checkEvidence = evidenceChecker(root);
+function recordedScenarioKeys(round) {
   const recorded = new Set();
   for (const s of round.scenarios) {
     if (typeof s?.path !== 'string' || typeof s.role !== 'string' || !Array.isArray(s.ids) || s.blob === null) continue;
     for (const id of s.ids) if (typeof id === 'string') recorded.add(roundKey(s.path, id, s.role));
   }
+  return recorded;
+}
+
+function checkResults(a, { root, result: r, repo, round, recorded }, historicalFeatures) {
+  const checkEvidence = evidenceChecker(root);
   const results = new Map();
   const total = counts();
   for (const s of r.scenarios) {
@@ -191,7 +199,7 @@ function checkResults(root, a, r, round, repo, historicalFeatures) {
   return { scenarios: results, engineering };
 }
 
-function groupResults(root, a, group, issues, versions, { repo, repoId }, approvedRevision, historicalFeatures, queries) {
+function prepareGroupResults(root, a, group, issues, versions, { repo, repoId }, approvedRevision, queries) {
   const resultPath = path.join(path.dirname(group.assignment), 'result.json');
   let result;
   try {
@@ -203,16 +211,33 @@ function groupResults(root, a, group, issues, versions, { repo, repoId }, approv
     group.result = resultPath;
   } catch (err) {
     issues.push(a.groupId + ': ' + err.message);
-    return { scenarios: new Map(), engineering: new Map() };
+    return null;
   }
   if (result.taskStatus !== 'completed' || result.blockers.length) issues.push(a.groupId + ': Task incomplete or unresolved blockers');
+  const prepared = { root, repo, result };
   try {
     const round = verificationRound(root, a, result, repo, approvedRevision, queries);
+    prepared.round = round;
     group.version = { repo: round.repo, head: round.head, serviceVersion: result.execution.serviceVersion };
     const candidate = JSON.stringify([repoId, round.head]);
     if (!versions.has(candidate)) versions.set(candidate, new Set());
     if (result.execution.serviceVersion) versions.get(candidate).add(result.execution.serviceVersion);
-    return checkResults(root, a, result, round, repo, approvedRevision && historicalFeatures);
+    artifact(root, result.artifacts.report);
+    if (result.artifacts.masking) artifact(root, result.artifacts.masking);
+    checkModifiedPaths(result.modifiedPaths, a.permissions.editablePaths);
+    prepared.recorded = recordedScenarioKeys(round);
+  } catch (err) {
+    prepared.error = err;
+  }
+  return prepared;
+}
+
+function groupResults(a, prepared, historicalFeatures, issues) {
+  if (!prepared) return { scenarios: new Map(), engineering: new Map() };
+  const { result } = prepared;
+  try {
+    if (prepared.error) throw prepared.error;
+    return checkResults(a, prepared, historicalFeatures);
   } catch (err) {
     issues.push(a.groupId + ': ' + err.message);
     return {
@@ -254,17 +279,17 @@ function collectSummary(assignments, destination, planFile, queries) {
   const versions = new Map();
   const identities = new Set();
   const repos = new Map();
-  const historicalFeatures = historicalFeatureReader(approvedGroups);
   const total = counts();
   let runId = plan?.runId;
-  for (const [index, file] of assignments.entries()) {
+  const submissions = assignments.map((file, index) => {
+    const groupIssues = [];
     const a = records[index];
     const root = path.resolve(a.outputDir);
     checkSeparateDirectories(root, destination);
     runId ??= a.runId;
-    if (a.runId !== runId) issues.push('Mixed runId: ' + a.groupId);
+    if (a.runId !== runId) groupIssues.push('Mixed runId: ' + a.groupId);
     const identity = key(a.runId, a.groupId);
-    if (identities.has(identity)) issues.push('Duplicate group assignment: ' + a.runId + '|' + a.groupId);
+    if (identities.has(identity)) groupIssues.push('Duplicate group assignment: ' + a.runId + '|' + a.groupId);
     identities.add(identity);
     const group = { groupId: a.groupId, attempt: a.attempt, assignment: path.resolve(file), result: null, version: null };
     groups.push(group);
@@ -280,10 +305,16 @@ function collectSummary(assignments, destination, planFile, queries) {
     }
     const checkout = repos.get(target);
     const approved = approvedGroups.get(a.groupId);
-    const { scenarios: results, engineering } = groupResults(root, a, group, issues, versions, checkout, approved?.revision, historicalFeatures, queries);
-    const assigned = new Set();
+    const prepared = prepareGroupResults(root, a, group, groupIssues, versions, checkout, approved?.revision, queries);
     const bound = approved?.submissions === 1 && a.runId === runId && matchesPlanReference(plan, a) &&
       approved.repo === approvedRepoKey(a.target.repo) && matchesApprovedTarget(approved.revision, a.target);
+    return { a, checkout, approved, bound, prepared, groupIssues };
+  });
+  const historicalFeatures = historicalFeatureReader(submissions);
+  for (const { a, checkout, approved, bound, prepared, groupIssues } of submissions) {
+    const { scenarios: results, engineering } = groupResults(a, prepared, approved?.revision && historicalFeatures, groupIssues);
+    for (const issue of groupIssues) issues.push(issue);
+    const assigned = new Set();
     for (const check of a.engineeringChecks ?? []) {
       const planned = approved?.checks.get(check.id);
       if (bound && plan.scope === 'batch' && planned && isDeepStrictEqual(check, planned.check)) {

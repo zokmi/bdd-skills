@@ -216,9 +216,10 @@ async function check(last, depth) {
   const sameUrl = normalizedUrl(repo.url) === normalizedUrl(last.repo.url);
   const sameRepo = sameUrl && (repo.url || last.repo.name === repo.name);
   if (!sameRepo) reasons.push('repo 不同：紀錄於 ' + last.repo.name + '（' + last.repo.url + '），目前為 ' + repo.name + '（' + repo.url + '）');
-  const descended = head === last.head || isAncestor(root, last.head, head);
-  if (!descended) reasons.push('目前 HEAD 並非由受測版本前進');
   const mapping = await mapCommits(root, head, last, depth);
+  const testedHead = mapping.find(entry => entry.source === last.head);
+  const descended = head === last.head || (testedHead ? testedHead.status === 'same' : isAncestor(root, last.head, head));
+  if (!descended) reasons.push('目前 HEAD 並非由受測版本前進');
   const cherry = mapping.filter(m => m.status === 'patch');
   const rewritten = mapping.filter(m => m.status === 'subject');
   const missing = mapping.filter(m => m.status === 'missing');
