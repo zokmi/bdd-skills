@@ -195,10 +195,14 @@ node "<skill 目錄>/scripts/bdd.mjs" parallel-plan --plan "<本輪>/approved-pl
 彙整需要 Node.js 與 Git。[核准清單 Schema](../schemas/approved-plan.schema.json) 共用派工的情境欄位，`parallel-plan` 與 `parallel-summary` 透過插件內附的驗證器檢查。
 
 ```sh
-node "<skill 目錄>/scripts/bdd.mjs" parallel-summary --plan "<本輪>/approved-plan.json" --assignment "<A組輸出>/coordination/attempt-1/assignment.json" --assignment "<B組輸出>/coordination/attempt-1/assignment.json" --output-dir "<本輪輸出>/summary-R1"
+node "<skill 目錄>/scripts/bdd.mjs" parallel-summary --brief --plan "<本輪>/approved-plan.json" --assignment "<A組輸出>/coordination/attempt-1/assignment.json" --assignment "<B組輸出>/coordination/attempt-1/assignment.json" --output-dir "<本輪輸出>/summary-R1"
 ```
 
-主代理明確列出本輪每組要採用的 attempt。工具讀取核准清單、各組派工檔、同目錄的 result.json 及其引用的驗證和證據。`--output-dir` 必須是尚不存在且與各組輸出互不包含的目錄，避免覆寫。產生 summary.json 與 SUMMARY.md，不修改既有 verification、issue 或資源。錯誤 exit 2；不可採納 exit 1；結構與採納檢查通過 exit 0（測試失敗或阻塞的有效報告仍可能為 0）。
+主代理明確列出本輪每組要採用的 attempt。工具讀取核准清單、各組派工檔、同目錄的 result.json 及其引用的驗證和證據。`--output-dir` 必須是尚不存在且與各組輸出互不包含的目錄，避免覆寫。兩種輸出模式均寫入完整的 `summary.json` 與 `SUMMARY.md`。
+
+主代理交接使用 `--brief`，標準輸出是一行 JSON，含 `runId`、`eligibleForReview`、四種狀態的 `counts`、`issueCount` 與指向完整 `summary.json` 的絕對路徑 `summaryPath`。有採納問題時另附 `firstIssue`，依 `summaryPath` 可查全部問題與逐項結果。省略 `--brief` 時標準輸出為完整 JSON。
+
+有採納問題時結束碼為 1。結構與採納檢查通過時為 0，即使有效報告列有失敗或阻塞，仍要核對 `eligibleForReview` 與 `counts`。命令或寫檔錯誤時為 2，原因寫到標準錯誤。
 
 新派工即使省略 `--plan`，彙總也會讀取派工綁定的清單。漏交整組時，摘要點出組名、將缺少的情境列為未執行，並將 `eligibleForReview` 設為 `false`。全部派工都缺少時，可只傳 `--plan` 與 `--output-dir` 產生本輪缺項摘要。歷史 v1 派工可沿用原指令，該模式只能核對所列的派工檔。
 

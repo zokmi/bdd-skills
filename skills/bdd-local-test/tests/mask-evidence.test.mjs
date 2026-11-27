@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { sha256File } from '../scripts/lib/mask-ledger.mjs';
+import { maskCommand } from '../scripts/lib/mask-evidence.mjs';
 import { evidenceChecker } from '../scripts/lib/summary-evidence.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/bdd.mjs', import.meta.url));
@@ -93,6 +94,40 @@ function bmp() {
   data.writeUInt32LE(8, 34);
   return data;
 }
+
+test('rectangle masking reuses a stale source digest and rechecks the source after rendering', {
+  skip: process.platform !== 'win32',
+}, async t => {
+  const { dir, images, ledger } = fixture(t);
+  const file = path.join(images, 'test.bmp');
+  fs.writeFileSync(file, bmp());
+  fs.writeFileSync(ledger, JSON.stringify({ files: { 'evidence/test.bmp': { method: 'css', sha256: '0'.repeat(64) } } }));
+  fs.writeFileSync(path.join(path.dirname(dir), 'config.json'), JSON.stringify({
+    mask: { rects: [{ glob: '*.bmp', rect: [1, 0, 2, 1], color: '#00ff00' }] },
+  }));
+  const open = fs.openSync, openSource = [];
+  let injectEdit = false;
+  t.mock.method(fs, 'openSync', (name, flags, ...args) => {
+    if (name === file && flags === 'r') {
+      openSource.push(name);
+      if (injectEdit && openSource.length === 2) fs.writeFileSync(file, 'new evidence');
+    }
+    return open(name, flags, ...args);
+  });
+  let summary;
+  t.mock.method(console, 'log', value => { summary = JSON.parse(value); });
+  await maskCommand(['--dir', dir, '--apply']);
+  assert.deepEqual(summary.applied, ['evidence/test.bmp']);
+  assert.equal(openSource.length, 2);
+  assert.equal(JSON.parse(fs.readFileSync(ledger)).files['evidence/test.bmp'].sha256, sha256File(file));
+  const saved = fs.readFileSync(ledger);
+  fs.writeFileSync(file, bmp());
+  openSource.length = 0;
+  injectEdit = true;
+  await assert.rejects(maskCommand(['--dir', dir, '--apply']), /Evidence changed/);
+  assert.deepEqual(fs.readFileSync(ledger), saved);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'new evidence');
+});
 
 test('rectangle masking clips to image bounds and refuses to certify invisible or empty masks', {
   skip: process.platform !== 'win32',

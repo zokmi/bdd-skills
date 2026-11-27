@@ -421,6 +421,7 @@ export function parallelSummary(args) {
   try {
     const { values } = parseArgs({ args, options: {
       assignment: { type: 'string', multiple: true, default: [] }, plan: { type: 'string' }, 'output-dir': { type: 'string' },
+      brief: { type: 'boolean' },
     } });
     if ((!values.assignment.length && !values.plan) || values.assignment.some(file => !file) || values.plan === '' || !values['output-dir']) {
       throw new Error('Expected --assignment or --plan, and --output-dir.');
@@ -428,8 +429,12 @@ export function parallelSummary(args) {
     const dir = path.resolve(values['output-dir']);
     if (fs.lstatSync(dir, { throwIfNoEntry: false })) throw new Error('OutputDir must be a new directory; existing summaries are never overwritten.');
     const summary = summarize(values.assignment, dir, values.plan);
-    console.log(writeSummary(dir, summary));
-    return summary.issues.length ? 1 : 0;
+    const json = writeSummary(dir, summary);
+    const { runId, eligibleForReview, counts, issues } = summary;
+    console.log(values.brief ? JSON.stringify({
+      runId, eligibleForReview, counts, issueCount: issues.length, firstIssue: issues[0], summaryPath: path.join(dir, 'summary.json'),
+    }) : json);
+    return issues.length ? 1 : 0;
   } catch (err) {
     console.error(err.message);
     return 2;

@@ -52,14 +52,33 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
     });
     assert.equal(result.status, code, result.stderr || result.stdout);
     if (code < 2) {
-      const summary = JSON.parse(result.stdout);
-      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'summary.json'), 'utf8')), summary);
+      const summaryPath = path.join(output, 'summary.json');
+      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+      const expected = extra.includes('--brief') ? {
+        runId: summary.runId, eligibleForReview: summary.eligibleForReview, counts: summary.counts,
+        issueCount: summary.issues.length, summaryPath, ...(summary.issues.length && { firstIssue: summary.issues[0] }),
+      } : summary;
+      assert.deepEqual(JSON.parse(result.stdout), expected);
       return summary;
     }
+    assert.equal(result.stdout, '');
+    assert.ok(result.stderr);
   }
-  assert.equal(run('valid', 0).eligibleForReview, true);
+  const valid = run('valid', 0);
+  assert.equal(valid.eligibleForReview, true);
+  assert.deepEqual(run('valid-brief', 0, ['--brief']), valid);
+  for (const file of ['summary.json', 'SUMMARY.md']) {
+    assert.deepEqual(fs.readFileSync(path.join(temp, 'valid-brief', file)), fs.readFileSync(path.join(temp, 'valid', file)));
+  }
   const resultPath = path.join(coord, 'result.json');
   const roundFile = path.join(group, 'verification.json');
+  json(resultPath, { ...r, scenarios: [{ ...r.scenarios[0], status: 'failed' }] });
+  json(roundFile, { rounds: [{ ...round, result: { ...round.result, passed: 0, failed: 1 } }] });
+  const failed = run('failed-brief', 0, ['--brief']);
+  assert.equal(failed.eligibleForReview, false);
+  assert.equal(failed.counts.failed, 1);
+  assert.deepEqual(failed.issues, []);
+  json(roundFile, { rounds: [round] });
   for (const [name, overrides] of [
     ['interrupted', { taskStatus: 'interrupted' }],
     ['stale-attempt', { attempt: a.attempt + 1 }],
@@ -73,7 +92,9 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
     assert.equal(run(name, 1).eligibleForReview, false, name);
   }
   fs.unlinkSync(resultPath);
-  assert.equal(run('missing-result', 1).counts['not-run'], 1);
+  const missing = run('missing-result', 1, ['--brief']);
+  assert.equal(missing.counts['not-run'], 1);
+  assert.ok(missing.issues.length > 1);
   json(resultPath, r);
   for (const [name, overrides] of [
     ['dirty-version', { dirtyPaths: ['src/login.cs'] }],
@@ -89,7 +110,7 @@ test('parallel summary checks masking hashes and verification rounds, deduplicat
   assert.equal(run('nonexistent-revision', 1).eligibleForReview, false);
   json(assignment, a);
   json(roundFile, { rounds: [round] });
-  run('valid', 2);
+  run('valid', 2, ['--brief']);
   assert.equal(run('duplicate', 1, ['--assignment', assignment]).counts.passed, 1);
   const secondCoord = path.join(group, 'coordination/second');
   fs.mkdirSync(secondCoord);
@@ -518,4 +539,22 @@ test('Markdown evidence fragments must identify a report heading or explicit anc
   for (const fragment of ['missing', 'sample', 'example', 'hidden', 'ss-13-2']) {
     assert.throws(() => check('REPORT.md#' + fragment, true), /REPORT\.md#/);
   }
+});
+
+test('report-only evidence requires section contents and collects referenced local attachments', async () => {
+  const { reportEvidence } = await import('../scripts/lib/report-anchors.mjs');
+  const { populated, attachments } = reportEvidence([
+    '# Run', '## Empty', '<!-- nothing yet -->', '## SS-1', '### Response',
+    '```json', '{"count": 3, "example": "![x](ignore.png)"}', '```',
+    '## SS-1', '----', '<a id="scenario-2"></a>', 'Observed count', '--------------',
+    'The list returned three rows. `![sample](ignore.svg)`',
+    '[trace](evidence/%E6%B8%AC%E8%A9%A6.json#section)', '![view][screen]', '<img src="output.png">',
+    '[screen]: <./evidence/Result page.png> "result"', '[unused]: evidence/unused.png',
+    '[online](https://example.org/evidence/external.json)', '<!-- ![x](comment.png) -->',
+    '[API response](trace.json)', '![截圖 [詳情]](evidence/details.png)',
+    '## Last', '| --- | :---: |', '<填寫該情境的實際操作與觀察結果。>',
+  ].join('\n'));
+  assert.deepEqual([...populated].sort(), ['run', 'ss-1', 'response', 'scenario-2', 'observed-count'].sort());
+  assert.deepEqual([...attachments].sort(), ['evidence/測試.json', 'evidence/Result page.png', 'evidence/details.png', 'output.png', 'trace.json'].sort());
+  assert.throws(() => reportEvidence('## IC-01\n![screen](data:image/png;base64,AA==)'), /遮罩/);
 });

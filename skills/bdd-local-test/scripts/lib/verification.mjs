@@ -174,7 +174,7 @@ async function record(file, opts) {
   if (revision && revision.head !== head) throw new Error('記錄受測快照時，指定的 HEAD 須與實際 checkout 相同');
   const base = opts.base ? commit(root, opts.base) : null;
   const refs = (opts.commits || []).flatMap(s => s.split(/[,\s]+/)).filter(Boolean);
-  const changes = testedChanges(root, refs, base, head);
+  const changes = testedChanges(root, refs, base, head, { resolved: true });
   const paths = [...new Set([...changes.paths, ...sources.map(s => s.path)])];
   const selections = [
     ...scenarioSelections(opts['changed-scenarios'], 'changed'),

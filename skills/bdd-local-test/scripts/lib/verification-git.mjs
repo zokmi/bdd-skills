@@ -2,7 +2,7 @@ import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
-import { commit } from './git-changes.mjs';
+import { commit, fullCommitId } from './git-changes.mjs';
 
 function command(root, args) {
   return ['-C', root, '--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotepath=false', ...args];
@@ -127,8 +127,6 @@ export function dirtyPaths(root, paths) {
   return [...dirty];
 }
 
-const fullCommitId = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
-
 export function isAncestor(root, source, head) {
   if (!fullCommitId.test(source)) throw new Error('紀錄的 commit SHA 無效');
   if (git(root, ['cat-file', '-e', source + '^{commit}'], [0, 1, 128]) === null) return false;
@@ -243,12 +241,13 @@ function resolveCommitRefs(root, references) {
   return references.map(ref => resolved.get(ref) ?? commit(root, ref));
 }
 
-export function testedChanges(root, references, base, head) {
+export function testedChanges(root, references, base, head, { resolved = false } = {}) {
   if (references.length) {
     const shas = resolveCommitRefs(root, references);
     return { shas, paths: selectedCommitPaths(root, shas) };
   }
   if (!base) throw new Error('記錄模式需要 --base 或 --commits');
+  if (resolved && base === head && fullCommitId.test(head)) return { shas: [], paths: [] };
   const history = git(root, ['rev-list', '--parents', '--reverse', base + '..' + head, '--']).trim()
     .split(/\r?\n/).filter(Boolean).map(line => line.split(' '));
   assertCompleteHistory(root, history.filter(row => row.length === 1).map(([sha]) => sha));

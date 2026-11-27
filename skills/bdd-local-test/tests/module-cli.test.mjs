@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { moduleIndex, nextId } from '../scripts/lib/module-index.mjs';
+import { findImpact, moduleIndex, nextId } from '../scripts/lib/module-index.mjs';
 import { modulesCommand } from '../scripts/lib/module-query.mjs';
 import { lint } from '../scripts/lib/module-lint.mjs';
 import { buildQualityPlan } from '../scripts/lib/quality-plan.mjs';
@@ -537,6 +537,31 @@ test('ESM lint reports manifest, orphan, prefix and scenario tag errors', t => {
     'unknown-prefix', 'missing-issue-tag', 'missing-method-tag', 'unknown-prefix', 'duplicate-id',
     'scenario-id', 'scenario-id', 'scenario-id',
   ].sort());
+});
+
+test('large impact queries retain glob semantics and skip unrelated directories', t => {
+  const modules = [
+    { name: 'orders', paths: ['src\\Orders\\**', 'src/orders/*.js', 'x/*/last?.js', '**/notice.*'] },
+    { name: 'shared', paths: ['src/**/info.txt', 'src/orders/*.js', 'src/[draft]/x.js', '*.cfg'] },
+    { name: 'unicode', paths: ['色/Σ/**', 'src/包含/**', 'K/**', '/top/**', 'exact/file'] },
+    { name: 'broken', error: 'invalid manifest', paths: ['**'] },
+  ];
+  const files = ['SRC/ORDERS/a.js', './src\\orders\\b.js', './src/orders/b.js', 'src/orders/sub/info.txt',
+    'src/包含/檔案', '色/ς/x', 'K/file', 'src/[draft]/x.js', 'x/y/last1.js', 'x/y/z/last1.js',
+    'a/b/notice.js', 'notice.js', 'root.cfg', '/top/sub', 'exact/file', '.bdd/skip', 'unmatched'];
+  for (let i = 0; i < 75; i++) files.push('elsewhere/unchanged-' + i);
+  const expected = findImpact(modules, files);
+  assert.ok(expected.modules.find(m => m.name === 'unicode').files.includes('色/ς/x'));
+  assert.ok(expected.unmatched.includes('K/file'));
+  const unrelated = Array.from({ length: 120 }, (_, i) => ({ name: 'extra-' + i, paths: ['src/extra-' + i + '/**'] }));
+  let tests = 0;
+  const testRegex = RegExp.prototype.test;
+  t.mock.method(RegExp.prototype, 'test', function (value) {
+    if (this.ignoreCase) tests++;
+    return testRegex.call(this, value);
+  });
+  assert.deepEqual(findImpact([...modules, ...unrelated], files), expected);
+  assert.ok(tests < unrelated.length * files.length / 2, 'tested ' + tests + ' glob candidates');
 });
 
 test('module impact and quality plans include both rename endpoints and staged-only content', t => {

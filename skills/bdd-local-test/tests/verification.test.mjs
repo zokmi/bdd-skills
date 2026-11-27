@@ -312,6 +312,39 @@ test('captured out-of-scope working changes still require a rerun after cleanup'
   assert.equal(run(1, '--check').verdict, 'rerun');
 });
 
+test('same resolved commits skip empty Git ranges and keep working, staged and explicit scopes', t => {
+  const { repo, git, base, output, args, run } = fixture(t);
+  git('config', 'core.longpaths', 'true');
+  fs.writeFileSync(path.join(repo, 'readme'), 'staged\n');
+  git('add', 'readme');
+  fs.writeFileSync(path.join(repo, 'readme'), 'base\n');
+  fs.writeFileSync(path.join(repo, 'new.feature'), 'Feature: Order\n@OR-01\nScenario: placed\n');
+  const trace = path.join(output, 'ranges.ndjson');
+  function traced(argv) {
+    const result = spawnSync(process.execPath, argv, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace } });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+  const record = traced(args('--record', '--base', 'HEAD', '--changed-scenarios', 'new.feature::OR-01'));
+  assert.deepEqual(record.commits, []);
+  assert.deepEqual(record.scenarios[0].ids, ['OR-01']);
+  assert.deepEqual(record.dirtyPaths, ['new.feature']);
+  const plan = traced([cli, 'quality-plan', '--base', 'HEAD', '--review-reason', 'reviewed']);
+  assert.deepEqual(plan.paths, ['new.feature', 'readme']);
+  const commands = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(e => e.event === 'start').map(e => e.argv);
+  assert.ok(!commands.some(argv => argv.includes(base + '..' + base) || argv.includes(base + '...' + base)));
+  assert.equal(commands.filter(argv => argv.includes('HEAD^{commit}')).length, 4);
+  const explicit = run(0, '--record', '--base', 'HEAD', '--commits', 'HEAD');
+  assert.deepEqual(explicit.commits.map(entry => entry.sha), [base]);
+  assert.ok(Object.hasOwn(explicit.files, 'readme'));
+  const missing = '1'.repeat(base.length);
+  const legacy = { ...record, base: missing, head: missing };
+  delete legacy.fileScope;
+  fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify({ rounds: [legacy] }));
+  assert.ok(run(1, '--check').reasons.some(reason => reason.includes('無法重建舊驗證紀錄的受測範圍')));
+});
+
 test('empty-range records do not validate diverged histories, including repositories with the same remote', t => {
   const { run, git, base, repo } = fixture(t);
   run(0, '--record', '--base', base);

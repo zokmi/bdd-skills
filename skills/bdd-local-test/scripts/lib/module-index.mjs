@@ -163,14 +163,55 @@ function globRegex(glob) {
   return new RegExp('^' + pattern.map(c => wildcards[c] ?? c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('') + '$', 'i');
 }
 
+function impactMatcher(modules, fileCount) {
+  // For short queries a linear scan is cheaper than building a directory index.
+  if (fileCount < 16 || fileCount * modules.reduce((n, m) => n + m.paths.length, 0) < 8192) {
+    const rules = modules.map(m => ({ name: m.name, patterns: m.paths.map(globRegex) }));
+    return file => rules.filter(r => r.patterns.some(rx => rx.test(file)));
+  }
+
+  const byDirectory = new Map();
+  const general = [];
+  for (const [index, module] of modules.entries()) {
+    for (const glob of module.paths) {
+      const literal = glob.replaceAll('\\', '/').split(/[?*]/, 1)[0];
+      const directory = literal.slice(0, literal.lastIndexOf('/') + 1);
+      const rule = { index, regex: globRegex(glob) };
+      // Unicode RegExp /i folding can differ from toLowerCase (e.g. Greek sigma).
+      if (directory && /^[\x00-\x7f]+$/.test(directory)) {
+        const key = directory.toLowerCase();
+        if (!byDirectory.has(key)) byDirectory.set(key, []);
+        byDirectory.get(key).push(rule);
+      } else {
+        general.push(rule);
+      }
+    }
+  }
+  return file => {
+    const found = new Set();
+    function check(rules) {
+      for (const { index, regex } of rules) {
+        if (!found.has(index) && regex.test(file)) found.add(index);
+      }
+    }
+    check(general);
+    const key = file.toLowerCase();
+    for (let slash = key.indexOf('/'); slash >= 0; slash = key.indexOf('/', slash + 1)) {
+      const rules = byDirectory.get(key.slice(0, slash + 1));
+      if (rules) check(rules);
+    }
+    return [...found].sort((a, b) => a - b).map(i => modules[i]);
+  };
+}
+
 function findImpact(modules, paths) {
-  const rules = modules.filter(m => !m.error).map(m => ({ name: m.name, patterns: m.paths.map(globRegex) }));
   const hits = new Map();
   const unmatched = [];
   const normalized = paths.map(p => p.replaceAll('\\', '/').replace(/^\.\//, '')).filter(Boolean);
-  for (const file of [...new Set(normalized)].sort(compare)) {
-    if (file.startsWith('.bdd/')) continue;
-    const matching = rules.filter(r => r.patterns.some(rx => rx.test(file)));
+  const files = [...new Set(normalized)].filter(file => !file.startsWith('.bdd/')).sort(compare);
+  const matches = impactMatcher(modules.filter(m => !m.error), files.length);
+  for (const file of files) {
+    const matching = matches(file);
     if (!matching.length) unmatched.push(file);
     for (const { name } of matching) {
       if (!hits.has(name)) hits.set(name, []);

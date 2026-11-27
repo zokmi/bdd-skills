@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { addSnapshots } from '../scripts/lib/archive-pack.mjs';
+import { verifyReportEvidence } from '../scripts/lib/archive-report.mjs';
 import { repository, resolveArchiveRoot } from '../scripts/lib/archive-store.mjs';
 import { expandArchive } from '../scripts/lib/extract.mjs';
 import { openZip, writeZip } from '../scripts/lib/zip-io.mjs';
@@ -73,6 +74,134 @@ test('concurrent archives preserve both index events and supersede exactly one p
   assert.equal(events[2].by, events[1].archive);
   assert.deepEqual(items.flatMap(i => i.superseded), [events[0].archive]);
   assert.deepEqual((await readdir(f.root)).sort(), ['index.jsonl', 'one.zip', 'two.zip']);
+});
+
+test('text-only archives require populated report sections for the selected round and retain their exact bytes', async t => {
+  const f = await fixture(t);
+  await rm(f.evidence, { recursive: true });
+  const verification = path.join(f.dir, 'verification.json'), report = path.join(f.dir, 'REPORT.md');
+  const history = JSON.parse(await readFile(verification, 'utf8'));
+  history.rounds[0].scenarios[0].ids = ['OR-01', 'OR-02'];
+  await writeFile(verification, JSON.stringify(history));
+  const content = '### OR-01 儲存\n送出訂單後顯示 42。\n\n<a id="or-02"></a>\n查詢相同訂單，回傳金額 42。\n';
+  await writeFile(report, content);
+  const archive = await f.command();
+  const { folder, manifest } = await expandArchive({ archive: archive.archive, to: path.join(f.base, 'restored-report') });
+  assert.equal(await readFile(path.join(folder, 'REPORT.md'), 'utf8'), content);
+  assert.equal(manifest.masked, true);
+  assert.deepEqual(manifest.unmasked, []);
+  await mkdir(f.evidence);
+  for (const [value, problem] of [
+    ['### OR-01\n操作後讀回 42。\n### OR-02\n\n## Notes\nUnrelated text.', /OR-02/i],
+    [content + '\n[附件](evidence/missing.csv)', /missing\.csv/],
+  ]) {
+    await writeFile(report, value);
+    await assert.rejects(f.command(), problem);
+  }
+  await writeFile(report, content);
+  await writeFile(path.join(f.dir, 'masking.json'), JSON.stringify({ files: { 'evidence/lost.png': { sha256: '0'.repeat(64) } } }));
+  await assert.rejects(f.command('--allow-unmasked-reason', 'fixture'), /lost\.png/);
+  await rm(path.join(f.dir, 'masking.json'));
+  await writeFile(path.join(f.dir, 'screenshot.png'), bluePng);
+  await assert.rejects(f.command(), /screenshot\.png/);
+  await rm(path.join(f.dir, 'screenshot.png'));
+  const subgroup = path.join(f.dir, 'batch', 'groups', 'ui', 'coordination', 'attempt-1');
+  await mkdir(subgroup, { recursive: true });
+  await writeFile(path.join(subgroup, 'result.json'), '{}');
+  await assert.rejects(f.command(), /各組|groups/);
+});
+
+test('dispatch text evidence binds custom report anchors and all referenced files to the recorded result', async t => {
+  const f = await fixture(t);
+  await rm(f.evidence, { recursive: true });
+  const file = path.join(f.dir, 'verification.json');
+  const history = JSON.parse(await readFile(file, 'utf8'));
+  const scenario = history.rounds[0].scenarios[0];
+  scenario.ids = ['SS-13'];
+  await writeFile(file, JSON.stringify(history));
+  const docs = await readFile(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const result = JSON.parse(docs.split('```json')[2].split('```')[0]);
+  result.artifacts.masking = null;
+  result.scenarios[0].feature = scenario.path;
+  result.scenarios[0].evidence = ['REPORT.md#%E9%87%91%E9%A1%8D'];
+  const coord = path.join(f.dir, 'coordination', 'attempt-1');
+  await mkdir(coord, { recursive: true });
+  const persist = () => writeFile(path.join(coord, 'result.json'), JSON.stringify(result));
+  await persist();
+  await writeFile(path.join(f.dir, 'REPORT.md'), '### 金額\n送出訂單後顯示 42。\n');
+  assert.equal((await f.command()).masked, true);
+  result.scenarios[0].evidence.push('evidence/lost.log');
+  await persist();
+  await assert.rejects(f.command(), /lost\.log/);
+  result.scenarios[0].evidence.pop();
+  result.artifacts.masking = 'masking.json';
+  await persist();
+  await assert.rejects(f.command(), /masking\.json/);
+  result.artifacts.masking = null;
+  result.verification.roundIndex = 1;
+  await persist();
+  await assert.rejects(f.command(), /輪次|round/i);
+
+  history.rounds[0].engineeringChecks = ['build-matrix'];
+  history.rounds[0].scenarios = [];
+  await writeFile(file, JSON.stringify(history));
+  result.verification.roundIndex = 0;
+  result.scenarios = [];
+  result.engineeringChecks = [{ id: 'build-matrix', status: 'passed', expected: 'Generated matrix', actual: 'windows-build',
+    evidence: ['REPORT.md#jobs'], reason: null }];
+  await writeFile(path.join(f.dir, 'REPORT.md'), '## Jobs\nGenerated the matrix and found windows-build.\n');
+  await persist();
+  assert.equal((await f.command()).masked, true);
+  await rename(path.join(coord, 'result.json'), path.join(f.dir, 'result.json'));
+  const assignment = JSON.parse(docs.split('```json')[1].split('```')[0]);
+  assignment.scenarios = [];
+  assignment.engineeringChecks = [{ id: 'build-matrix', path: 'build.yml', action: 'Run matrix',
+    expected: 'Generated matrix', evidence: 'REPORT.md#jobs' }];
+  const assigned = path.join(f.dir, 'assignment.json');
+  await writeFile(assigned, JSON.stringify(assignment));
+  assert.equal((await f.command()).masked, true);
+  assignment.engineeringChecks[0].evidence = 'evidence/build.log';
+  await writeFile(assigned, JSON.stringify(assignment));
+  await assert.rejects(f.command(), /build\.log/);
+  assignment.engineeringChecks[0].evidence = 'REPORT.md#jobs';
+  assignment.groupId = 'other-group';
+  await writeFile(assigned, JSON.stringify(assignment));
+  await assert.rejects(f.command(), /identity|身分/);
+  await rm(assigned);
+  const next = path.join(f.dir, 'coordination', 'attempt-2');
+  await mkdir(next);
+  await writeFile(path.join(next, 'result.json'), JSON.stringify({
+    ...result, attempt: 2, taskStatus: 'blocked', verification: null,
+    blockers: [{ reason: 'No environment', scenarioIds: [], resolution: null }],
+  }));
+  await assert.rejects(f.command(), /最新派工未指向最後驗證輪次/);
+});
+
+test('text evidence respects explicit screenshot retention and conditional or external evidence', async () => {
+  const docs = await readFile(new URL('../references/parallel-bdd-contract.md', import.meta.url), 'utf8');
+  const [plan, result] = docs.split('```json').slice(1, 3).map(block => JSON.parse(block.split('```')[0]));
+  result.artifacts.masking = null;
+  const scenario = result.scenarios[0];
+  const rounds = [{ scenarios: [{ path: scenario.feature, ids: [scenario.id], role: scenario.kind }] }];
+  const check = async evidence => {
+    plan.scenarios[0].assertions = [{ evidence }];
+    const files = {
+      'REPORT.md': '### SS-13\n開啟賽事後列表顯示測試名稱。',
+      'verification.json': JSON.stringify({ rounds }),
+      'assignment.json': JSON.stringify(plan), 'result.json': JSON.stringify(result),
+    };
+    const entries = Object.entries(files).map(([name, text]) => {
+      const data = Buffer.from(text);
+      return { name, data, sha256: createHash('sha256').update(data).digest('hex').toUpperCase() };
+    });
+    await verifyReportEvidence(entries, { files: {} }, rounds);
+  };
+  for (const evidence of ['保留含該賽事與名稱的遮罩截圖', '請附上本輪手機版遮罩截圖', 'Attach the mobile screenshot']) {
+    await assert.rejects(check(evidence), /指定保留截圖/);
+  }
+  for (const evidence of ['不需要保留截圖，報告記錄金額', '必要時才保留遮罩截圖', '保留已回讀的 Redmine 附件截圖連結']) {
+    await check(evidence);
+  }
 });
 
 test('archive and recompress validate matching image bytes by extension before writing ZIP aliases', async t => {

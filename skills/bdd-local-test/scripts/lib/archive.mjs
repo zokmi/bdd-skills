@@ -44,10 +44,14 @@ async function readSource(source) {
   const last = verification.rounds?.at(-1);
   const scenarios = last?.scenarios ?? [];
   if (!Array.isArray(scenarios)) throw new Error('verification.json 的 scenarios 必須為陣列');
-  if (!scenarios.length && !entries.some(e => /\.feature$/i.test(e.name))) throw new Error('缺少情境：沒有 .feature 或受測 scenarios');
   const evidence = entries.filter(e => /^evidence\//i.test(e.name));
-  if (!evidence.length) throw new Error('缺少截圖／其他證據檔（evidence/ 為空），不能封存');
   const ledger = parseMaskLedger(json.get('masking.json') ?? '{}');
+  if (!evidence.length) {
+    const { verifyReportEvidence } = await import('./archive-report.mjs');
+    await verifyReportEvidence(entries, ledger, verification.rounds);
+  } else if (!scenarios.length && !entries.some(e => /\.feature$/i.test(e.name))) {
+    throw new Error('缺少情境：沒有 .feature 或受測 scenarios');
+  }
   const unmasked = evidence.filter(e => isEvidenceImage(e.name) &&
     String(maskRecord(ledger, e.name)?.sha256).toUpperCase() !== e.sha256).map(e => e.name);
   return { entries, ledger, last, scenarios, flattened, legacy, unmasked };

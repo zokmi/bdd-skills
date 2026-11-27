@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
+export const fullCommitId = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
+
 function git(repo, ...args) {
   return execFileSync('git', ['-C', repo, ...args], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 64 * 1024 * 1024,
@@ -18,7 +20,7 @@ export function repoRoot(repo) {
 export function changedPaths(repo, baseline, head) {
   const options = ['--name-only', '--no-renames', '-z'];
   const outputs = [
-    git(repo, 'diff', ...options, baseline + '...' + head, '--'),
+    baseline === head && fullCommitId.test(head) ? '' : git(repo, 'diff', ...options, baseline + '...' + head, '--'),
     git(repo, 'diff', ...options, head, '--'),
     git(repo, 'diff', '--cached', ...options, head, '--'),
     git(repo, 'ls-files', '-z', '--others', '--exclude-standard'),

@@ -65,12 +65,14 @@ async function apply(dir, images, ledger, opts, at) {
   for (const relative of images) {
     const matched = rules.filter(rule => matches(rule.glob, relative));
     if (!matched.length) continue;
-    if (!opts.force && state(dir, relative, maskRecord(ledger, relative)) === 'masked') {
+    const input = evidenceFile(dir, relative);
+    const original = sha256File(input);
+    const recorded = maskRecord(ledger, relative)?.sha256;
+    if (!opts.force && typeof recorded === 'string' && recorded.toUpperCase() === original) {
       skippedAlreadyMasked.push(relative);
       continue;
     }
-    const input = evidenceFile(dir, relative);
-    jobs.push({ relative, input, matched, original: sha256File(input) });
+    jobs.push({ relative, input, matched, original });
   }
   if (jobs.length) {
     renderer ??= compileWindowsTool('mask-rectangles', fileURLToPath(new URL('./mask-rectangles.cs', import.meta.url)),
