@@ -32,8 +32,15 @@ function listPaths(repo, ...args) {
 }
 
 export function isIgnoredPath(repo, relative) {
-  const file = './' + relative.split(path.sep).join('/');
-  return git(repo, ['check-ignore', '-q', '--', file], [0, 1]).status === 0;
+  return checkIgnoredPaths(repo, [relative])[0];
+}
+
+export function checkIgnoredPaths(repo, relatives) {
+  const files = relatives.map(relative => './' + relative.split(path.sep).join('/'));
+  const input = files.map(file => file + '\0').join('');
+  // Without --no-index or --verbose, Git returns only the untracked paths it actually ignores.
+  const ignored = new Set(git(repo, ['check-ignore', '-z', '--stdin'], [0, 1], input).stdout.split('\0'));
+  return files.map(file => ignored.has(file));
 }
 
 function* ignoreFieldBatches(repo, files) {

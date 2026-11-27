@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isIgnoredPath } from './gitignore.mjs';
+import { checkIgnoredPaths, isIgnoredPath } from './gitignore.mjs';
 import { git } from './verification-git.mjs';
 
 function within(relative) {
@@ -16,14 +16,17 @@ export function resolveNewOutput(repos, requested, option) {
   const file = path.join(parent, path.basename(requested));
   const roots = [...new Set(repos)].map(repo => fs.realpathSync.native(repo));
   const affected = roots.filter(repo => within(path.relative(repo, file)));
-  for (const repo of affected) {
-    if (!isIgnoredPath(repo, path.relative(repo, file))) throw new Error(option + ' 請使用被 Git 忽略的輸出目錄或工作區外的新檔案');
-  }
   // A rule may ignore just the destination. A concurrent Git status must not see the staging name either.
   const extension = path.extname(file);
   const tempName = '.bdd-tmp-' + randomUUID() + (affected.length && extension.length <= 16 ? extension : '');
   const sibling = path.join(parent, tempName);
-  if (affected.every(repo => isIgnoredPath(repo, path.relative(repo, sibling)))) return { file, staged: sibling };
+  let canStageBesideFile = true;
+  for (const repo of affected) {
+    const [fileIgnored, siblingIgnored] = checkIgnoredPaths(repo, [path.relative(repo, file), path.relative(repo, sibling)]);
+    if (!fileIgnored) throw new Error(option + ' 請使用被 Git 忽略的輸出目錄或工作區外的新檔案');
+    if (!siblingIgnored) canStageBesideFile = false;
+  }
+  if (canStageBesideFile) return { file, staged: sibling };
 
   const device = fs.statSync(parent, { bigint: true }).dev;
   const candidates = affected.map(repo => git(repo, ['rev-parse', '--absolute-git-dir']).trimEnd());

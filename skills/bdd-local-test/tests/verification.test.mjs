@@ -319,21 +319,28 @@ test('same resolved commits skip empty Git ranges and keep working, staged and e
   fs.writeFileSync(path.join(repo, 'readme'), 'base\n');
   fs.writeFileSync(path.join(repo, 'new.feature'), 'Feature: Order\n@OR-01\nScenario: placed\n');
   const trace = path.join(output, 'ranges.ndjson');
-  function traced(argv) {
+  function traced(argv, trace) {
     const result = spawnSync(process.execPath, argv, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace } });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
   }
-  const record = traced(args('--record', '--base', 'HEAD', '--changed-scenarios', 'new.feature::OR-01'));
+  const commands = file => fs.readFileSync(file, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
+    .filter(e => e.event === 'start').map(e => e.argv);
+  const record = traced(args('--record', '--base', 'HEAD', '--changed-scenarios', 'new.feature::OR-01'), trace);
   assert.deepEqual(record.commits, []);
   assert.deepEqual(record.scenarios[0].ids, ['OR-01']);
   assert.deepEqual(record.dirtyPaths, ['new.feature']);
-  const plan = traced([cli, 'quality-plan', '--base', 'HEAD', '--review-reason', 'reviewed']);
+  const planTrace = path.join(output, 'preview.ndjson');
+  const receipt = traced([cli, 'quality-plan', '--base', 'HEAD', '--review-reason', 'reviewed',
+    '--preview-output', path.join(output, 'plan.json')], planTrace);
+  const plan = JSON.parse(fs.readFileSync(receipt.previewPath, 'utf8'));
   assert.deepEqual(plan.paths, ['new.feature', 'readme']);
-  const commands = fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line))
-    .filter(e => e.event === 'start').map(e => e.argv);
-  assert.ok(!commands.some(argv => argv.includes(base + '..' + base) || argv.includes(base + '...' + base)));
-  assert.equal(commands.filter(argv => argv.includes('HEAD^{commit}')).length, 4);
+  const previewQueries = commands(planTrace);
+  const recordQueries = commands(trace);
+  assert.ok(![...recordQueries, ...previewQueries].some(argv => argv.includes(base + '..' + base) || argv.includes(base + '...' + base)));
+  assert.equal(recordQueries.filter(argv => argv.includes('HEAD^{commit}')).length, 2);
+  assert.equal(previewQueries.filter(argv => argv.includes('HEAD^{commit}')).length, 1);
+  assert.equal(previewQueries.filter(argv => argv.includes('--show-toplevel')).length, 1);
   const explicit = run(0, '--record', '--base', 'HEAD', '--commits', 'HEAD');
   assert.deepEqual(explicit.commits.map(entry => entry.sha), [base]);
   assert.ok(Object.hasOwn(explicit.files, 'readme'));

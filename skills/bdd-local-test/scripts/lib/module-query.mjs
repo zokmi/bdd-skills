@@ -7,6 +7,17 @@ const string = { type: 'string' };
 const boolean = { type: 'boolean' };
 const repoOption = { type: 'string', default: '.' };
 
+function moduleChanges(repo, ref) {
+  const base = commit(repo, ref);
+  if (ref === 'HEAD') return changedPaths(repo, base, base);
+  try {
+    return changedPaths(repo, base, commit(repo, 'HEAD'));
+  } catch {
+    // An unborn HEAD or unrelated histories must retain Git's original <base>...HEAD diagnostic.
+    return changedPaths(repo, base, 'HEAD');
+  }
+}
+
 export function modulesCommand(args) {
   const { values: v } = parseArgs({ args, options: {
     repo: repoOption, lint: boolean, 'next-id': boolean, module: string, path: { type: 'string', multiple: true }, base: string,
@@ -28,11 +39,7 @@ export function modulesCommand(args) {
     if (m.error) throw new Error('模組的 MODULE.md 有錯誤：' + m.error);
     console.log(JSON.stringify({ module: m.name, prefix: m.prefix, next: nextId(m) }));
   } else {
-    let paths = v.path || [];
-    if (v.base) {
-      const baseline = commit(repo, v.base);
-      paths = paths.concat(changedPaths(repo, baseline, 'HEAD'));
-    }
+    const paths = (v.path || []).concat(v.base ? moduleChanges(repo, v.base) : []);
     console.log(JSON.stringify({ repo, ...repositoryImpact(repo, paths) }));
   }
   return 0;

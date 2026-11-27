@@ -92,11 +92,12 @@ export function qualityPlan(args) {
     throw new Error('--compact、--preview-output 與批次 --output/--run-id 須分開使用');
   }
   if (!batchOutput) {
-    const plan = buildQualityPlan(v);
+    const context = planContext(v);
+    const plan = selectPlan(v, context);
     let result = plan;
     if (v.compact) result = compactPlan(plan);
     if (previewFile !== undefined) {
-      result = preview(plan, resolveNewOutput([repoRoot(v.repo)], previewFile, '--preview-output'));
+      result = preview(plan, resolveNewOutput([context.repo], previewFile, '--preview-output'));
     }
     console.log(JSON.stringify(result));
     return 0;
@@ -107,7 +108,7 @@ export function qualityPlan(args) {
   const repo = fs.realpathSync.native(repoRoot(v.repo));
   const output = resolveNewOutput([repo], v.output, '--output');
   const revision = captureApprovedRevision(repo);
-  const plan = buildQualityPlan(v);
+  const plan = selectPlan(v, planContext(v, repo));
   if (plan.bddStatus !== 'PENDING') {
     throw new Error('無法建立派工選測檔：' + plan.bddStatus + ' ' + [...(plan.blockers ?? []), ...plan.lint.map(p => p.message)].join('；'));
   }
@@ -281,7 +282,7 @@ function feedbackPlan(repo, opts, index, result, currentSources) {
     blockers, batchMappings: mappings };
 }
 
-export function buildQualityPlan(v) {
+function planContext(v, repo) {
   const issueScope = v['issue-scope'] ?? (v.issue !== undefined ? 'batch' : undefined);
   if (issueScope !== undefined && (v.issue === undefined || !['batch', 'issue'].includes(issueScope))) {
     throw new Error('--issue-scope batch 或 issue 須與 --issue 一起使用');
@@ -297,10 +298,17 @@ export function buildQualityPlan(v) {
   }
   if (!['HIGH', 'MEDIUM', 'LOW'].includes(risk)) throw new Error('無效的 --review-risk');
   if (v.issue !== undefined && !/^\d+$/.test(v.issue)) throw new Error('--issue 須為數字');
-  const repo = repoRoot(v.repo);
+  return { repo: repo ?? repoRoot(v.repo), issueScope, risk, staticPassed, previous };
+}
+
+export function buildQualityPlan(v) {
+  return selectPlan(v, planContext(v));
+}
+
+function selectPlan(v, { repo, issueScope, risk, staticPassed, previous }) {
   const head = commit(repo, 'HEAD');
   const snapshot = previous ? previousWorktreeChanges(repo, head, previous, v.issue) : null;
-  const base = snapshot?.base ?? commit(repo, v.base);
+  const base = snapshot?.base ?? (v.base === 'HEAD' ? head : commit(repo, v.base));
   const allPaths = snapshot?.paths ?? (issueScope === 'batch' ? batchChangedPaths(repo, base, head) : changedPaths(repo, base, head));
   let batchPaths;
   if (v['batch-path']) {

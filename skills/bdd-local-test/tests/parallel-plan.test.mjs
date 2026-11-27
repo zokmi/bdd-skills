@@ -412,12 +412,22 @@ test('report paths through a directory link must be ignored in every reviewed ch
     assert.equal(denied.stdout, '');
     assert.equal(fs.existsSync(visible), false);
   }
-  fs.appendFileSync(path.join(other.repo, '.git/info/exclude'), '\n/review-assets/\n');
+  fs.appendFileSync(path.join(other.repo, '.git/info/exclude'), '\n/review-assets/*\n!/review-assets/visible.md\n*.feature\n');
   fs.mkdirSync(path.join(other.repo, 'review-assets'));
-  const report = path.join(alias, 'review-assets', 'table.md');
-  const saved = f.run('--report', '--output', report);
+  for (const file of ['review-assets/visible.md', other.plan.groups[0].scenarios[0].feature]) {
+    const denied = f.run('--report', '--output', path.join(alias, file));
+    assert.equal(denied.status, 2);
+    assert.match(denied.stderr, /被 Git 忽略/);
+  }
+  const report = path.join(alias, 'review-assets', '審查 table.md');
+  const trace = path.join(f.dir, 'report-trace.jsonl');
+  const saved = spawnSync(process.execPath, [cli, 'parallel-plan', '--plan', f.file, '--report', '--output', report],
+    { encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace } });
   assert.equal(saved.status, 0, saved.stderr);
   assert.equal(JSON.parse(saved.stdout).reportPath, fs.realpathSync.native(report));
+  const ignores = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(event => event.event === 'start' && event.argv.includes('check-ignore'));
+  assert.equal(ignores.length, 1, 'the destination and its staging path share one Git query');
   const repeated = f.run('--report');
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.equal(fs.readFileSync(report, 'utf8'), repeated.stdout);

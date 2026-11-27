@@ -724,7 +724,21 @@ test('module impact and quality plans include both rename endpoints and staged-o
   git('add', '--', stagedPath);
   fs.writeFileSync(path.join(repo, stagedPath), 'original settings');
   const paths = [newPath, oldPath, stagedPath];
-  const modules = run('modules', '--base', base);
+  const trace = path.join(repo, '.git', 'module-impact.trace');
+  function impact(ref, expectedGitCommands) {
+    fs.writeFileSync(trace, '');
+    const output = execFileSync(process.execPath, [cli, 'modules', '--base', ref], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_TRACE2_EVENT: trace },
+    });
+    const starts = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      .filter(event => event.event === 'start');
+    const commands = starts.flatMap(({ argv }) => argv.filter(arg => ['rev-parse', 'diff', 'status', 'ls-files'].includes(arg)));
+    assert.deepEqual(commands, expectedGitCommands);
+    return JSON.parse(output);
+  }
+  const current = impact('HEAD', ['rev-parse', 'rev-parse', 'status']);
+  assert.deepEqual(current.modules, [{ name: 'api/orders', files: [stagedPath] }]);
+  const modules = impact(base, ['rev-parse', 'rev-parse', 'rev-parse', 'diff', 'status']);
   assert.deepEqual(modules.modules, [{ name: 'api/news', files: [newPath] }, { name: 'api/orders', files: [oldPath, stagedPath] }]);
   const byPath = run('modules', '--path', 'SRC/ORDERS/nested/entry.js', '--path', newPath,
     '--path', '.bdd/42-run/REPORT.md', '--path', 'src/news/deep/entry.js', '--path', 'other.txt');
@@ -733,6 +747,22 @@ test('module impact and quality plans include both rename endpoints and staged-o
   const plan = run('quality-plan', '--base', base, '--review-risk', 'MEDIUM', '--review-reason', 'reviewed callers', '--impact-complete', '--static-passed');
   assert.deepEqual(plan.paths, paths);
   assert.deepEqual(plan.selected.map(row => row.module), modules.modules.map(row => row.name));
+  const intent = 'src/news/pending.js';
+  fs.writeFileSync(path.join(repo, intent), 'draft');
+  git('add', '-N', '--', intent);
+  fs.unlinkSync(path.join(repo, intent));
+  assert.deepEqual(impact('HEAD', ['rev-parse', 'rev-parse', 'status', 'diff', 'diff', 'ls-files']), current);
+
+  function assertRangeError(ref) {
+    const failed = spawnSync(process.execPath, [cli, 'modules', '--base', ref], { cwd: repo, encoding: 'utf8' });
+    assert.equal(failed.status, 2);
+    assert.equal(failed.stdout, '');
+    assert.ok(JSON.parse(failed.stderr).error.includes(ref + '...HEAD'));
+  }
+  const unrelated = git('-c', 'commit.gpgsign=false', 'commit-tree', 'HEAD^{tree}', '-m', 'unrelated root');
+  assertRangeError(unrelated);
+  git('symbolic-ref', 'HEAD', 'refs/heads/unborn');
+  assertRangeError(base);
 });
 
 test('module impact skips the index when the resolved paths contain only BDD artifacts', t => {
